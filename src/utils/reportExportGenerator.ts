@@ -2,6 +2,7 @@ import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Width
 import { saveAs } from 'file-saver';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { getSafeHtml2CanvasOptions } from './html2canvasFix';
 import { Central, WorkGroup, DailyReport, ReportSettings } from '../types';
 import { calculateTechInstalledMatrix, calculateDayOfWeekStats, filterReportsByDateRange } from './statCalculations';
 import { DEFAULT_REPORT_SETTINGS } from './settingsUtils';
@@ -349,12 +350,12 @@ export async function generatePDFReport(
   }
 
   try {
-    const canvas = await html2canvas(element, {
+    const canvas = await html2canvas(element, getSafeHtml2CanvasOptions({
       scale: 2,
       useCORS: true,
       logging: false,
       backgroundColor: '#ffffff'
-    });
+    }));
 
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');

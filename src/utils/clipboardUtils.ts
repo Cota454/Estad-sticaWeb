@@ -1,4 +1,5 @@
 import html2canvas from 'html2canvas';
+import { getSafeHtml2CanvasOptions } from './html2canvasFix';
 
 /**
  * Copies table data to clipboard in both TSV (plain text) and HTML table formats,
@@ -67,53 +68,70 @@ export async function copyTableToClipboard(
 export async function copyElementAsImageToClipboard(
   elementIdOrRef: string | HTMLElement,
   fallbackTextSummary?: string
-): Promise<boolean> {
+): Promise<{ success: boolean; mode?: 'clipboard' | 'download' }> {
   try {
     const el = typeof elementIdOrRef === 'string' ? document.getElementById(elementIdOrRef) : elementIdOrRef;
     if (!el) {
       if (fallbackTextSummary) {
         await navigator.clipboard.writeText(fallbackTextSummary);
-        return true;
+        return { success: true, mode: 'clipboard' };
       }
-      return false;
+      return { success: false };
     }
 
-    const canvas = await html2canvas(el, {
+    const canvas = await html2canvas(el, getSafeHtml2CanvasOptions({
       scale: 2,
       backgroundColor: '#ffffff',
       logging: false,
       useCORS: true
-    });
+    }));
 
     return new Promise((resolve) => {
       canvas.toBlob(async (blob) => {
         if (!blob) {
-          if (fallbackTextSummary) await navigator.clipboard.writeText(fallbackTextSummary);
-          resolve(true);
+          if (fallbackTextSummary) {
+            await navigator.clipboard.writeText(fallbackTextSummary);
+            resolve({ success: true, mode: 'clipboard' });
+          } else {
+            resolve({ success: false });
+          }
           return;
         }
 
+        // 1. Try writing image blob directly to clipboard
         try {
           if (navigator.clipboard && window.ClipboardItem) {
             await navigator.clipboard.write([
               new ClipboardItem({
-                [blob.type]: blob
+                'image/png': blob
               })
             ]);
-            resolve(true);
-          } else if (fallbackTextSummary) {
-            await navigator.clipboard.writeText(fallbackTextSummary);
-            resolve(true);
-          } else {
-            resolve(false);
+            resolve({ success: true, mode: 'clipboard' });
+            return;
           }
         } catch (clipErr) {
-          console.warn('Image clipboard failed, falling back to text summary', clipErr);
+          console.warn('Image clipboard write restricted, triggering PNG file download fallback:', clipErr);
+        }
+
+        // 2. Fallback: Automatically download PNG file if clipboard write is blocked by iframe/browser security
+        try {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          const cleanId = (typeof elementIdOrRef === 'string' ? elementIdOrRef : 'grafica').replace(/[^a-z0-9_-]/gi, '_');
+          link.download = `${cleanId}_${new Date().toISOString().slice(0, 10)}.png`;
+          link.href = url;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          resolve({ success: true, mode: 'download' });
+        } catch (downloadErr) {
+          console.error('PNG Download fallback failed:', downloadErr);
           if (fallbackTextSummary) {
             await navigator.clipboard.writeText(fallbackTextSummary);
-            resolve(true);
+            resolve({ success: true, mode: 'clipboard' });
           } else {
-            resolve(false);
+            resolve({ success: false });
           }
         }
       }, 'image/png');
@@ -123,11 +141,11 @@ export async function copyElementAsImageToClipboard(
     if (fallbackTextSummary) {
       try {
         await navigator.clipboard.writeText(fallbackTextSummary);
-        return true;
+        return { success: true, mode: 'clipboard' };
       } catch (e) {
-        return false;
+        return { success: false };
       }
     }
-    return false;
+    return { success: false };
   }
 }

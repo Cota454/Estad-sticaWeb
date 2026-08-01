@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { getSafeHtml2CanvasOptions } from './html2canvasFix';
 import { Central, WorkGroup, DailyReport, SystemDataBackup } from '../types';
 import { getTodayStr, formatDateLong } from './dateUtils';
 
@@ -73,12 +74,12 @@ export async function exportElementToPDF(
   }
 
   try {
-    const canvas = await html2canvas(element, {
+    const canvas = await html2canvas(element, getSafeHtml2CanvasOptions({
       scale: 2,
       useCORS: true,
       logging: false,
       backgroundColor: '#ffffff'
-    });
+    }));
 
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');

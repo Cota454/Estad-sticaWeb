@@ -76,6 +76,7 @@ interface CopyImageButtonProps {
   fallbackTextSummary?: string;
   className?: string;
   buttonText?: string;
+  label?: string;
   variant?: 'primary' | 'secondary' | 'dark' | 'outline';
   size?: 'sm' | 'md';
 }
@@ -85,18 +86,23 @@ export const CopyImageButton: React.FC<CopyImageButtonProps> = ({
   fallbackTextSummary,
   className = '',
   buttonText = 'Copiar Gráfica',
+  label,
   variant = 'dark',
   size = 'sm'
 }) => {
   const [copied, setCopied] = useState(false);
+  const [successLabel, setSuccessLabel] = useState('¡Imagen Copiada!');
+
+  const displayText = label || buttonText;
 
   const handleCopy = async () => {
-    const success = await copyElementAsImageToClipboard(elementId, fallbackTextSummary);
-    if (success) {
+    const result = await copyElementAsImageToClipboard(elementId, fallbackTextSummary);
+    if (result.success) {
+      setSuccessLabel(result.mode === 'download' ? '¡PNG Descargado!' : '¡Imagen Copiada!');
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), 2500);
     } else {
-      alert('No se pudo copiar la imagen al portapapeles.');
+      alert('No se pudo procesar la gráfica. Intente nuevamente.');
     }
   };
 
@@ -121,17 +127,17 @@ export const CopyImageButton: React.FC<CopyImageButtonProps> = ({
       type="button"
       onClick={handleCopy}
       className={`inline-flex items-center gap-1.5 rounded-lg font-semibold transition-all ${getVariantStyles()} ${sizeStyles} ${className}`}
-      title="Copiar gráfica como imagen para pegar en Word, PowerPoint o Excel"
+      title="Copiar o descargar gráfica como imagen (PNG) para pegar en Word, PowerPoint o Excel"
     >
       {copied ? (
         <>
-          <Check className="w-3.5 h-3.5 text-emerald-400 animate-in zoom-in" />
-          <span className="text-emerald-300 font-bold">¡Imagen Copiada!</span>
+          <Check className="w-3.5 h-3.5 text-emerald-500 animate-in zoom-in" />
+          <span className="text-emerald-600 font-bold">{successLabel}</span>
         </>
       ) : (
         <>
           <ImageIcon className="w-3.5 h-3.5 opacity-80" />
-          <span>{buttonText}</span>
+          <span>{displayText}</span>
         </>
       )}
     </button>

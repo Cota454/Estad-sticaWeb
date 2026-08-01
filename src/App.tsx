@@ -77,6 +77,12 @@ export default function App() {
     saveReports([]);
   };
 
+  const handleDeleteDateReports = (targetDate: string) => {
+    const updated = reports.filter(r => r.date !== targetDate);
+    setReports(updated);
+    saveReports(updated);
+  };
+
   const handleResetData = () => {
     localStorage.clear();
     const reset = resetToDefaultData();
@@ -202,6 +208,7 @@ export default function App() {
             workGroups={workGroups}
             reports={reports}
             onClearAllReports={handleClearAllReports}
+            onDeleteDateReports={handleDeleteDateReports}
           />
         )}
 

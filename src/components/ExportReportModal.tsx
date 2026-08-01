@@ -72,8 +72,19 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200 relative overflow-hidden">
         
-        {/* Hidden Container for PDF Capture */}
-        <div className="hidden">
+        {/* Off-screen Container for PDF Capture (rendered in DOM without display:none so html2canvas captures it properly) */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '-9999px',
+            top: 0,
+            width: '900px',
+            zIndex: -100,
+            opacity: 1,
+            pointerEvents: 'none',
+            backgroundColor: '#ffffff'
+          }}
+        >
           <FullPrintableReport
             id="full-printable-report-container"
             centrales={centrales}

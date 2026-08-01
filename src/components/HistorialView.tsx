@@ -10,6 +10,7 @@ interface HistorialViewProps {
   workGroups: WorkGroup[];
   reports: DailyReport[];
   onClearAllReports?: () => void;
+  onDeleteDateReports?: (dateStr: string) => void;
 }
 
 type TableTab = 'matriz' | 'detallado' | 'tecnica';
@@ -18,7 +19,8 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
   centrales,
   workGroups,
   reports,
-  onClearAllReports
+  onClearAllReports,
+  onDeleteDateReports
 }) => {
   // Current date defaults
   const today = new Date();
@@ -33,6 +35,43 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [activeTableTab, setActiveTableTab] = useState<TableTab>('matriz');
   const [showConfirmClear, setShowConfirmClear] = useState<boolean>(false);
+
+  // Single date deletion state
+  const [showConfirmDeleteDateModal, setShowConfirmDeleteDateModal] = useState<boolean>(false);
+  const [selectedDateToDelete, setSelectedDateToDelete] = useState<string>('');
+
+  // Get list of unique registered dates with report counts
+  const registeredDates = useMemo(() => {
+    const map: Record<string, number> = {};
+    reports.forEach(r => {
+      if (r.date) {
+        map[r.date] = (map[r.date] || 0) + (r.reportCount || 0);
+      }
+    });
+    return Object.entries(map)
+      .map(([date, totalCount]) => ({
+        date,
+        totalCount,
+        dayName: getDayOfWeekName(date),
+        displayDate: formatDateShort(date)
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [reports]);
+
+  const handleOpenDeleteDateModal = (initialDate?: string) => {
+    const defaultDate = initialDate || (registeredDates[0]?.date || '');
+    setSelectedDateToDelete(defaultDate);
+    setShowConfirmDeleteDateModal(true);
+  };
+
+  const handleConfirmDeleteDate = () => {
+    if (!selectedDateToDelete) return;
+    if (onDeleteDateReports) {
+      onDeleteDateReports(selectedDateToDelete);
+      setShowConfirmDeleteDateModal(false);
+      alert(`Se han eliminado con éxito todos los datos del día ${formatDateShort(selectedDateToDelete)}.`);
+    }
+  };
 
   // Available Years calculated dynamically from reports + currentYear
   const availableYears = useMemo(() => {
@@ -313,7 +352,7 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
             </div>
           </div>
 
-          {/* Action buttons: Export & Clear History */}
+          {/* Action buttons: Export, Delete Single Date & Clear History */}
           <div className="flex flex-wrap items-center gap-2 shrink-0 self-start lg:self-center">
             <button
               onClick={handleExportCSV}
@@ -323,6 +362,17 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
               <span>Exportar CSV</span>
             </button>
 
+            {onDeleteDateReports && (
+              <button
+                onClick={() => handleOpenDeleteDateModal()}
+                className="inline-flex items-center space-x-1.5 bg-amber-600/30 hover:bg-amber-600/40 text-amber-200 border border-amber-500/50 text-xs font-bold px-3.5 py-2 rounded-xl transition-all"
+                title="Eliminar los reportes de un día específico sin borrar todo el historial"
+              >
+                <Trash2 className="w-4 h-4 text-amber-400" />
+                <span>Eliminar Día Específico</span>
+              </button>
+            )}
+
             {onClearAllReports && (
               <button
                 onClick={() => setShowConfirmClear(true)}
@@ -330,7 +380,7 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
                 title="Eliminar permanentemente todos los registros del historial"
               >
                 <Trash2 className="w-4 h-4 text-rose-400" />
-                <span>Vaciar Todo el Historial</span>
+                <span>Vaciar Todo</span>
               </button>
             )}
           </div>
@@ -639,12 +689,13 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
                   <th className="p-3">Grupo de Trabajo</th>
                   <th className="p-3 text-center">Cantidad Reportes</th>
                   <th className="p-3 text-center">Estado / Nivel</th>
+                  {onDeleteDateReports && <th className="p-3 text-center">Acción</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredReports.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-400">
+                    <td colSpan={onDeleteDateReports ? 7 : 6} className="p-8 text-center text-slate-400">
                       No se encontraron registros diarios para el filtro de mes/año seleccionado.
                     </td>
                   </tr>
@@ -690,6 +741,19 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
                             {badgeLabel}
                           </span>
                         </td>
+                        {onDeleteDateReports && (
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteDateModal(r.date)}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-lg border border-rose-200 transition-colors"
+                              title={`Eliminar todos los datos del día ${formatDateShort(r.date)}`}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-500" />
+                              <span>Borrar Día</span>
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })
@@ -772,6 +836,93 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
         )}
 
       </div>
+
+      {/* Modal: Delete Specific Date Data */}
+      {showConfirmDeleteDateModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 text-slate-900 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-150">
+            
+            <div className="flex items-center space-x-3 pb-3 border-b border-slate-100 text-amber-600">
+              <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200">
+                <Trash2 className="w-6 h-6 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  Eliminar Reportes de un Día Específico
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Borre los datos ingresados por error en una fecha concreta sin perder el resto del historial
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-4 text-xs">
+              
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Seleccione la fecha a eliminar:
+                </label>
+                {registeredDates.length > 0 ? (
+                  <select
+                    value={selectedDateToDelete}
+                    onChange={(e) => setSelectedDateToDelete(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    {registeredDates.map(item => (
+                      <option key={item.date} value={item.date}>
+                        {item.displayDate} ({item.dayName}) — {item.totalCount} reportes registrados
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="date"
+                    value={selectedDateToDelete}
+                    onChange={(e) => setSelectedDateToDelete(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                )}
+              </div>
+
+              {selectedDateToDelete && (
+                <div className="bg-rose-50 p-3.5 rounded-xl border border-rose-200 text-rose-900 space-y-1">
+                  <span className="font-extrabold text-xs block">
+                    ⚠️ Advertencia de borrado:
+                  </span>
+                  <p className="text-xs">
+                    Se eliminarán permanentemente todos los reportes del{' '}
+                    <strong>{formatDateShort(selectedDateToDelete)}</strong> ({getDayOfWeekName(selectedDateToDelete)}).
+                  </p>
+                  <p className="text-[11px] text-rose-700 font-medium pt-1">
+                    El resto de las fechas y el historial acumulado de otros días no se verán afectados.
+                  </p>
+                </div>
+              )}
+
+            </div>
+
+            <div className="mt-6 flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowConfirmDeleteDateModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteDate}
+                disabled={!selectedDateToDelete}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-md transition-all disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Sí, Eliminar Datos del Día</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Clear History */}
       {showConfirmClear && (
