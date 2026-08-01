@@ -96,13 +96,59 @@ export default function App() {
     setIsExportModalOpen(true);
   };
 
-  const handleImportExcelReports = (newReports: DailyReport[], targetDate: string) => {
-    // Remove old reports for targetDate and replace with new ones
-    const filteredOut = reports.filter(r => r.date !== targetDate);
-    const updatedReports = [...filteredOut, ...newReports];
-    
-    setReports(updatedReports);
-    saveReports(updatedReports);
+  const handleImportExcelReportsAdvanced = (
+    newReports: DailyReport[],
+    affectedDates: string[],
+    mode: 'replace' | 'append' = 'replace',
+    newCentralesToAdd?: Central[],
+    newWorkGroupsToAdd?: WorkGroup[]
+  ) => {
+    let updatedCentrales = [...centrales];
+    if (newCentralesToAdd && newCentralesToAdd.length > 0) {
+      updatedCentrales = [...updatedCentrales, ...newCentralesToAdd];
+      setCentrales(updatedCentrales);
+      saveCentrales(updatedCentrales);
+    }
+
+    let updatedWorkGroups = [...workGroups];
+    if (newWorkGroupsToAdd && newWorkGroupsToAdd.length > 0) {
+      updatedWorkGroups = [...updatedWorkGroups, ...newWorkGroupsToAdd];
+      setWorkGroups(updatedWorkGroups);
+      saveWorkGroups(updatedWorkGroups);
+    }
+
+    let finalReports = [...reports];
+
+    if (mode === 'replace') {
+      // Remove existing reports for all affected dates
+      finalReports = finalReports.filter(r => !affectedDates.includes(r.date));
+      finalReports = [...finalReports, ...newReports];
+    } else {
+      // Append mode: merge new report counts with existing report counts
+      const reportMap = new Map<string, DailyReport>();
+      finalReports.forEach(r => {
+        reportMap.set(`${r.date}_${r.centralId}_${r.workGroupId}`, { ...r });
+      });
+
+      newReports.forEach(r => {
+        const key = `${r.date}_${r.centralId}_${r.workGroupId}`;
+        if (reportMap.has(key)) {
+          const existing = reportMap.get(key)!;
+          reportMap.set(key, {
+            ...existing,
+            reportCount: existing.reportCount + r.reportCount,
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          reportMap.set(key, { ...r });
+        }
+      });
+
+      finalReports = Array.from(reportMap.values());
+    }
+
+    setReports(finalReports);
+    saveReports(finalReports);
   };
 
   const handleSaveDailyGrid = (reportsToSave: DailyReport[], targetDate: string) => {
@@ -180,7 +226,7 @@ export default function App() {
           <ImportExcelView
             centrales={centrales}
             workGroups={workGroups}
-            onImportReports={handleImportExcelReports}
+            onImportReports={handleImportExcelReportsAdvanced}
           />
         )}
 
