@@ -1,0 +1,6 @@
+{
+  "name": "TelecomStat - Estadística de Centrales Telefónicas",
+  "description": "Sistema avanzado de estadística, gestión de reportes diarios, técnica instalada y análisis operacional para centrales de telecomunicaciones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
