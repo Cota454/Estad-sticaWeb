@@ -16,13 +16,22 @@ export function downloadJSONBackup(
     reports
   };
 
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const timestamp = `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
+
   const jsonString = JSON.stringify(backupData, null, 2);
   const blob = new Blob([jsonString], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   
   const link = document.createElement('a');
   link.href = url;
-  link.download = `copia_de_seguridad.json`;
+  link.download = `copia_de_seguridad_${timestamp}.json`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

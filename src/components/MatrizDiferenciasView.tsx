@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { GitCompare, ArrowDown, ArrowUp, Minus, Info, CheckCircle, AlertCircle } from 'lucide-react';
+import { GitCompare, ArrowDown, ArrowUp, Minus, Info, CheckCircle, AlertCircle, Calendar, CalendarDays, CalendarRange, Filter } from 'lucide-react';
 import { Central, WorkGroup, DailyReport, DifferenceRow } from '../types';
-import { FilterBar } from './FilterBar';
 import { calculateDifferenceMatrix } from '../utils/statCalculations';
-import { getTodayStr, getPastDateStr, formatDateLong } from '../utils/dateUtils';
+import { getTodayStr, getPastDateStr, formatDateLong, formatDateShort, getAvailableWeeks, getAvailableMonths } from '../utils/dateUtils';
+import { CopyTableButton, CopyImageButton } from './CopyButton';
 
 interface MatrizDiferenciasViewProps {
   centrales: Central[];
@@ -19,13 +19,73 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
   const todayStr = getTodayStr();
   const yesterdayStr = getPastDateStr(1);
 
+  // Mode: 'days' | 'weeks' | 'months'
+  const [compareMode, setCompareMode] = useState<'days' | 'weeks' | 'months'>('days');
+
+  // Days Mode State
   const [startDate, setStartDate] = useState<string>(yesterdayStr);
   const [endDate, setEndDate] = useState<string>(todayStr);
 
+  // Available unique dates from reports
+  const uniqueDates = useMemo(() => {
+    return Array.from(new Set(reports.map(r => r.date))).sort();
+  }, [reports]);
+
+  // Weeks List & State
+  const availableWeeks = useMemo(() => getAvailableWeeks(uniqueDates), [uniqueDates]);
+  const [selectedWeek1, setSelectedWeek1] = useState<string>(() => availableWeeks[1]?.key || availableWeeks[0]?.key || '');
+  const [selectedWeek2, setSelectedWeek2] = useState<string>(() => availableWeeks[0]?.key || '');
+
+  // Months List & State
+  const availableMonths = useMemo(() => getAvailableMonths(uniqueDates), [uniqueDates]);
+  const [selectedMonth1, setSelectedMonth1] = useState<string>(() => availableMonths[1]?.key || availableMonths[0]?.key || '');
+  const [selectedMonth2, setSelectedMonth2] = useState<string>(() => availableMonths[0]?.key || '');
+
+  // Active boundaries
+  const { period1, period2, labelText, period1Label, period2Label } = useMemo(() => {
+    if (compareMode === 'days') {
+      return {
+        period1: { start: startDate, end: startDate },
+        period2: { start: endDate, end: endDate },
+        labelText: `entre el ${formatDateLong(startDate)} y el ${formatDateLong(endDate)}`,
+        period1Label: formatDateShort(startDate),
+        period2Label: formatDateShort(endDate)
+      };
+    } else if (compareMode === 'weeks') {
+      const w1 = availableWeeks.find(w => w.key === selectedWeek1) || availableWeeks[1] || availableWeeks[0];
+      const w2 = availableWeeks.find(w => w.key === selectedWeek2) || availableWeeks[0];
+      return {
+        period1: { start: w1?.start || todayStr, end: w1?.end || todayStr },
+        period2: { start: w2?.start || todayStr, end: w2?.end || todayStr },
+        labelText: `entre ${w1?.label || 'Semana 1'} y ${w2?.label || 'Semana 2'}`,
+        period1Label: w1 ? `Sem. ${w1.weekNum} (${formatDateShort(w1.start)})` : 'Semana Base',
+        period2Label: w2 ? `Sem. ${w2.weekNum} (${formatDateShort(w2.start)})` : 'Semana Final'
+      };
+    } else {
+      const m1 = availableMonths.find(m => m.key === selectedMonth1) || availableMonths[1] || availableMonths[0];
+      const m2 = availableMonths.find(m => m.key === selectedMonth2) || availableMonths[0];
+      return {
+        period1: { start: m1?.start || todayStr, end: m1?.end || todayStr },
+        period2: { start: m2?.start || todayStr, end: m2?.end || todayStr },
+        labelText: `entre ${m1?.label || 'Mes 1'} y ${m2?.label || 'Mes 2'}`,
+        period1Label: m1?.label || 'Mes Base',
+        period2Label: m2?.label || 'Mes Final'
+      };
+    }
+  }, [compareMode, startDate, endDate, selectedWeek1, selectedWeek2, selectedMonth1, selectedMonth2, availableWeeks, availableMonths, todayStr]);
+
   // Calculate Difference Matrix
   const matrixRows: DifferenceRow[] = useMemo(() => {
-    return calculateDifferenceMatrix(reports, startDate, endDate, centrales, workGroups);
-  }, [reports, startDate, endDate, centrales, workGroups]);
+    return calculateDifferenceMatrix(
+      reports,
+      period1.start,
+      period1.end,
+      period2.start,
+      period2.end,
+      centrales,
+      workGroups
+    );
+  }, [reports, period1, period2, centrales, workGroups]);
 
   // Net Network Difference Summary
   const networkSummary = useMemo(() => {
@@ -39,25 +99,234 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
     return { totalInitial, totalFinal, netDiff };
   }, [matrixRows]);
 
+  // Copy Headers & Rows
+  const matrixCopyHeaders = useMemo(() => {
+    return [
+      'Central Telefónica',
+      'Código',
+      ...workGroups.map(g => `${g.name} (${g.code})`),
+      'SUMA FINAL CENTRAL'
+    ];
+  }, [workGroups]);
+
+  const matrixCopyRows = useMemo(() => {
+    return matrixRows.map(r => {
+      const cObj = centrales.find(c => c.id === r.centralId);
+      const grpVals = workGroups.map(grp => {
+        const cell = r.groupDiffs[grp.id] || { valInitial: 0, valFinal: 0, diff: 0 };
+        const sign = cell.diff > 0 ? '+' : '';
+        return `${cell.valInitial} → ${cell.valFinal} (${sign}${cell.diff})`;
+      });
+      const totSign = r.totalDiff > 0 ? '+' : '';
+      return [
+        r.centralName,
+        cObj?.code || '',
+        ...grpVals,
+        `${r.totalInitial} → ${r.totalFinal} (${totSign}${r.totalDiff})`
+      ];
+    });
+  }, [matrixRows, workGroups, centrales]);
+
   return (
     <div className="space-y-6">
       
-      {/* Date Pickers */}
-      <FilterBar
-        startDate={startDate}
-        setStartDate={setStartDate}
-        endDate={endDate}
-        setEndDate={setEndDate}
-        showMonthYear={false}
-        showDateRange={true}
-        onResetFilters={() => {
-          setStartDate(yesterdayStr);
-          setEndDate(todayStr);
-        }}
-      />
+      {/* Comparison Mode Selector & Filter Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-3">
+          <div className="flex items-center space-x-2">
+            <Filter className="w-4 h-4 text-blue-600" />
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              Filtro de Modo de Comparación:
+            </h3>
+          </div>
+
+          {/* Segmented Buttons: Días, Semanas, Meses */}
+          <div className="inline-flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200">
+            <button
+              onClick={() => setCompareMode('days')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                compareMode === 'days'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Días (Por Fecha)</span>
+            </button>
+
+            <button
+              onClick={() => setCompareMode('weeks')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                compareMode === 'weeks'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+              <span>Semanas (Por Semana)</span>
+            </button>
+
+            <button
+              onClick={() => setCompareMode('months')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                compareMode === 'months'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <CalendarRange className="w-3.5 h-3.5" />
+              <span>Meses (Por Mes)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dynamic Controls per Compare Mode */}
+        {compareMode === 'days' && (
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-slate-700">1. Fecha Inicial (Base):</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-slate-700">2. Fecha Final (Comparación):</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => {
+                  setStartDate(yesterdayStr);
+                  setEndDate(todayStr);
+                }}
+                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors"
+              >
+                Ayer vs Hoy
+              </button>
+              <button
+                onClick={() => {
+                  setStartDate(getPastDateStr(7));
+                  setEndDate(todayStr);
+                }}
+                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors"
+              >
+                Hace 7 días vs Hoy
+              </button>
+            </div>
+          </div>
+        )}
+
+        {compareMode === 'weeks' && (
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-slate-700">1. Semana Inicial (Base):</span>
+                <select
+                  value={selectedWeek1}
+                  onChange={(e) => setSelectedWeek1(e.target.value)}
+                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {availableWeeks.map(wk => (
+                    <option key={wk.key} value={wk.key}>
+                      {wk.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-slate-700">2. Semana Final (Comparación):</span>
+                <select
+                  value={selectedWeek2}
+                  onChange={(e) => setSelectedWeek2(e.target.value)}
+                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {availableWeeks.map(wk => (
+                    <option key={wk.key} value={wk.key}>
+                      {wk.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {availableWeeks.length >= 2 && (
+              <button
+                onClick={() => {
+                  setSelectedWeek1(availableWeeks[1].key);
+                  setSelectedWeek2(availableWeeks[0].key);
+                }}
+                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors self-start md:self-auto"
+              >
+                Semana Anterior vs Semana Actual
+              </button>
+            )}
+          </div>
+        )}
+
+        {compareMode === 'months' && (
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-slate-700">1. Mes Inicial (Base):</span>
+                <select
+                  value={selectedMonth1}
+                  onChange={(e) => setSelectedMonth1(e.target.value)}
+                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {availableMonths.map(mo => (
+                    <option key={mo.key} value={mo.key}>
+                      {mo.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-slate-700">2. Mes Final (Comparación):</span>
+                <select
+                  value={selectedMonth2}
+                  onChange={(e) => setSelectedMonth2(e.target.value)}
+                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {availableMonths.map(mo => (
+                    <option key={mo.key} value={mo.key}>
+                      {mo.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {availableMonths.length >= 2 && (
+              <button
+                onClick={() => {
+                  setSelectedMonth1(availableMonths[1].key);
+                  setSelectedMonth2(availableMonths[0].key);
+                }}
+                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors self-start md:self-auto"
+              >
+                Mes Anterior vs Mes Actual
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Main Differences Matrix Card */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm" id="diff-matrix-card">
         
         <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-100 gap-3">
           <div>
@@ -66,15 +335,15 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
               <span>Matriz de Comparación y Diferencias de Averías</span>
             </h2>
             <p className="text-xs text-slate-500">
-              Diferencia de averías entre {formatDateLong(startDate)} y {formatDateLong(endDate)}
+              Diferencia de averías {labelText}
             </p>
           </div>
 
-          {/* Color Legend Badge */}
+          {/* Color Legend & Copy Actions */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1">
               <ArrowDown className="w-3.5 h-3.5" />
-              Verde Suave: Negativo (-4) = Averías Resueltas (Trabajando bien)
+              Verde Suave: Negativo (-4) = Averías Resueltas
             </span>
             <span className="bg-rose-100 text-rose-800 border border-rose-300 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1">
               <ArrowUp className="w-3.5 h-3.5" />
@@ -83,6 +352,11 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
             <span className="bg-slate-100 text-slate-700 border border-slate-300 font-bold px-2 py-1 rounded-lg">
               Blanco: Sin Cambios (0)
             </span>
+
+            <div className="flex items-center space-x-1.5 ml-1">
+              <CopyImageButton elementId="diff-matrix-card" label="Copiar Imagen" variant="outline" />
+              <CopyTableButton headers={matrixCopyHeaders} rows={matrixCopyRows} title={`Matriz de Diferencias - Comparación ${labelText}`} variant="outline" />
+            </div>
           </div>
         </div>
 
@@ -103,7 +377,7 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
               <Info className="w-5 h-5 text-slate-500" />
             )}
             <span>
-              Resumen Global de Red: {networkSummary.totalInitial} reportes en {formatDateLong(startDate)} → {networkSummary.totalFinal} reportes en {formatDateLong(endDate)}.
+              Resumen Global de Red: <strong>{networkSummary.totalInitial} reportes</strong> en [{period1Label}] → <strong>{networkSummary.totalFinal} reportes</strong> en [{period2Label}].
             </span>
           </div>
 
@@ -148,10 +422,6 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
                     {workGroups.map(grp => {
                       const cell = row.groupDiffs[grp.id] || { valInitial: 0, valFinal: 0, diff: 0, status: 'unchanged' };
 
-                      // Cell Background & Text Color Logic per user instructions:
-                      // Verde Suave if diff < 0 (-4)
-                      // Rojo Suave if diff > 0 (+3)
-                      // Blanco if diff === 0
                       let cellClass = 'bg-white text-slate-700 border-slate-200';
                       if (cell.diff < 0) {
                         cellClass = 'bg-emerald-100 text-emerald-900 font-bold border-emerald-300';
@@ -186,7 +456,7 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
                           ? 'bg-emerald-200 text-emerald-950 border-emerald-300'
                           : row.totalDiff > 0
                           ? 'bg-rose-200 text-rose-950 border-rose-300'
-                          : 'bg-slate-200 text-slate-800 border-slate-300'
+                          : 'bg-slate-200 text-slate-300 border-slate-300'
                       }`}>
                         <span>Suma: {row.totalDiff > 0 ? `+${row.totalDiff}` : row.totalDiff}</span>
                       </div>

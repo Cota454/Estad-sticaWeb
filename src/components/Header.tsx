@@ -88,11 +88,11 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Importar Backup</span>
             </button>
 
-            {/* Export JSON (copia_de_seguridad.json) */}
+            {/* Export JSON (copia_de_seguridad_YYYY-MM-DD_HH-mm-ss.json) */}
             <button
               onClick={() => downloadJSONBackup(centrales, workGroups, reports)}
               className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-medium transition-colors border border-slate-700"
-              title="Descargar copia de seguridad en formato JSON (copia_de_seguridad.json)"
+              title="Descargar copia de seguridad en formato JSON con fecha y hora"
             >
               <Download className="w-3.5 h-3.5 text-slate-400" />
               <span>Backup JSON</span>

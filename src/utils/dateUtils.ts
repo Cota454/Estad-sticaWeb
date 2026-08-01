@@ -122,3 +122,145 @@ export function getWeekDateRanges(): {
     prevWeekEnd
   };
 }
+
+export interface WeekOption {
+  key: string;
+  start: string;
+  end: string;
+  label: string;
+  weekNum: number;
+}
+
+export interface MonthOption {
+  key: string;
+  year: number;
+  monthIdx: number;
+  start: string;
+  end: string;
+  label: string;
+}
+
+export function getWeekRangeForDate(dateStr: string): WeekOption {
+  if (!dateStr) dateStr = getTodayStr();
+  const parts = dateStr.split('-');
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10) - 1;
+  const d = parseInt(parts[2], 10);
+  const dateObj = new Date(y, m, d);
+
+  const day = dateObj.getDay(); // 0 = Sun, 1 = Mon...
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(y, m, d + diffToMonday);
+
+  const saturday = new Date(monday);
+  saturday.setDate(monday.getDate() + 5);
+
+  const fmt = (dt: Date) => {
+    const yr = dt.getFullYear();
+    const mo = String(dt.getMonth() + 1).padStart(2, '0');
+    const da = String(dt.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
+  };
+
+  const start = fmt(monday);
+  const end = fmt(saturday);
+
+  // Calculate ISO week number
+  const target = new Date(monday.valueOf());
+  const dayNr = (monday.getDay() + 6) % 7;
+  target.setDate(target.getDate() - dayNr + 3);
+  const firstThursday = target.valueOf();
+  target.setMonth(0, 1);
+  if (target.getDay() !== 4) {
+    target.setMonth(0, 1 + ((4 - target.getDay() + 7) % 7));
+  }
+  const weekNum = 1 + Math.round((firstThursday - target.valueOf()) / 604800000);
+
+  return {
+    key: start,
+    start,
+    end,
+    weekNum,
+    label: `Semana ${weekNum} (${formatDateShort(start)} al ${formatDateShort(end)})`
+  };
+}
+
+export function getAvailableWeeks(uniqueDates: string[]): WeekOption[] {
+  const weeksMap = new Map<string, WeekOption>();
+
+  // Helper to add a date's week
+  const addDateWeek = (dStr: string) => {
+    const wk = getWeekRangeForDate(dStr);
+    if (!weeksMap.has(wk.start)) {
+      weeksMap.set(wk.start, wk);
+    }
+  };
+
+  // Add dates from reports
+  uniqueDates.forEach(dStr => addDateWeek(dStr));
+
+  // Also guarantee past 8 weeks from today are available
+  const today = new Date();
+  for (let i = 0; i < 8; i++) {
+    const past = new Date(today);
+    past.setDate(today.getDate() - (i * 7));
+    const yr = past.getFullYear();
+    const mo = String(past.getMonth() + 1).padStart(2, '0');
+    const da = String(past.getDate()).padStart(2, '0');
+    addDateWeek(`${yr}-${mo}-${da}`);
+  }
+
+  const list = Array.from(weeksMap.values());
+  // Sort descending by start date
+  list.sort((a, b) => b.start.localeCompare(a.start));
+  return list;
+}
+
+export function getAvailableMonths(uniqueDates: string[]): MonthOption[] {
+  const monthsMap = new Map<string, MonthOption>();
+
+  const addMonth = (year: number, monthIdx: number) => {
+    const mKey = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+    if (!monthsMap.has(mKey)) {
+      const start = getStartOfMonthStr(year, monthIdx);
+      const end = getEndOfMonthStr(year, monthIdx);
+      monthsMap.set(mKey, {
+        key: mKey,
+        year,
+        monthIdx,
+        start,
+        end,
+        label: `${MONTH_NAMES_ES[monthIdx]} ${year}`
+      });
+    }
+  };
+
+  // Add months from reports dates
+  uniqueDates.forEach(dStr => {
+    const parts = dStr.split('-');
+    if (parts.length === 3) {
+      const yr = parseInt(parts[0], 10);
+      const moIdx = parseInt(parts[1], 10) - 1;
+      addMonth(yr, moIdx);
+    }
+  });
+
+  // Guarantee past 12 months from today
+  const today = new Date();
+  const currYr = today.getFullYear();
+  const currMo = today.getMonth();
+  for (let i = 0; i < 12; i++) {
+    let yr = currYr;
+    let mo = currMo - i;
+    while (mo < 0) {
+      mo += 12;
+      yr -= 1;
+    }
+    addMonth(yr, mo);
+  }
+
+  const list = Array.from(monthsMap.values());
+  list.sort((a, b) => b.key.localeCompare(a.key));
+  return list;
+}
+

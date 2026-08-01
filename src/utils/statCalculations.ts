@@ -122,22 +122,24 @@ export function calculateDayOfWeekStats(reports: DailyReport[], startDate?: stri
 
 export function calculateDifferenceMatrix(
   reports: DailyReport[],
-  startDate: string,
-  endDate: string,
+  start1: string,
+  end1: string,
+  start2: string,
+  end2: string,
   centrales: Central[],
   workGroups: WorkGroup[]
 ): DifferenceRow[] {
-  // Extract reports for Date 1 (Initial) and Date 2 (Final)
+  // Extract reports for Period 1 (Initial) and Period 2 (Final)
   const startReportsMap: Record<string, Record<string, number>> = {};
   const endReportsMap: Record<string, Record<string, number>> = {};
 
   reports.forEach(r => {
     if (isSunday(r.date)) return; // exclude Sundays
-    if (r.date === startDate) {
+    if (r.date >= start1 && r.date <= end1) {
       if (!startReportsMap[r.centralId]) startReportsMap[r.centralId] = {};
       startReportsMap[r.centralId][r.workGroupId] = (startReportsMap[r.centralId][r.workGroupId] || 0) + r.reportCount;
     }
-    if (r.date === endDate) {
+    if (r.date >= start2 && r.date <= end2) {
       if (!endReportsMap[r.centralId]) endReportsMap[r.centralId] = {};
       endReportsMap[r.centralId][r.workGroupId] = (endReportsMap[r.centralId][r.workGroupId] || 0) + r.reportCount;
     }
