@@ -258,61 +258,101 @@ export function parseExcelClipboardData(
       headers: [],
       matchedGroups: [],
       matchedCentrales: [],
-      message: 'El texto debe contener al menos 2 filas: la 1ra fila con los nombres de los grupos separados por coma/tabulación y las siguientes con la central y los valores.'
+      message: 'El texto debe contener al menos 2 filas: la 1ra fila con los códigos o nombres de los grupos (ej. PLEXT, CONM, TRANS) y las siguientes con la central y los valores.'
     };
   }
 
-  // Row 1 parsing: Group names
-  // Can be separated by commas, tabs or semicolons
+  // Row 1 parsing: Group headers (codes or names)
   const headerLine = lines[0];
   const delimiter = headerLine.includes('\t') ? '\t' : (headerLine.includes(';') ? ';' : ',');
-  const rawHeaders = headerLine.split(delimiter).map(h => h.trim()).filter(Boolean);
+  const rawHeaders = headerLine.split(delimiter).map(h => h.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
 
-  // The first column header might be "Central" or empty, rest are group names
+  // The first column header might be "Central", "Código", "Unidad", etc.
   let groupHeaders = rawHeaders;
-  if (rawHeaders.length > 0 && /central|unidad|exchange|nombre/i.test(rawHeaders[0])) {
+  if (rawHeaders.length > 0 && /central|unidad|exchange|nombre|código|codigo/i.test(rawHeaders[0])) {
     groupHeaders = rawHeaders.slice(1);
   }
 
-  // Match headers to existing workGroups by name or code fuzzy match
-  const matchedGroups: WorkGroup[] = [];
-  groupHeaders.forEach(gh => {
-    const found = workGroups.find(
-      g => g.name.toLowerCase().includes(gh.toLowerCase()) || 
-           gh.toLowerCase().includes(g.name.toLowerCase()) ||
-           g.code.toLowerCase() === gh.toLowerCase()
-    );
+  // Helper function to clean text for matching
+  const normalize = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Match each pasted header column to system WorkGroups by code priority
+  const columnToGroupMap: (WorkGroup | null)[] = [];
+  const matchedGroupsSet = new Set<WorkGroup>();
+
+  groupHeaders.forEach((gh, _colIdx) => {
+    const cleanGh = normalize(gh);
+
+    // 1. Priority: Exact match on Group Code
+    let found = workGroups.find(g => normalize(g.code) === cleanGh);
+
+    // 2. Priority: Code contains or is contained in header
+    if (!found) {
+      found = workGroups.find(g => cleanGh.includes(normalize(g.code)) || normalize(g.code).includes(cleanGh));
+    }
+
+    // 3. Priority: Exact match on Group Name
+    if (!found) {
+      found = workGroups.find(g => normalize(g.name) === cleanGh);
+    }
+
+    // 4. Priority: Substring match on Group Name
+    if (!found) {
+      found = workGroups.find(g => cleanGh.includes(normalize(g.name)) || normalize(g.name).includes(cleanGh));
+    }
+
+    columnToGroupMap.push(found || null);
     if (found) {
-      matchedGroups.push(found);
-    } else {
-      // Create temporary mock match group or map to first available
-      matchedGroups.push(workGroups[0]);
+      matchedGroupsSet.add(found);
     }
   });
+
+  // Ensure matchedGroups includes groups ordered according to workGroups
+  const matchedGroupsList = workGroups.filter(g => matchedGroupsSet.has(g));
+  // If no specific group was matched by code/name, default to all workGroups
+  const activeMatchedGroups = matchedGroupsList.length > 0 ? matchedGroupsList : workGroups;
 
   const parsedRows: ExcelImportRow[] = [];
   const matchedCentralesSet = new Set<Central>();
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    const cells = line.split(delimiter).map(c => c.trim());
+    const cells = line.split(delimiter).map(c => c.trim().replace(/^["']|["']$/g, ''));
     if (cells.length < 2) continue;
 
     const centralName = cells[0];
-    const groupValues: Record<string, number> = {};
+    if (!centralName) continue;
 
-    matchedGroups.forEach((group, idx) => {
-      const valStr = cells[idx + 1] || '0';
-      const numVal = parseInt(valStr.replace(/[^0-9]/g, ''), 10) || 0;
-      groupValues[group.id] = (groupValues[group.id] || 0) + numVal;
+    const groupValues: Record<string, number> = {};
+    // Initialize all matched work groups to 0
+    activeMatchedGroups.forEach(g => {
+      groupValues[g.id] = 0;
     });
 
-    // Check if central exists
+    // Populate values based on matched column map
+    columnToGroupMap.forEach((grp, colIdx) => {
+      const cellValStr = cells[colIdx + 1] || '0';
+      const numVal = parseInt(cellValStr.replace(/[^0-9]/g, ''), 10) || 0;
+
+      if (grp) {
+        groupValues[grp.id] = (groupValues[grp.id] || 0) + numVal;
+      } else {
+        // Fallback to colIdx group if unassigned
+        const fallbackGrp = activeMatchedGroups[colIdx % activeMatchedGroups.length];
+        if (fallbackGrp) {
+          groupValues[fallbackGrp.id] = (groupValues[fallbackGrp.id] || 0) + numVal;
+        }
+      }
+    });
+
+    // Check if central exists in system
     const existingCentral = centrales.find(
-      c => c.name.toLowerCase() === centralName.toLowerCase() ||
-           c.name.toLowerCase().includes(centralName.toLowerCase()) ||
-           centralName.toLowerCase().includes(c.name.toLowerCase())
+      c => normalize(c.name) === normalize(centralName) ||
+           normalize(c.code) === normalize(centralName) ||
+           normalize(c.name).includes(normalize(centralName)) ||
+           normalize(centralName).includes(normalize(c.name))
     );
+
     if (existingCentral) {
       matchedCentralesSet.add(existingCentral);
     }
@@ -326,9 +366,9 @@ export function parseExcelClipboardData(
   return {
     success: true,
     rows: parsedRows,
-    headers: groupHeaders,
-    matchedGroups,
+    headers: activeMatchedGroups.map(g => `${g.code} - ${g.name}`),
+    matchedGroups: activeMatchedGroups,
     matchedCentrales: Array.from(matchedCentralesSet),
-    message: `Se detectaron ${parsedRows.length} filas de centrales telefónicas con ${groupHeaders.length} grupos de trabajo.`
+    message: `Se identificaron y organizaron ${parsedRows.length} centrales telefónicas clasificadas por Código de Grupo (${activeMatchedGroups.map(g => g.code).join(', ')}).`
   };
 }

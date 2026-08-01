@@ -11,6 +11,7 @@ import { Central, WorkGroup, DailyReport, ChartType } from '../types';
 import { FilterBar } from './FilterBar';
 import { filterReportsByMonthYear, calculateMonthMinMaxDays, getCentralTotalCapacity } from '../utils/statCalculations';
 import { MONTH_NAMES_ES, formatDateLong, formatDateShort } from '../utils/dateUtils';
+import { CopyTableButton, CopyImageButton } from './CopyButton';
 
 interface DashboardGeneralProps {
   centrales: Central[];
@@ -171,6 +172,29 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
   // Colors array for pie/charts
   const PIE_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#6366f1', '#ec4899', '#06b6d4', '#f43f5e'];
 
+  // Main Chart Copy Headers and Rows
+  const mainChartCopyHeaders = useMemo(() => {
+    if (groupBy === 'daily') return ['Fecha', 'Total Reportes'];
+    return [groupBy === 'workGroup' ? 'Grupo de Trabajo' : 'Central Telefónica', 'Total Reportes'];
+  }, [groupBy]);
+
+  const mainChartCopyRows = useMemo(() => {
+    return chartDataset.map((item: any) => [
+      groupBy === 'daily' ? item.displayDate : item.name,
+      groupBy === 'daily' ? item.total : item.reports
+    ]);
+  }, [chartDataset, groupBy]);
+
+  const centralChartCopyHeaders = ['Grupo de Trabajo', 'Código', 'Reportes', '% Técnica Instalada'];
+  const centralChartCopyRows = useMemo(() => {
+    return centralChartData.map(d => [d.name, d.code, d.reports, `${d.pctOfCentral}%`]);
+  }, [centralChartData]);
+
+  const groupChartCopyHeaders = ['Central Telefónica', 'Código', 'Reportes', '% Técnica Instalada'];
+  const groupChartCopyRows = useMemo(() => {
+    return groupChartData.map(d => [d.name, d.code, d.reports, `${d.pctOfCentral}%`]);
+  }, [groupChartData]);
+
   return (
     <div className="space-y-6">
       
@@ -281,7 +305,7 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
       </div>
 
       {/* Main Chart Section with Interactive Controls */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm" id="dashboard-main-chart-card">
         
         {/* Controls Bar: GroupBy + Chart Type Selector */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between pb-5 border-b border-slate-100 gap-4">
@@ -317,77 +341,85 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
             </div>
           </div>
 
-          {/* Chart Type Selector */}
-          <div>
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Tipo de Gráfico:</span>
-            <div className="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
-              
-              <button
-                onClick={() => setChartType('bar')}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  chartType === 'bar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Gráfico de Barras"
-              >
-                <BarChart2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Barras</span>
-              </button>
+          {/* Chart Type Selector & Copy Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Tipo de Gráfico:</span>
+              <div className="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                
+                <button
+                  onClick={() => setChartType('bar')}
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    chartType === 'bar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Gráfico de Barras"
+                >
+                  <BarChart2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Barras</span>
+                </button>
 
-              <button
-                onClick={() => setChartType('stackedBar')}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  chartType === 'stackedBar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Barras Apiladas por Grupos"
-              >
-                <Sliders className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Apilado</span>
-              </button>
+                <button
+                  onClick={() => setChartType('stackedBar')}
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    chartType === 'stackedBar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Barras Apiladas por Grupos"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Apilado</span>
+                </button>
 
-              <button
-                onClick={() => setChartType('line')}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  chartType === 'line' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Gráfico de Líneas"
-              >
-                <LineIcon className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Líneas</span>
-              </button>
+                <button
+                  onClick={() => setChartType('line')}
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    chartType === 'line' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Gráfico de Líneas"
+                >
+                  <LineIcon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Líneas</span>
+                </button>
 
-              <button
-                onClick={() => setChartType('area')}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  chartType === 'area' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Gráfico de Área"
-              >
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Área</span>
-              </button>
+                <button
+                  onClick={() => setChartType('area')}
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    chartType === 'area' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Gráfico de Área"
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Área</span>
+                </button>
 
-              <button
-                onClick={() => setChartType('pie')}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  chartType === 'pie' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Gráfico Circular"
-              >
-                <PieIcon className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Circular</span>
-              </button>
+                <button
+                  onClick={() => setChartType('pie')}
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    chartType === 'pie' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Gráfico Circular"
+                >
+                  <PieIcon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Circular</span>
+                </button>
 
-              <button
-                onClick={() => setChartType('radar')}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  chartType === 'radar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Gráfico Radar de Distribución"
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Radar</span>
-              </button>
+                <button
+                  onClick={() => setChartType('radar')}
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    chartType === 'radar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Gráfico Radar de Distribución"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Radar</span>
+                </button>
 
+              </div>
+            </div>
+
+            {/* Copy Actions */}
+            <div className="self-end flex items-center space-x-2">
+              <CopyImageButton elementId="dashboard-main-chart-card" label="Copiar Gráfica" variant="outline" />
+              <CopyTableButton headers={mainChartCopyHeaders} rows={mainChartCopyRows} title="Datos del Gráfico General" variant="outline" />
             </div>
           </div>
 
@@ -547,7 +579,7 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* CHART 1: Filter per Central Telefónica */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between" id="dashboard-chart-central">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
               <div className="flex items-center space-x-2">
@@ -560,20 +592,27 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
                 </div>
               </div>
 
-              {/* Central Selector Dropdown */}
-              <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
-                <Filter className="w-3.5 h-3.5 text-slate-500 ml-1" />
-                <select
-                  value={effectiveCentralId}
-                  onChange={(e) => setSelectedCentralId(e.target.value)}
-                  className="bg-white text-slate-900 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-200"
-                >
-                  {centrales.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.code})
-                    </option>
-                  ))}
-                </select>
+              {/* Central Selector Dropdown & Copy Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+                  <Filter className="w-3.5 h-3.5 text-slate-500 ml-1" />
+                  <select
+                    value={effectiveCentralId}
+                    onChange={(e) => setSelectedCentralId(e.target.value)}
+                    className="bg-white text-slate-900 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-200"
+                  >
+                    {centrales.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-1">
+                  <CopyImageButton elementId="dashboard-chart-central" label="Copiar Imagen" variant="outline" />
+                  <CopyTableButton headers={centralChartCopyHeaders} rows={centralChartCopyRows} title="Reportes por Central Telefónica" variant="outline" />
+                </div>
               </div>
             </div>
 
@@ -600,7 +639,7 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
         </div>
 
         {/* CHART 2: Filter per Work Group */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between" id="dashboard-chart-group">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
               <div className="flex items-center space-x-2">
@@ -613,20 +652,27 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
                 </div>
               </div>
 
-              {/* Group Selector Dropdown */}
-              <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
-                <Filter className="w-3.5 h-3.5 text-slate-500 ml-1" />
-                <select
-                  value={effectiveGroupId}
-                  onChange={(e) => setSelectedGroupId(e.target.value)}
-                  className="bg-white text-slate-900 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500 border border-slate-200"
-                >
-                  {workGroups.map(g => (
-                    <option key={g.id} value={g.id}>
-                      {g.name} ({g.code})
-                    </option>
-                  ))}
-                </select>
+              {/* Group Selector Dropdown & Copy Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+                  <Filter className="w-3.5 h-3.5 text-slate-500 ml-1" />
+                  <select
+                    value={effectiveGroupId}
+                    onChange={(e) => setSelectedGroupId(e.target.value)}
+                    className="bg-white text-slate-900 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500 border border-slate-200"
+                  >
+                    {workGroups.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.name} ({g.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-1">
+                  <CopyImageButton elementId="dashboard-chart-group" label="Copiar Imagen" variant="outline" />
+                  <CopyTableButton headers={groupChartCopyHeaders} rows={groupChartCopyRows} title="Reportes por Grupo de Trabajo" variant="outline" />
+                </div>
               </div>
             </div>
 

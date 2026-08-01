@@ -5,6 +5,7 @@ import { Central, WorkGroup, DailyReport, TechInstalledRow } from '../types';
 import { FilterBar } from './FilterBar';
 import { calculateTechInstalledMatrix, filterReportsByDateRange, getCentralTotalCapacity } from '../utils/statCalculations';
 import { getTodayStr, getPastDateStr } from '../utils/dateUtils';
+import { CopyTableButton } from './CopyButton';
 
 interface TecnicaInstaladaViewProps {
   centrales: Central[];
@@ -152,6 +153,33 @@ export const TecnicaInstaladaView: React.FC<TecnicaInstaladaViewProps> = ({
     setEditingCentral(null);
   };
 
+  // Copy Table Data
+  const techCopyHeaders = useMemo(() => {
+    return [
+      'Central Telefónica',
+      'Técnica Instalada',
+      ...workGroups.map(g => `${g.name} (${g.code})`),
+      'TOTAL AVERÍAS',
+      '% Interrupción Total'
+    ];
+  }, [workGroups]);
+
+  const techCopyRows = useMemo(() => {
+    return matrixData.map(row => {
+      const grpVals = workGroups.map(g => {
+        const stat = row.groupStats[g.id] || { reports: 0, percentage: 0 };
+        return `${stat.reports} (${stat.percentage}%)`;
+      });
+      return [
+        row.centralName,
+        row.totalCapacity,
+        ...grpVals,
+        row.totalReports,
+        `${row.totalPercentage}%`
+      ];
+    });
+  }, [matrixData, workGroups]);
+
   return (
     <div className="space-y-6">
       
@@ -183,9 +211,13 @@ export const TecnicaInstaladaView: React.FC<TecnicaInstaladaViewProps> = ({
             </p>
           </div>
 
-          <div className="bg-blue-50 text-blue-900 text-xs px-3.5 py-1.5 rounded-xl border border-blue-200 font-semibold flex items-center gap-2">
-            <Percent className="w-4 h-4 text-blue-600" />
-            <span>Ocupación Global de Averías: <strong>{networkTotals.percentage}%</strong> ({networkTotals.totalReports} reportes / {networkTotals.totalCapacity.toLocaleString()} técnica instalada)</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="bg-blue-50 text-blue-900 text-xs px-3.5 py-1.5 rounded-xl border border-blue-200 font-semibold flex items-center gap-2">
+              <Percent className="w-4 h-4 text-blue-600" />
+              <span>Ocupación Global de Averías: <strong>{networkTotals.percentage}%</strong> ({networkTotals.totalReports} reportes / {networkTotals.totalCapacity.toLocaleString()} técnica instalada)</span>
+            </div>
+
+            <CopyTableButton headers={techCopyHeaders} rows={techCopyRows} title="Porcentaje de Averías sobre Técnica Instalada" variant="outline" />
           </div>
         </div>
 

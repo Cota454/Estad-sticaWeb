@@ -8,6 +8,7 @@ import {
 import { Central, WorkGroup, DailyReport } from '../types';
 import { calculateDayOfWeekStats, filterReportsByDateRange } from '../utils/statCalculations';
 import { getWeekDateRanges, formatDateShort } from '../utils/dateUtils';
+import { CopyTableButton, CopyImageButton } from './CopyButton';
 
 interface AnalisisSemanalHistoricoProps {
   centrales: Central[];
@@ -92,6 +93,12 @@ export const AnalisisSemanalHistorico: React.FC<AnalisisSemanalHistoricoProps> =
     });
     return centrales.find(c => c.id === topId)?.name || 'N/A';
   }, [currWeekReportsList, centrales]);
+
+  // Day of Week Copy Headers & Rows
+  const dayOfWeekCopyHeaders = ['Día de la Semana', 'Total Histórico', 'Días Registrados', 'Promedio Diario'];
+  const dayOfWeekCopyRows = useMemo(() => {
+    return dayOfWeekStats.map(d => [d.dayName, d.totalReports, d.dayCount, d.averageReports]);
+  }, [dayOfWeekStats]);
 
   // Function to call AI Operations Analyst Endpoint
   const handleGenerateAiAnalysis = async () => {
@@ -224,18 +231,24 @@ export const AnalisisSemanalHistorico: React.FC<AnalisisSemanalHistoricoProps> =
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Day of Week Chart & Table */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm" id="day-of-week-card">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
             <div>
               <h3 className="text-base font-bold text-slate-900">Comportamiento por Día de la Semana</h3>
               <p className="text-xs text-slate-500">Promedio de incidencias de Lunes a Domingo según el historial</p>
             </div>
-            {peakDay && (
-              <div className="bg-amber-50 text-amber-800 text-xs px-3 py-1 rounded-full font-semibold border border-amber-200 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                <span>Día Pico: {peakDay.dayName} ({peakDay.averageReports} prom.)</span>
-              </div>
-            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {peakDay && (
+                <div className="bg-amber-50 text-amber-800 text-xs px-3 py-1 rounded-full font-semibold border border-amber-200 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Día Pico: {peakDay.dayName} ({peakDay.averageReports} prom.)</span>
+                </div>
+              )}
+
+              <CopyImageButton elementId="day-of-week-card" label="Copiar Imagen" variant="outline" />
+              <CopyTableButton headers={dayOfWeekCopyHeaders} rows={dayOfWeekCopyRows} title="Comportamiento por Día de la Semana" variant="outline" />
+            </div>
           </div>
 
           {/* Bar Chart of Day-of-Week Averages */}

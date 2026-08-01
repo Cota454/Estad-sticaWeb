@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { Activity, Download, Upload, FileText, FileSpreadsheet, Trash2, AlertCircle, RotateCcw } from 'lucide-react';
+import React, { useRef } from 'react';
+import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle } from 'lucide-react';
 import { downloadJSONBackup, parseJSONBackupFile } from '../utils/exportUtils';
 import { Central, WorkGroup, DailyReport } from '../types';
 import { getTodayStr, formatDateShort } from '../utils/dateUtils';
@@ -9,7 +9,6 @@ interface HeaderProps {
   workGroups: WorkGroup[];
   reports: DailyReport[];
   onImportBackup: (backup: { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] }) => void;
-  onResetData: () => void;
   onOpenExportModal: (format: 'pdf' | 'word') => void;
   activeTab: string;
 }
@@ -19,12 +18,10 @@ export const Header: React.FC<HeaderProps> = ({
   workGroups,
   reports,
   onImportBackup,
-  onResetData,
   onOpenExportModal,
   activeTab
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [showConfirmReset, setShowConfirmReset] = useState<boolean>(false);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -39,12 +36,6 @@ export const Header: React.FC<HeaderProps> = ({
     } finally {
       if (e.target) e.target.value = '';
     }
-  };
-
-  const handleFactoryResetConfirm = () => {
-    onResetData();
-    setShowConfirmReset(false);
-    alert('Se han restablecido de fábrica todos los datos de la aplicación.');
   };
 
   return (
@@ -127,60 +118,10 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Exportar PDF</span>
             </button>
 
-            {/* Restablecer de Fábrica Button */}
-            <button
-              onClick={() => setShowConfirmReset(true)}
-              className="inline-flex items-center gap-1.5 text-xs bg-rose-900/60 hover:bg-rose-800 text-rose-200 hover:text-white px-3 py-1.5 rounded-lg font-medium transition-colors border border-rose-700/50"
-              title="Restablecer de fábrica toda la web eliminando todos los datos"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-              <span className="hidden sm:inline">Restablecer de Fábrica</span>
-            </button>
-
           </div>
 
         </div>
       </div>
-
-      {/* Confirmation Modal for Factory Reset */}
-      {showConfirmReset && (
-        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 text-slate-900 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center space-x-3 pb-3 border-b border-slate-100 text-rose-600">
-              <div className="p-2.5 bg-rose-50 rounded-xl">
-                <Trash2 className="w-6 h-6 text-rose-600" />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900">Restablecer de Fábrica la Web</h3>
-                <p className="text-[11px] text-slate-500">Acción irreversible de eliminación de datos</p>
-              </div>
-            </div>
-
-            <div className="mt-4 text-xs text-slate-600 space-y-2">
-              <p className="bg-rose-50 p-3 rounded-xl border border-rose-200 text-rose-900 font-medium">
-                ⚠️ <strong>Atención:</strong> Esta acción borrará <strong>TOODOS los datos</strong>, reportes diarios, importaciones de Excel y modificaciones registradas, volviendo la aplicación a su estado inicial limpio.
-              </p>
-              <p>¿Desea continuar y borrar todo?</p>
-            </div>
-
-            <div className="mt-6 flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
-              <button
-                onClick={() => setShowConfirmReset(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleFactoryResetConfirm}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md transition-all"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Sí, Borrar Todo y Restablecer</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 };

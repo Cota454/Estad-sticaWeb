@@ -1,21 +1,24 @@
 import React, { useState, useMemo } from 'react';
-import { History, Calendar, Search, Filter, Download, Table, Layers, Cpu, ArrowUpDown, ChevronDown, CheckCircle2, FileSpreadsheet } from 'lucide-react';
+import { History, Calendar, Search, Filter, Download, Table, Layers, Cpu, Trash2, RotateCcw } from 'lucide-react';
 import { Central, WorkGroup, DailyReport } from '../types';
 import { MONTH_NAMES_ES, formatDateShort, getDayOfWeekName } from '../utils/dateUtils';
 import { getCentralTotalCapacity } from '../utils/statCalculations';
+import { CopyTableButton } from './CopyButton';
 
 interface HistorialViewProps {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
+  onClearAllReports?: () => void;
 }
 
-type TableTab = 'matriz' | 'detallado' | 'tecnica' | 'diferencias';
+type TableTab = 'matriz' | 'detallado' | 'tecnica';
 
 export const HistorialView: React.FC<HistorialViewProps> = ({
   centrales,
   workGroups,
-  reports
+  reports,
+  onClearAllReports
 }) => {
   // Current date defaults
   const today = new Date();
@@ -29,6 +32,7 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
   const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [activeTableTab, setActiveTableTab] = useState<TableTab>('matriz');
+  const [showConfirmClear, setShowConfirmClear] = useState<boolean>(false);
 
   // Available Years calculated dynamically from reports + currentYear
   const availableYears = useMemo(() => {
@@ -162,6 +166,66 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
     };
   }, [filteredReports, centrales, workGroups, selectedCentralId, selectedGroupId]);
 
+  // Data formatted for Copy Table Button on Matriz
+  const matrizCopyHeaders = useMemo(() => [
+    'Central Telefónica',
+    'Código',
+    ...matrixData.activeGroups.map(g => `${g.name} (${g.code})`),
+    'TOTAL PERIODO'
+  ], [matrixData]);
+
+  const matrizCopyRows = useMemo(() => {
+    return matrixData.activeCentrales.map(c => {
+      let totalC = 0;
+      const groupVals = matrixData.activeGroups.map(g => {
+        const val = matrixData.grid[c.id]?.[g.id] || 0;
+        totalC += val;
+        return val;
+      });
+      return [c.name, c.code, ...groupVals, totalC];
+    });
+  }, [matrixData]);
+
+  // Data formatted for Copy Table Button on Detallado
+  const detalladoCopyHeaders = ['Fecha', 'Día', 'Central', 'Código Central', 'Grupo de Trabajo', 'Reportes'];
+  const detalladoCopyRows = useMemo(() => {
+    return filteredReports.map(r => {
+      const c = centrales.find(item => item.id === r.centralId);
+      const g = workGroups.find(item => item.id === r.workGroupId);
+      return [
+        r.date,
+        getDayOfWeekName(r.date),
+        c?.name || '',
+        c?.code || '',
+        g?.name || '',
+        r.reportCount
+      ];
+    });
+  }, [filteredReports, centrales, workGroups]);
+
+  // Data formatted for Copy Table Button on Técnica
+  const tecnicaCopyHeaders = ['Central Telefónica', 'Código', 'Capacidad Instalada Total', 'Reportes en Periodo', '% Afectación de Red', 'Estado Operativo'];
+  const tecnicaCopyRows = useMemo(() => {
+    return centrales.map(c => {
+      const totalCap = getCentralTotalCapacity(c);
+      const cReports = filteredReports
+        .filter(r => r.centralId === c.id)
+        .reduce((acc, r) => acc + (r.reportCount || 0), 0);
+      const pct = totalCap > 0 ? (cReports / totalCap) * 100 : 0;
+      const status = pct > 2 ? 'Atención Requerida' : 'Normal';
+      return [c.name, c.code, totalCap, cReports, `${pct.toFixed(2)}%`, status];
+    });
+  }, [centrales, filteredReports]);
+
+  // Handle Clear All Reports Confirm
+  const handleClearHistory = () => {
+    if (onClearAllReports) {
+      onClearAllReports();
+      setShowConfirmClear(false);
+      alert('Se ha borrado exitosamente todo el historial de reportes.');
+    }
+  };
+
   // Export current filtered view to CSV
   const handleExportCSV = () => {
     let csvContent = 'data:text/csv;charset=utf-8,';
@@ -240,7 +304,7 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
                   Historial Consolidado de Tablas
                 </h2>
                 <span className="bg-cyan-500/20 text-cyan-300 text-xs px-2.5 py-0.5 rounded-full border border-cyan-500/30 font-medium">
-                  Filtro Mes/Año
+                  {reports.length} registros guardados
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">
@@ -249,14 +313,27 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
             </div>
           </div>
 
-          {/* Export button */}
-          <button
-            onClick={handleExportCSV}
-            className="inline-flex items-center space-x-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md shadow-cyan-600/20 shrink-0 self-start lg:self-center"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exportar CSV de Historial</span>
-          </button>
+          {/* Action buttons: Export & Clear History */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0 self-start lg:self-center">
+            <button
+              onClick={handleExportCSV}
+              className="inline-flex items-center space-x-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all shadow-md shadow-cyan-600/20"
+            >
+              <Download className="w-4 h-4" />
+              <span>Exportar CSV</span>
+            </button>
+
+            {onClearAllReports && (
+              <button
+                onClick={() => setShowConfirmClear(true)}
+                className="inline-flex items-center space-x-1.5 bg-rose-900/60 hover:bg-rose-800 text-rose-200 hover:text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all border border-rose-700/60"
+                title="Eliminar permanentemente todos los registros del historial"
+              >
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span>Vaciar Todo el Historial</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Filters Grid */}
@@ -436,8 +513,31 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
             </button>
           </div>
 
-          <div className="text-xs text-slate-500 font-semibold">
-            Mostrando periodo: <span className="text-slate-900 font-bold">{selectedMonth === -1 ? 'Todos los Meses' : MONTH_NAMES_ES[selectedMonth]} {selectedYear === -1 ? '' : selectedYear}</span>
+          <div className="flex items-center gap-3">
+            {activeTableTab === 'matriz' && (
+              <CopyTableButton
+                headers={matrizCopyHeaders}
+                rows={matrizCopyRows}
+                title={`Matriz Consolidada - ${selectedMonth === -1 ? 'Todos los Meses' : MONTH_NAMES_ES[selectedMonth]} ${selectedYear === -1 ? '' : selectedYear}`}
+                variant="outline"
+              />
+            )}
+            {activeTableTab === 'detallado' && (
+              <CopyTableButton
+                headers={detalladoCopyHeaders}
+                rows={detalladoCopyRows}
+                title={`Registros Detallados - ${selectedMonth === -1 ? 'Todos los Meses' : MONTH_NAMES_ES[selectedMonth]} ${selectedYear === -1 ? '' : selectedYear}`}
+                variant="outline"
+              />
+            )}
+            {activeTableTab === 'tecnica' && (
+              <CopyTableButton
+                headers={tecnicaCopyHeaders}
+                rows={tecnicaCopyRows}
+                title={`Técnica Instalada - ${selectedMonth === -1 ? 'Todos los Meses' : MONTH_NAMES_ES[selectedMonth]} ${selectedYear === -1 ? '' : selectedYear}`}
+                variant="outline"
+              />
+            )}
           </div>
 
         </div>
@@ -672,6 +772,46 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
         )}
 
       </div>
+
+      {/* Confirmation Modal for Clear History */}
+      {showConfirmClear && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 text-slate-900 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center space-x-3 pb-3 border-b border-slate-100 text-rose-600">
+              <div className="p-2.5 bg-rose-50 rounded-xl">
+                <Trash2 className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">Vaciar Todo el Historial de Reportes</h3>
+                <p className="text-[11px] text-slate-500">Acción irreversible de borrado de datos</p>
+              </div>
+            </div>
+
+            <div className="mt-4 text-xs text-slate-600 space-y-2">
+              <p className="bg-rose-50 p-3 rounded-xl border border-rose-200 text-rose-900 font-medium">
+                ⚠️ <strong>Atención:</strong> Esta acción eliminará permanentemente los <strong>{reports.length} reportes guardados</strong> en el historial de la web.
+              </p>
+              <p>¿Está absolutamente seguro de borrar todos los registros del historial?</p>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowConfirmClear(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleClearHistory}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md transition-all"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Sí, Vaciar Todo el Historial</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

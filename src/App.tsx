@@ -72,6 +72,11 @@ export default function App() {
     saveReports(backup.reports);
   };
 
+  const handleClearAllReports = () => {
+    setReports([]);
+    saveReports([]);
+  };
+
   const handleResetData = () => {
     localStorage.clear();
     const reset = resetToDefaultData();
@@ -119,7 +124,6 @@ export default function App() {
         workGroups={workGroups}
         reports={reports}
         onImportBackup={handleImportBackup}
-        onResetData={handleResetData}
         onOpenExportModal={handleOpenExportModal}
         activeTab={activeTab}
       />
@@ -197,6 +201,7 @@ export default function App() {
             centrales={centrales}
             workGroups={workGroups}
             reports={reports}
+            onClearAllReports={handleClearAllReports}
           />
         )}
 

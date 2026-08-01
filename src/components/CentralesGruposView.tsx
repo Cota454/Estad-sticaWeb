@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Building2, Plus, Edit, Trash2, CheckCircle2, AlertCircle, X, Save, Layers, MapPin } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Building2, Plus, Edit, Trash2, CheckCircle2, AlertCircle, X, Save, Layers, MapPin, Download } from 'lucide-react';
 import { Central, WorkGroup } from '../types';
 import { getCentralTotalCapacity } from '../utils/statCalculations';
+import { CopyTableButton } from './CopyButton';
 
 interface CentralesGruposViewProps {
   centrales: Central[];
@@ -32,6 +33,51 @@ export const CentralesGruposView: React.FC<CentralesGruposViewProps> = ({
   const [groupName, setGroupName] = useState('');
   const [groupDesc, setGroupDesc] = useState('');
   const [groupColor, setGroupColor] = useState('#3b82f6');
+
+  // Headers and Rows for Copy Buttons
+  const centralesCopyHeaders = ['Código Central', 'Nombre Central', 'Ubicación / Dirección', 'Capacidad Técnica Instalada'];
+  const centralesCopyRows = useMemo(() => {
+    return centrales.map(c => [
+      c.code,
+      c.name,
+      c.location || 'Ubicación General',
+      getCentralTotalCapacity(c)
+    ]);
+  }, [centrales]);
+
+  const gruposCopyHeaders = ['Código Grupo', 'Nombre Grupo', 'Descripción / Funciones'];
+  const gruposCopyRows = useMemo(() => {
+    return workGroups.map(g => [
+      g.code,
+      g.name,
+      g.description || ''
+    ]);
+  }, [workGroups]);
+
+  // Export Tab Data as CSV
+  const handleExportData = () => {
+    let csvContent = 'data:text/csv;charset=utf-8,';
+
+    if (activeTab === 'centrales') {
+      csvContent += 'Código,Nombre de la Central,Ubicación,Capacidad Técnica Instalada\n';
+      centrales.forEach(c => {
+        csvContent += `"${c.code}","${c.name}","${c.location || ''}",${getCentralTotalCapacity(c)}\n`;
+      });
+    } else {
+      csvContent += 'Código,Nombre del Grupo de Trabajo,Descripción\n';
+      workGroups.forEach(g => {
+        csvContent += `"${g.code}","${g.name}","${g.description || ''}"\n`;
+      });
+    }
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `datos_${activeTab}_telecom.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Central CRUD Handlers
   const handleOpenCentralModal = (central?: Central) => {
@@ -181,15 +227,30 @@ export const CentralesGruposView: React.FC<CentralesGruposViewProps> = ({
         {activeTab === 'centrales' && (
           <div className="mt-5 space-y-4">
             
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-500 uppercase">Listado de Centrales Telefónicas Activas</span>
-              <button
-                onClick={() => handleOpenCentralModal()}
-                className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all shadow-md shadow-blue-500/20"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Nueva Central Telefónica</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <CopyTableButton
+                  headers={centralesCopyHeaders}
+                  rows={centralesCopyRows}
+                  title="Listado de Centrales Telefónicas Activas"
+                  variant="outline"
+                />
+                <button
+                  onClick={handleExportData}
+                  className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-all shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Exportar CSV</span>
+                </button>
+                <button
+                  onClick={() => handleOpenCentralModal()}
+                  className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg transition-all shadow-md shadow-blue-500/20"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Nueva Central</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -251,15 +312,30 @@ export const CentralesGruposView: React.FC<CentralesGruposViewProps> = ({
         {activeTab === 'grupos' && (
           <div className="mt-5 space-y-4">
             
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-500 uppercase">Grupos de Trabajo Técnico</span>
-              <button
-                onClick={() => handleOpenGroupModal()}
-                className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all shadow-md shadow-blue-500/20"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Nuevo Grupo de Trabajo</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <CopyTableButton
+                  headers={gruposCopyHeaders}
+                  rows={gruposCopyRows}
+                  title="Listado de Grupos de Trabajo Técnico"
+                  variant="outline"
+                />
+                <button
+                  onClick={handleExportData}
+                  className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-all shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Exportar CSV</span>
+                </button>
+                <button
+                  onClick={() => handleOpenGroupModal()}
+                  className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg transition-all shadow-md shadow-blue-500/20"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Nuevo Grupo</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

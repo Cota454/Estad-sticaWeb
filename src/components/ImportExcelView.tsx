@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { ClipboardPaste, CheckCircle2, AlertTriangle, FileSpreadsheet, Play, Sparkles, Calendar } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { ClipboardPaste, CheckCircle2, AlertTriangle, FileSpreadsheet, Play, Sparkles, Calendar, Layers, Table } from 'lucide-react';
 import { Central, WorkGroup, DailyReport } from '../types';
 import { parseExcelClipboardData } from '../utils/statCalculations';
 import { getTodayStr, isFutureDate } from '../utils/dateUtils';
+import { CopyTableButton } from './CopyButton';
 
 interface ImportExcelViewProps {
   centrales: Central[];
@@ -21,13 +22,42 @@ export const ImportExcelView: React.FC<ImportExcelViewProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // Sample format string to help user
-  const SAMPLE_EXCEL_FORMAT = `Central, Planta Exterior, Conmutación, Transmisión y Fibra, Energía y Climatización, Banda Ancha y FTTH, Soporte e Ingeniero
+  const SAMPLE_EXCEL_FORMAT = `Central, PLEXT, CONM, TRANS, ENER, BROAD, SOP
 Central Metropolitana, 8, 3, 2, 1, 5, 2
 Central Norte (Tele), 4, 1, 0, 1, 3, 1
 Central Este, 2, 2, 1, 0, 2, 0
 Central Sur, 5, 4, 2, 1, 4, 1
 Central Digital Oeste, 3, 1, 1, 0, 2, 1
 Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
+
+  // Real-time parse result for preview table
+  const previewParseResult = useMemo(() => {
+    if (!pastedText.trim()) return null;
+    return parseExcelClipboardData(pastedText, workGroups, centrales);
+  }, [pastedText, workGroups, centrales]);
+
+  // Headers and rows for CopyTableButton on preview
+  const previewCopyHeaders = useMemo(() => {
+    if (!previewParseResult || !previewParseResult.success) return [];
+    return [
+      'Central Telefónica',
+      ...previewParseResult.matchedGroups.map(g => `${g.code} (${g.name})`),
+      'TOTAL'
+    ];
+  }, [previewParseResult]);
+
+  const previewCopyRows = useMemo(() => {
+    if (!previewParseResult || !previewParseResult.success) return [];
+    return previewParseResult.rows.map(r => {
+      let rowTot = 0;
+      const grpVals = previewParseResult.matchedGroups.map(g => {
+        const val = r.groupValues[g.id] || 0;
+        rowTot += val;
+        return val;
+      });
+      return [r.centralName, ...grpVals, rowTot];
+    });
+  }, [previewParseResult]);
 
   const handleParseAndImport = () => {
     if (!pastedText.trim()) {
@@ -60,14 +90,12 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
     const newReports: DailyReport[] = [];
 
     parseResult.rows.forEach(row => {
-      // Find matching central
       let matchedCentral = centrales.find(
         c => c.name.toLowerCase() === row.centralName.toLowerCase() ||
              c.name.toLowerCase().includes(row.centralName.toLowerCase()) ||
              row.centralName.toLowerCase().includes(c.name.toLowerCase())
       );
 
-      // If central doesn't exist, use or default
       const centralId = matchedCentral ? matchedCentral.id : `cnt_custom_${row.centralName.replace(/\s+/g, '_').toLowerCase()}`;
 
       parseResult.matchedGroups.forEach(grp => {
@@ -98,7 +126,7 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
     setPastedText(SAMPLE_EXCEL_FORMAT);
     setStatusMessage({
       type: 'info',
-      text: 'Se ha cargado una plantilla de ejemplo. Presione "Procesar e Importar al Histórico" para probar.'
+      text: 'Se ha cargado una plantilla de ejemplo organizada por Código de Grupo (PLEXT, CONM, TRANS, ENER, BROAD, SOP).'
     });
   };
 
@@ -115,7 +143,7 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
               <span>Pegar Tablas de Reportes desde Excel</span>
             </h2>
             <p className="text-xs text-slate-500">
-              Copie una tabla directamente desde Excel o Hoja de Cálculo de Google y péguela en el área inferior
+              Copie una tabla directamente desde Excel o Hoja de Cálculo de Google. La aplicación organizará automáticamente las columnas por <strong>Código de Grupo de Trabajo</strong>.
             </p>
           </div>
 
@@ -145,12 +173,11 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
         <div className="mt-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-2">
           <div className="font-bold text-slate-900 flex items-center gap-1.5">
             <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            <span>Estructura Requerida de la Tabla:</span>
+            <span>Organización por Código de Grupo de Trabajo:</span>
           </div>
-          <ul className="list-disc list-inside space-y-1 text-slate-600 pl-1">
-            <li><strong>Fila 1:</strong> Nombre de la columna de central seguido por los nombres de los <strong>grupos de trabajo separados por coma</strong> o tabulación.</li>
-            <li><strong>Fila 2 en adelante:</strong> Nombre de la central telefónica más los <strong>valores numéricos de reportes</strong> para cada grupo.</li>
-          </ul>
+          <p className="text-slate-600">
+            Los encabezados de columna en Excel pueden llevar los <strong>Códigos de Grupo</strong> (por ejemplo: <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-bold">PLEXT</code>, <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-bold">CONM</code>, <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-bold">TRANS</code>, <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-bold">ENER</code>, <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-bold">BROAD</code>, <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-bold">SOP</code>) o nombres de los grupos.
+          </p>
         </div>
 
         {/* Status Message Alert */}
@@ -170,10 +197,10 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
         {/* Textarea for Clipboard Paste */}
         <div className="mt-5 relative">
           <textarea
-            rows={10}
+            rows={8}
             value={pastedText}
             onChange={(e) => setPastedText(e.target.value)}
-            placeholder={`Pegue aquí los datos desde Excel...\n\nEjemplo:\nCentral, Planta Exterior, Conmutación, Transmisión y Fibra, Energía y Climatización, Banda Ancha, Soporte\nCentral Norte (Tele), 5, 1, 2, 0, 3, 1`}
+            placeholder={`Pegue aquí la tabla copiada desde Excel...\n\nEjemplo con Código de Grupo:\nCentral, PLEXT, CONM, TRANS, ENER, BROAD, SOP\nCentral Norte (Tele), 5, 1, 2, 0, 3, 1`}
             className="w-full bg-slate-900 text-slate-100 font-mono text-xs p-4 rounded-xl border border-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-inner"
           />
 
@@ -183,7 +210,7 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
               className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl transition-colors font-semibold border border-slate-200"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>Cargar Plantilla de Ejemplo</span>
+              <span>Cargar Ejemplos por Código de Grupo</span>
             </button>
 
             <button
@@ -195,6 +222,68 @@ Central Fibra Centro, 6, 2, 3, 1, 6, 2`;
             </button>
           </div>
         </div>
+
+        {/* Preview Table organized by Group Code */}
+        {previewParseResult && previewParseResult.success && previewParseResult.rows.length > 0 && (
+          <div className="mt-6 pt-6 border-t border-slate-200">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center space-x-2">
+                <Layers className="w-4 h-4 text-blue-600" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Vista Previa Organizada por Código de Grupo ({previewParseResult.rows.length} centrales)
+                </h3>
+              </div>
+
+              <CopyTableButton
+                headers={previewCopyHeaders}
+                rows={previewCopyRows}
+                title={`Importación Excel Organizada por Código de Grupo - Fecha ${targetDate}`}
+                variant="outline"
+              />
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-xs text-left text-slate-700">
+                <thead className="bg-slate-900 text-white font-semibold">
+                  <tr>
+                    <th className="p-3">Central Telefónica</th>
+                    {previewParseResult.matchedGroups.map(grp => (
+                      <th key={grp.id} className="p-3 text-center min-w-[100px]">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded text-white inline-block mb-0.5" style={{ backgroundColor: grp.color }}>
+                          {grp.code}
+                        </span>
+                        <div className="text-[10px] text-slate-300 font-normal truncate max-w-[120px]">{grp.name}</div>
+                      </th>
+                    ))}
+                    <th className="p-3 text-center bg-slate-800 text-cyan-400 font-bold">TOTAL</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {previewParseResult.rows.map((row, idx) => {
+                    let totalRow = 0;
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50">
+                        <td className="p-3 font-bold text-slate-900">{row.centralName}</td>
+                        {previewParseResult.matchedGroups.map(grp => {
+                          const val = row.groupValues[grp.id] || 0;
+                          totalRow += val;
+                          return (
+                            <td key={grp.id} className="p-3 text-center font-mono font-bold text-slate-800">
+                              {val}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 text-center font-mono font-extrabold text-cyan-700 bg-slate-50">
+                          {totalRow}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
       </div>
 
