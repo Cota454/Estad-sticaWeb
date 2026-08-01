@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, TrendingUp, Cpu, GitCompare, ClipboardPaste, Building2, CalendarPlus, History, Settings } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, Cpu, GitCompare, ClipboardPaste, Building2, CalendarPlus, History, Settings, Cloud } from 'lucide-react';
 
 interface NavigationProps {
   activeTab: string;
@@ -15,6 +15,7 @@ export const NAVIGATION_TABS = [
   { id: 'excel', label: 'Pegar desde Excel', icon: ClipboardPaste },
   { id: 'centrales', label: 'Centrales y Grupos', icon: Building2 },
   { id: 'registro', label: 'Registro Diario', icon: CalendarPlus },
+  { id: 'drive_backup', label: 'Google Drive Backup', icon: Cloud },
   { id: 'ajustes', label: 'Ajustes Informe', icon: Settings }
 ];
 

@@ -1,8 +1,9 @@
 import React, { useRef } from 'react';
-import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle, Cloud, User, LogOut, CheckCircle2 } from 'lucide-react';
 import { downloadJSONBackup, parseJSONBackupFile } from '../utils/exportUtils';
-import { Central, WorkGroup, DailyReport } from '../types';
+import { Central, WorkGroup, DailyReport, UserProfile } from '../types';
 import { getTodayStr, formatDateShort } from '../utils/dateUtils';
+import { ADMIN_EMAIL } from '../utils/googleDriveService';
 
 interface HeaderProps {
   centrales: Central[];
@@ -11,6 +12,10 @@ interface HeaderProps {
   onImportBackup: (backup: { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] }) => void;
   onOpenExportModal: (format: 'pdf' | 'word') => void;
   activeTab: string;
+  currentUser?: UserProfile;
+  onNavigateToDrive?: () => void;
+  onLogout?: () => void;
+  syncStatus?: 'synced' | 'syncing' | 'idle';
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,7 +24,11 @@ export const Header: React.FC<HeaderProps> = ({
   reports,
   onImportBackup,
   onOpenExportModal,
-  activeTab
+  activeTab,
+  currentUser,
+  onNavigateToDrive,
+  onLogout,
+  syncStatus = 'synced'
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -54,6 +63,14 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="bg-blue-500/20 text-blue-300 text-xs px-2.5 py-0.5 rounded-full border border-blue-500/30 font-medium">
                   v2.5
                 </span>
+                
+                {/* Real-time Drive Sync Badge */}
+                <div className="hidden sm:flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 border border-slate-700">
+                  <span className={`w-2 h-2 rounded-full ${syncStatus === 'syncing' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`}></span>
+                  <span className={syncStatus === 'syncing' ? 'text-amber-300' : 'text-emerald-300'}>
+                    {syncStatus === 'syncing' ? 'Sincronizando Drive...' : 'Drive Sincronizado'}
+                  </span>
+                </div>
               </div>
               <p className="text-xs text-slate-400 font-medium">
                 Plataforma Estadística e Informes de las IP CTA SE
@@ -66,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
             
             <div className="hidden xl:flex items-center space-x-1.5 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60 text-xs text-slate-300">
               <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-              <span>Restricción de fecha: <strong>≤ {formatDateShort(getTodayStr())}</strong></span>
+              <span>Max Fecha: <strong>≤ {formatDateShort(getTodayStr())}</strong></span>
             </div>
 
             {/* Hidden File Input for JSON Backup Import */}
@@ -78,6 +95,19 @@ export const Header: React.FC<HeaderProps> = ({
               className="hidden"
             />
 
+            {/* Google Drive Backup Button */}
+            {onNavigateToDrive && (
+              <button
+                onClick={onNavigateToDrive}
+                className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-blue-300 px-3 py-1.5 rounded-lg font-bold transition-colors border border-blue-500/30 shadow-sm"
+                title="Ir al gestor de respaldos automáticos en Google Drive"
+              >
+                <Cloud className="w-3.5 h-3.5 text-blue-400" />
+                <span>Google Drive</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              </button>
+            )}
+
             {/* Import JSON */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -85,17 +115,17 @@ export const Header: React.FC<HeaderProps> = ({
               title="Restaurar copia de seguridad desde un archivo .json"
             >
               <Upload className="w-3.5 h-3.5 text-blue-400" />
-              <span>Importar Backup</span>
+              <span>Importar</span>
             </button>
 
-            {/* Export JSON (copia_de_seguridad_YYYY-MM-DD_HH-mm-ss.json) */}
+            {/* Export JSON */}
             <button
               onClick={() => downloadJSONBackup(centrales, workGroups, reports)}
               className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-medium transition-colors border border-slate-700"
-              title="Descargar copia de seguridad en formato JSON con fecha y hora"
+              title="Descargar copia de seguridad en formato JSON"
             >
               <Download className="w-3.5 h-3.5 text-slate-400" />
-              <span>Backup JSON</span>
+              <span>Backup</span>
             </button>
 
             {/* Export Word (.docx) */}
@@ -105,7 +135,7 @@ export const Header: React.FC<HeaderProps> = ({
               title="Generar y exportar informe en formato Word (.docx)"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Exportar Word</span>
+              <span>Word</span>
             </button>
 
             {/* Export PDF */}
@@ -115,8 +145,32 @@ export const Header: React.FC<HeaderProps> = ({
               title="Generar y exportar informe completo en formato PDF"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>Exportar PDF</span>
+              <span>PDF</span>
             </button>
+
+            {/* User Session Profile & Logout Button */}
+            {currentUser && onLogout && (
+              <div className="flex items-center space-x-2 border-l border-slate-800 pl-2 ml-1">
+                <div className="hidden lg:flex items-center space-x-2 bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-xl text-xs">
+                  <div className="w-6 h-6 rounded-full bg-blue-600 text-white font-black flex items-center justify-center text-[10px] uppercase">
+                    {currentUser.email ? currentUser.email[0] : 'A'}
+                  </div>
+                  <div className="max-w-[130px] truncate">
+                    <div className="text-[11px] font-bold text-white truncate">{currentUser.name || 'Administrador'}</div>
+                    <div className="text-[9px] text-slate-400 font-mono truncate">{currentUser.email}</div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={onLogout}
+                  className="inline-flex items-center gap-1.5 text-xs bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white px-3 py-1.5 rounded-xl font-bold transition-all border border-rose-500/30 shadow-sm"
+                  title="Cerrar sesión y volver a la pantalla de bienvenida"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Cerrar Sesión</span>
+                </button>
+              </div>
+            )}
 
           </div>
 

@@ -217,11 +217,17 @@ const STORAGE_KEYS = {
   REPORTS: 'telecom_stat_reports_v1'
 };
 
-export function loadCentrales(): Central[] {
+function getStorageKey(baseKey: string, email?: string): string {
+  if (!email) return baseKey;
+  return `${baseKey}_${email.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+}
+
+export function loadCentrales(userEmail?: string): Central[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.CENTRALES);
+    const key = getStorageKey(STORAGE_KEYS.CENTRALES, userEmail);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      saveCentrales(INITIAL_CENTRALES);
+      saveCentrales(INITIAL_CENTRALES, userEmail);
       return INITIAL_CENTRALES;
     }
     return JSON.parse(raw);
@@ -231,19 +237,21 @@ export function loadCentrales(): Central[] {
   }
 }
 
-export function saveCentrales(centrales: Central[]): void {
+export function saveCentrales(centrales: Central[], userEmail?: string): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.CENTRALES, JSON.stringify(centrales));
+    const key = getStorageKey(STORAGE_KEYS.CENTRALES, userEmail);
+    localStorage.setItem(key, JSON.stringify(centrales));
   } catch (e) {
     console.error('Failed to save centrales', e);
   }
 }
 
-export function loadWorkGroups(): WorkGroup[] {
+export function loadWorkGroups(userEmail?: string): WorkGroup[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.WORK_GROUPS);
+    const key = getStorageKey(STORAGE_KEYS.WORK_GROUPS, userEmail);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      saveWorkGroups(INITIAL_WORK_GROUPS);
+      saveWorkGroups(INITIAL_WORK_GROUPS, userEmail);
       return INITIAL_WORK_GROUPS;
     }
     return JSON.parse(raw);
@@ -253,20 +261,22 @@ export function loadWorkGroups(): WorkGroup[] {
   }
 }
 
-export function saveWorkGroups(groups: WorkGroup[]): void {
+export function saveWorkGroups(groups: WorkGroup[], userEmail?: string): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.WORK_GROUPS, JSON.stringify(groups));
+    const key = getStorageKey(STORAGE_KEYS.WORK_GROUPS, userEmail);
+    localStorage.setItem(key, JSON.stringify(groups));
   } catch (e) {
     console.error('Failed to save workgroups', e);
   }
 }
 
-export function loadReports(): DailyReport[] {
+export function loadReports(userEmail?: string): DailyReport[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.REPORTS);
+    const key = getStorageKey(STORAGE_KEYS.REPORTS, userEmail);
+    const raw = localStorage.getItem(key);
     if (!raw) {
       const seed = generateSeedDailyReports();
-      saveReports(seed);
+      saveReports(seed, userEmail);
       return seed;
     }
     return JSON.parse(raw);
@@ -277,19 +287,20 @@ export function loadReports(): DailyReport[] {
   }
 }
 
-export function saveReports(reports: DailyReport[]): void {
+export function saveReports(reports: DailyReport[], userEmail?: string): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.REPORTS, JSON.stringify(reports));
+    const key = getStorageKey(STORAGE_KEYS.REPORTS, userEmail);
+    localStorage.setItem(key, JSON.stringify(reports));
   } catch (e) {
     console.error('Failed to save reports', e);
   }
 }
 
-export function resetToDefaultData(): { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] } {
+export function resetToDefaultData(userEmail?: string): { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] } {
   const seedReports = generateSeedDailyReports();
-  saveCentrales(INITIAL_CENTRALES);
-  saveWorkGroups(INITIAL_WORK_GROUPS);
-  saveReports(seedReports);
+  saveCentrales(INITIAL_CENTRALES, userEmail);
+  saveWorkGroups(INITIAL_WORK_GROUPS, userEmail);
+  saveReports(seedReports, userEmail);
   return {
     centrales: INITIAL_CENTRALES,
     workGroups: INITIAL_WORK_GROUPS,

@@ -91,6 +91,25 @@ export interface SystemDataBackup {
   reports: DailyReport[];
 }
 
+export interface UserProfile {
+  email: string;
+  name: string;
+  picture?: string;
+  role: 'admin' | 'user';
+  isAuthenticated: boolean;
+  accessToken?: string;
+  tokenExpiry?: number;
+}
+
+export interface DriveBackupFile {
+  id: string;
+  name: string;
+  createdTime: string;
+  size?: string;
+  mimeType: string;
+  webViewLink?: string;
+}
+
 export interface ReportSettings {
   documentTitle: string;
   documentSubtitle: string;
