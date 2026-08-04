@@ -1,27 +1,23 @@
 import React, { useState, useMemo } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, AreaChart, Area, RadarChart, Radar, PolarGrid,
-  PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, PieChart, Pie, Cell
+  BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend, LabelList
 } from 'recharts';
 import {
-  Wrench, Clock, CheckCircle2, AlertTriangle, TrendingUp, TrendingDown,
-  Search, Filter, Sparkles, ArrowLeft, UserCheck, Building2, FileText,
+  Wrench, Clock, CheckCircle2, AlertTriangle, TrendingUp,
+  Search, Filter, Sparkles, ArrowLeft, UserCheck, Building2,
   Calendar, Upload, Download, Table, Layers, BarChart3, LineChart as LineChartIcon,
-  AreaChart as AreaChartIcon, PieChart as PieChartIcon, GitCompare, RefreshCw,
-  Repeat, Plus, Edit2, Trash2, Check, ArrowRight, HardDrive, FileSpreadsheet,
-  Settings, HelpCircle, Copy
+  AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
+  Key, Save, ShieldAlert
 } from 'lucide-react';
 import { Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema } from '../types';
-import {
-  MONTH_NAMES_ES, getTodayStr, formatDateShort, formatDateLong,
-  getAvailableMonths
-} from '../utils/dateUtils';
+import { MONTH_NAMES_ES } from '../utils/dateUtils';
 import { filterReportsByMonthYear } from '../utils/statCalculations';
 import {
   parseExcelFileToRawTable, processRepairRowsWithMapping, createCustomTableFromExcel, RawExcelSheetData
 } from '../utils/excelRepairParser';
-import { CopyTableButton, CopyImageButton } from './CopyButton';
+import { downloadJSONBackup } from '../utils/exportUtils';
+import { CopyTableButton } from './CopyButton';
 
 interface AnalisisReparacionesViewProps {
   centrales: Central[];
@@ -36,10 +32,11 @@ interface AnalisisReparacionesViewProps {
   onBackToHub: () => void;
 }
 
-type TabType = 'central' | 'monthly' | 'mapper' | 'kpis' | 'repeated' | string; // string for custom table IDs
-type ChartType = 'bar_grouped' | 'bar_stacked' | 'line' | 'area' | 'radar';
+type TabType = 'central' | 'monthly' | 'mapper' | 'kpis' | 'repeated' | 'keys' | 'audit' | string;
+type ChartType = 'bar_grouped' | 'bar_stacked' | 'line' | 'area';
+type SortOrder = 'desc' | 'asc';
 
-const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1'];
+const DAY_NAMES_ES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
 export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> = ({
   centrales,
@@ -58,12 +55,29 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
   // Filter State (Month & Year)
   const todayDate = new Date();
-  const [selectedMonth, setSelectedMonth] = useState<number>(todayDate.getMonth()); // 0-indexed (August = 7)
-  const [selectedYear, setSelectedYear] = useState<number>(todayDate.getFullYear()); // 2026
+  const [selectedMonth, setSelectedMonth] = useState<number>(todayDate.getMonth()); // 0-indexed
+  const [selectedYear, setSelectedYear] = useState<number>(todayDate.getFullYear());
   const [selectedCentralFilter, setSelectedCentralFilter] = useState<string>('all');
+  
+  // Independent Chart Type Selector & Value Labels
   const [chartType, setChartType] = useState<ChartType>('bar_grouped');
+  const [showValuesOnBars, setShowValuesOnBars] = useState<boolean>(true);
 
-  // Excel File State & Mapping State
+  // Pestaña 5 (Servicios Reincidentes) Specific Filters
+  const [repeatedMinCount, setRepeatedMinCount] = useState<number>(2);
+  const [repeatedSearchTerm, setRepeatedSearchTerm] = useState<string>('');
+  const [repeatedCentralFilter, setRepeatedCentralFilter] = useState<string>('all');
+  const [repeatedTechFilter, setRepeatedTechFilter] = useState<string>('all');
+  const [repeatedSortOrder, setRepeatedSortOrder] = useState<SortOrder>('desc');
+
+  // Pestaña 6 (Análisis de Claves) Filter
+  const [keysCentralFilter, setKeysCentralFilter] = useState<string>('all');
+
+  // Audit Search State
+  const [auditSearchQuery, setAuditSearchQuery] = useState<string>('');
+  const [selectedAuditRecordId, setSelectedAuditRecordId] = useState<string | null>(null);
+
+  // Excel File State & Mapping Form State
   const [uploadedExcelData, setUploadedExcelData] = useState<RawExcelSheetData | null>(null);
   const [isProcessingExcel, setIsProcessingExcel] = useState<boolean>(false);
   const [excelErrorMessage, setExcelErrorMessage] = useState<string | null>(null);
@@ -72,19 +86,14 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   // Local Copy of Mapping Form State
   const [mappingForm, setMappingForm] = useState<RepairColumnMapping>(columnMapping);
 
-  // New Custom Table Form State
+  // Custom Table Form State
   const [newTableName, setNewTableName] = useState<string>('');
   const [newTableDescription, setNewTableDescription] = useState<string>('');
   const [selectedColsForCustomTable, setSelectedColsForCustomTable] = useState<string[]>([]);
   const [customTableStartRow, setCustomTableStartRow] = useState<number>(2);
   const [customTableEndRow, setCustomTableEndRow] = useState<number | undefined>(undefined);
 
-  // Repeated Services Filter State
-  const [repeatedMinCount, setRepeatedMinCount] = useState<number>(2);
-  const [repeatedSearchTerm, setRepeatedSearchTerm] = useState<string>('');
-  const [repeatedCentralFilter, setRepeatedCentralFilter] = useState<string>('all');
-
-  // 1. Handle Excel Upload
+  // 1. Handle Excel File Upload
   const handleFileUpload = async (file: File) => {
     setIsProcessingExcel(true);
     setExcelErrorMessage(null);
@@ -94,31 +103,31 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       const parsedData = await parseExcelFileToRawTable(file);
       setUploadedExcelData(parsedData);
 
-      // Auto-set default column mapping candidates from headers
       const headers = parsedData.headers;
       const findCol = (keywords: string[]) => {
         return headers.find(h => keywords.some(k => h.toLowerCase().includes(k))) || headers[0] || '';
       };
 
       const updatedMapping: RepairColumnMapping = {
-        dateCol: findCol(['fecha', 'date', 'dia']),
+        dateCol: findCol(['fecha', 'date', 'atencion', 'dia']),
+        reportDateCol: findCol(['reporte', 'ingreso', 'solicitud', 'creacion']),
         centralCol: findCol(['central', 'cta', 'nodo', 'sucursal']),
         serviceCol: findCol(['servicio', 'telefono', 'tel', 'linea', 'abonado', 'numero', 'folio']),
         ticketCol: findCol(['ticket', 'folio', 'orden', 'codigo', 'id']),
         technicianCol: findCol(['tecnico', 'brigada', 'contrata', 'personal']),
-        issueCol: findCol(['falla', 'averia', 'incidencia', 'problema', 'descripcion']),
-        statusCol: findCol(['estado', 'status', 'condicion']),
+        cableCol: findCol(['cable', 'falla', 'averia', 'incidencia']),
+        grupoCol: findCol(['grupo', 'estado', 'status', 'condicion', 'departamento']),
+        claveCol: findCol(['clave', 'code', 'codigo', 'cierre', 'causa']),
+        issueCol: findCol(['cable', 'falla', 'averia']),
+        statusCol: findCol(['grupo', 'estado']),
         mttrCol: findCol(['mttr', 'horas', 'tiempo', 'duracion']),
         startRow: 2
       };
 
       setMappingForm(updatedMapping);
       onUpdateColumnMapping(updatedMapping);
-
-      // Automatically initialize selected columns for custom table creation
       setSelectedColsForCustomTable(headers.slice(0, Math.min(6, headers.length)));
-
-      setExcelSuccessMessage(`¡Archivo "${file.name}" cargado exitosamente! Se detectaron ${parsedData.totalRows} filas y ${headers.length} columnas.`);
+      setExcelSuccessMessage(`¡Archivo "${file.name}" cargado! Se detectaron ${parsedData.totalRows} filas y ${headers.length} columnas.`);
     } catch (err: any) {
       setExcelErrorMessage(err.message || 'Error al procesar el archivo Excel.');
     } finally {
@@ -126,7 +135,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     }
   };
 
-  // 2. Process and Save Repair Records from Excel
+  // 2. Process and Save Repair Records
   const handleProcessAndSaveRepairs = () => {
     if (!uploadedExcelData || uploadedExcelData.rows.length === 0) {
       setExcelErrorMessage('Primero debe subir un archivo Excel con registros para procesar.');
@@ -146,30 +155,26 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
         return;
       }
 
-      // Merge with existing records or replace
       onUpdateRepairRecords(processed);
       onUpdateColumnMapping(mappingForm);
-
-      setExcelSuccessMessage(`¡Se procesaron y guardaron ${processed.length} órdenes de reparación correctamente! Todos los dashboards se han actualizado.`);
+      setExcelSuccessMessage(`¡Se procesaron y guardaron ${processed.length} órdenes de reparación correctamente! Todos los módulos han sido actualizados.`);
     } catch (err: any) {
       setExcelErrorMessage(`Error al procesar filas: ${err.message || err}`);
     }
   };
 
-  // 3. Create New Custom Table
+  // 3. Create Custom Table
   const handleCreateCustomTable = () => {
     if (!uploadedExcelData || uploadedExcelData.rows.length === 0) {
       setExcelErrorMessage('Cargue un archivo Excel antes de crear una tabla personalizada.');
       return;
     }
-
     if (!newTableName.trim()) {
       setExcelErrorMessage('Ingrese un nombre para la nueva tabla personalizada.');
       return;
     }
-
     if (selectedColsForCustomTable.length === 0) {
-      setExcelErrorMessage('Seleccione al menos una columna para incluir en la nueva tabla.');
+      setExcelErrorMessage('Seleccione al menos una columna.');
       return;
     }
 
@@ -182,29 +187,31 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
         customTableEndRow,
         newTableDescription
       );
-
-      const updatedTables = [...customTables, newSchema];
-      onUpdateCustomTables(updatedTables);
-
+      onUpdateCustomTables([...customTables, newSchema]);
       setNewTableName('');
       setNewTableDescription('');
-      setExcelSuccessMessage(`¡Tabla personalizada "${newSchema.tableName}" creada con éxito (${newSchema.rowCount} filas)! Puede verla en su pestaña dedicada.`);
-      
-      // Auto-navigate to new table dashboard tab
+      setExcelSuccessMessage(`¡Tabla personalizada "${newSchema.tableName}" creada con éxito (${newSchema.rowCount} filas)!`);
       setActiveTab(newSchema.id);
     } catch (err: any) {
       setExcelErrorMessage(`Error al crear la tabla: ${err.message || err}`);
     }
   };
 
-  // 4. Delete Custom Table
   const handleDeleteCustomTable = (tableId: string) => {
-    const updated = customTables.filter(t => t.id !== tableId);
-    onUpdateCustomTables(updated);
+    onUpdateCustomTables(customTables.filter(t => t.id !== tableId));
     setActiveTab('mapper');
   };
 
-  // Filtered Repair Records by Month & Year
+  // List of all unique technicians in dataset
+  const allTechniciansList = useMemo(() => {
+    const set = new Set<string>();
+    repairRecords.forEach(r => {
+      if (r.technician && r.technician.trim()) set.add(r.technician.trim());
+    });
+    return Array.from(set).sort();
+  }, [repairRecords]);
+
+  // Filtered Repair Records by Selected Month & Year
   const filteredRepairs = useMemo(() => {
     return repairRecords.filter(r => {
       if (!r.date) return false;
@@ -225,7 +232,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     return filterReportsByMonthYear(reports, selectedMonth, selectedYear, true);
   }, [reports, selectedMonth, selectedYear]);
 
-  // Aggregated Stats per Central CTA (Reportes Iniciales Módulo 1 vs Reparaciones Realizadas)
+  // Central Comparison Data (Initial Reports vs Repairs Realized)
   const centralComparisonData = useMemo(() => {
     const map: Record<string, {
       centralId: string;
@@ -239,7 +246,6 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       mttrSum: number;
     }> = {};
 
-    // Initialize map with all Centrales
     centrales.forEach(c => {
       map[c.id] = {
         centralId: c.id,
@@ -254,7 +260,6 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       };
     });
 
-    // Accumulate Initial Reports from Module 1
     filteredInitialReports.forEach(r => {
       if (map[r.centralId]) {
         map[r.centralId].initialReportsCount += (r.reportCount || 0);
@@ -274,14 +279,12 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       }
     });
 
-    // Accumulate Repairs
     filteredRepairs.forEach(r => {
       let key = r.centralId;
       if (!key) {
         const found = centrales.find(c => c.name.toLowerCase() === r.centralName.toLowerCase() || c.code.toLowerCase() === r.centralName.toLowerCase());
         key = found ? found.id : r.centralName;
       }
-
       if (!map[key]) {
         map[key] = {
           centralId: key,
@@ -295,10 +298,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           mttrSum: 0
         };
       }
-
       map[key].repairsCount += 1;
       map[key].mttrSum += (r.mttrHours || 0);
-
       if (r.status === 'resolved') map[key].resolvedCount += 1;
       else if (r.status === 'in_progress') map[key].inProgressCount += 1;
       else map[key].pendingCount += 1;
@@ -323,39 +324,44 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     return rows;
   }, [centrales, filteredInitialReports, filteredRepairs]);
 
-  // Summary Totals
-  const totalSummary = useMemo(() => {
-    let sumInitial = 0;
-    let sumRepairs = 0;
-    let sumResolved = 0;
-    let sumInProgress = 0;
-    let sumPending = 0;
-    let totalMttrSum = 0;
+  // Pestaña 1: Analysis by Day of Week (Días de la semana con mayor histórico)
+  const dayOfWeekStats = useMemo(() => {
+    const dayCounts = [0, 0, 0, 0, 0, 0, 0]; // Sun=0, Mon=1...
+    let total = 0;
 
-    centralComparisonData.forEach(row => {
-      sumInitial += row.initialReportsCount;
-      sumRepairs += row.repairsCount;
-      sumResolved += row.resolvedCount;
-      sumInProgress += row.inProgressCount;
-      sumPending += row.pendingCount;
-      totalMttrSum += row.mttrSum;
+    filteredRepairs.forEach(r => {
+      if (!r.date) return;
+      const d = new Date(r.date + 'T12:00:00');
+      if (isNaN(d.getTime())) return;
+      const dayIdx = d.getDay();
+      dayCounts[dayIdx] += 1;
+      total += 1;
     });
 
-    const totalRate = sumInitial > 0 ? parseFloat(((sumRepairs / sumInitial) * 100).toFixed(1)) : 0;
-    const globalAvgMttr = sumRepairs > 0 ? parseFloat((totalMttrSum / sumRepairs).toFixed(1)) : 0;
+    const list = dayCounts.map((count, idx) => {
+      const name = DAY_NAMES_ES[idx];
+      const pct = total > 0 ? parseFloat(((count / total) * 100).toFixed(1)) : 0;
+      return {
+        dayIndex: idx,
+        name,
+        count,
+        pct
+      };
+    });
+
+    let peakDay = list[1]; // default Monday
+    list.forEach(item => {
+      if (item.count > peakDay.count) peakDay = item;
+    });
 
     return {
-      sumInitial,
-      sumRepairs,
-      sumResolved,
-      sumInProgress,
-      sumPending,
-      totalRate,
-      globalAvgMttr
+      list,
+      peakDay,
+      total
     };
-  }, [centralComparisonData]);
+  }, [filteredRepairs]);
 
-  // Breakdown 1: Comparación por Días del Mes (Daily Comparison)
+  // Daily Comparison Chart Data (Comparación por Día)
   const dailyComparisonData = useMemo(() => {
     const dateMap: Record<string, { date: string; dayNum: number; reports: number; repairs: number }> = {};
 
@@ -384,40 +390,20 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     }));
   }, [filteredInitialReports, filteredRepairs]);
 
-  // Breakdown 2: Comparación entre Semanas del Mes (Weekly Comparison)
-  const weeklyComparisonData = useMemo(() => {
-    const weekMap: Record<number, { weekName: string; reports: number; repairs: number }> = {
-      1: { weekName: 'Semana 1 (Días 1-7)', reports: 0, repairs: 0 },
-      2: { weekName: 'Semana 2 (Días 8-14)', reports: 0, repairs: 0 },
-      3: { weekName: 'Semana 3 (Días 15-21)', reports: 0, repairs: 0 },
-      4: { weekName: 'Semana 4 (Días 22-28)', reports: 0, repairs: 0 },
-      5: { weekName: 'Semana 5 (Días 29+)', reports: 0, repairs: 0 }
-    };
-
-    filteredInitialReports.forEach(r => {
-      const day = parseInt(r.date.split('-')[2], 10);
-      const wIdx = day <= 7 ? 1 : day <= 14 ? 2 : day <= 21 ? 3 : day <= 28 ? 4 : 5;
-      weekMap[wIdx].reports += (r.reportCount || 0);
-    });
-
-    filteredRepairs.forEach(r => {
-      const day = parseInt(r.date.split('-')[2], 10);
-      const wIdx = day <= 7 ? 1 : day <= 14 ? 2 : day <= 21 ? 3 : day <= 28 ? 4 : 5;
-      weekMap[wIdx].repairs += 1;
-    });
-
-    return Object.values(weekMap).map(w => ({
-      name: w.weekName,
-      'Reportes Iniciales': w.reports,
-      'Reparaciones Realizadas': w.repairs
-    }));
-  }, [filteredInitialReports, filteredRepairs]);
-
-  // Dashboard 2: Comparaciones por Meses (Multi-Month Trend)
+  // Pestaña 2: Multi-Month Trend & Matriz Evolutiva with Same-Month vs Previous-Month breakdown
   const multiMonthComparisonData = useMemo(() => {
-    const monthMap: Record<string, { label: string; year: number; monthIdx: number; reports: number; repairs: number }> = {};
+    const monthMap: Record<string, {
+      label: string;
+      year: number;
+      monthIdx: number;
+      reports: number;
+      repairsTotal: number;
+      sameMonthRepairs: number;
+      previousMonthRepairs: number;
+      mttrSum: number;
+    }> = {};
 
-    // Group all initial reports by YYYY-MM
+    // Group initial reports by YYYY-MM
     reports.forEach(r => {
       if (!r.date) return;
       const key = r.date.substring(0, 7);
@@ -431,30 +417,45 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           year: y,
           monthIdx: m,
           reports: 0,
-          repairs: 0
+          repairsTotal: 0,
+          sameMonthRepairs: 0,
+          previousMonthRepairs: 0,
+          mttrSum: 0
         };
       }
       monthMap[key].reports += (r.reportCount || 0);
     });
 
-    // Group all repairs by YYYY-MM
+    // Group repair records by YYYY-MM (using repair date vs report date)
     repairRecords.forEach(r => {
       if (!r.date) return;
-      const key = r.date.substring(0, 7);
-      const parts = key.split('-');
+      const repairMonthKey = r.date.substring(0, 7);
+      const parts = repairMonthKey.split('-');
       const y = parseInt(parts[0], 10);
       const m = parseInt(parts[1], 10) - 1;
 
-      if (!monthMap[key]) {
-        monthMap[key] = {
+      if (!monthMap[repairMonthKey]) {
+        monthMap[repairMonthKey] = {
           label: `${MONTH_NAMES_ES[m]?.substring(0, 3)} ${y}`,
           year: y,
           monthIdx: m,
           reports: 0,
-          repairs: 0
+          repairsTotal: 0,
+          sameMonthRepairs: 0,
+          previousMonthRepairs: 0,
+          mttrSum: 0
         };
       }
-      monthMap[key].repairs += 1;
+
+      monthMap[repairMonthKey].repairsTotal += 1;
+      monthMap[repairMonthKey].mttrSum += (r.mttrHours || 0);
+
+      const reportMonthKey = (r.reportDate || r.date).substring(0, 7);
+      if (reportMonthKey === repairMonthKey) {
+        monthMap[repairMonthKey].sameMonthRepairs += 1;
+      } else {
+        monthMap[repairMonthKey].previousMonthRepairs += 1;
+      }
     });
 
     const list = Object.values(monthMap).sort((a, b) => {
@@ -463,75 +464,21 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     });
 
     return list.map(item => {
-      const rate = item.reports > 0 ? parseFloat(((item.repairs / item.reports) * 100).toFixed(1)) : 0;
+      const rate = item.reports > 0 ? parseFloat(((item.repairsTotal / item.reports) * 100).toFixed(1)) : 0;
+      const avgMttr = item.repairsTotal > 0 ? parseFloat((item.mttrSum / item.repairsTotal).toFixed(1)) : 0;
       return {
         ...item,
         'Reportes Iniciales': item.reports,
-        'Reparaciones Realizadas': item.repairs,
-        'Tasa Eficiencia %': rate
+        'Total Reparadas': item.repairsTotal,
+        'Mismo Mes': item.sameMonthRepairs,
+        'Meses Anteriores': item.previousMonthRepairs,
+        'Tasa Eficiencia %': rate,
+        avgMttr
       };
     });
   }, [reports, repairRecords]);
 
-  // Dashboard 4: General KPI Dashboard (Peak Day & Min Day calculations)
-  const kpiMinMaxDaysData = useMemo(() => {
-    const dateCounts: Record<string, { date: string; count: number; topCentral: string }> = {};
-    const dateCentralCounts: Record<string, Record<string, number>> = {};
-
-    filteredRepairs.forEach(r => {
-      const d = r.date;
-      if (!dateCounts[d]) {
-        dateCounts[d] = { date: d, count: 0, topCentral: '' };
-        dateCentralCounts[d] = {};
-      }
-      dateCounts[d].count += 1;
-      const cName = r.centralName || 'General';
-      dateCentralCounts[d][cName] = (dateCentralCounts[d][cName] || 0) + 1;
-    });
-
-    // Find top central per date
-    Object.keys(dateCounts).forEach(d => {
-      let topC = '';
-      let maxC = 0;
-      Object.entries(dateCentralCounts[d]).forEach(([cName, cnt]) => {
-        if (cnt > maxC) {
-          maxC = cnt;
-          topC = cName;
-        }
-      });
-      dateCounts[d].topCentral = topC;
-    });
-
-    const datesList = Object.values(dateCounts);
-
-    if (datesList.length === 0) {
-      return {
-        maxDay: null,
-        minDay: null,
-        activeDaysCount: 0,
-        avgDailyRepairs: 0
-      };
-    }
-
-    let maxDay = datesList[0];
-    let minDay = datesList[0];
-
-    datesList.forEach(item => {
-      if (item.count > maxDay.count) maxDay = item;
-      if (item.count < minDay.count) minDay = item;
-    });
-
-    const avgDailyRepairs = parseFloat((filteredRepairs.length / datesList.length).toFixed(1));
-
-    return {
-      maxDay,
-      minDay,
-      activeDaysCount: datesList.length,
-      avgDailyRepairs
-    };
-  }, [filteredRepairs]);
-
-  // Dashboard 5: Analysis of Repeated Services (Reincidentes >= 2)
+  // Pestaña 5: Repeated Services Analysis (Filtered by Technician, Month/Year, Search & Sort Order)
   const repeatedServicesData = useMemo(() => {
     const serviceMap: Record<string, {
       serviceNumber: string;
@@ -540,13 +487,29 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       centralNames: Set<string>;
       latestDate: string;
       latestTech: string;
-      latestIssue: string;
+      latestCable: string;
+      latestClave: string;
       latestStatus: string;
     }> = {};
 
     repairRecords.forEach(r => {
       const sNum = (r.serviceNumber || '').trim();
       if (!sNum) return;
+
+      if (selectedYear !== -1 || selectedMonth !== -1) {
+        if (!r.date) return;
+        const parts = r.date.split('-');
+        if (parts.length === 3) {
+          const rYear = parseInt(parts[0], 10);
+          const rMonth = parseInt(parts[1], 10) - 1;
+          if (selectedYear !== -1 && rYear !== selectedYear) return;
+          if (selectedMonth !== -1 && rMonth !== selectedMonth) return;
+        }
+      }
+
+      if (repeatedTechFilter !== 'all' && r.technician !== repeatedTechFilter) {
+        return;
+      }
 
       if (!serviceMap[sNum]) {
         serviceMap[sNum] = {
@@ -556,7 +519,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           centralNames: new Set(),
           latestDate: r.date,
           latestTech: r.technician,
-          latestIssue: r.issueType,
+          latestCable: r.cable || r.issueType,
+          latestClave: r.claveCode || 'C-01',
           latestStatus: r.status
         };
       }
@@ -568,88 +532,241 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       if (r.date >= serviceMap[sNum].latestDate) {
         serviceMap[sNum].latestDate = r.date;
         serviceMap[sNum].latestTech = r.technician;
-        serviceMap[sNum].latestIssue = r.issueType;
+        serviceMap[sNum].latestCable = r.cable || r.issueType;
+        serviceMap[sNum].latestClave = r.claveCode || 'C-01';
         serviceMap[sNum].latestStatus = r.status;
       }
     });
 
-    // Filter repeated services (count >= repeatedMinCount)
     let list = Object.values(serviceMap).filter(item => item.count >= repeatedMinCount);
 
-    // Filter by Central if selected
     if (repeatedCentralFilter !== 'all') {
       list = list.filter(item => Array.from(item.centralNames).some(c => c.toLowerCase().includes(repeatedCentralFilter.toLowerCase())));
     }
 
-    // Filter by search term
     if (repeatedSearchTerm.trim()) {
       const term = repeatedSearchTerm.toLowerCase();
       list = list.filter(item =>
         item.serviceNumber.toLowerCase().includes(term) ||
-        item.latestIssue.toLowerCase().includes(term) ||
+        item.latestCable.toLowerCase().includes(term) ||
         item.latestTech.toLowerCase().includes(term) ||
         Array.from(item.centralNames).some(c => c.toLowerCase().includes(term))
       );
     }
 
-    // Sort descending by repetition count
-    list.sort((a, b) => b.count - a.count);
+    list.sort((a, b) => {
+      if (repeatedSortOrder === 'desc') return b.count - a.count;
+      return a.count - b.count;
+    });
 
     return list;
-  }, [repairRecords, repeatedMinCount, repeatedCentralFilter, repeatedSearchTerm]);
+  }, [repairRecords, selectedMonth, selectedYear, repeatedTechFilter, repeatedMinCount, repeatedCentralFilter, repeatedSearchTerm, repeatedSortOrder]);
 
-  // Copy Headers for Central Matrix Table
-  const copyHeadersCentralTable = [
-    'Central CTA',
-    'Reportes Iniciales (Módulo 1)',
-    'Reparaciones Realizadas',
-    'Pendientes Solución',
-    'Tasa Eficiencia %',
-    'MTTR Prom. (Horas)'
-  ];
+  // Pestaña 6 (NUEVO DASHBOARD): Clave Analysis Dashboard (Matriz Clave vs Centrales & Clave vs Técnico)
+  const claveAnalysisData = useMemo(() => {
+    const keyCentralMatrix: Record<string, Record<string, number>> = {};
+    const keyTechMatrix: Record<string, Record<string, number>> = {};
+    const keyTotals: Record<string, number> = {};
+    const centralTotals: Record<string, number> = {};
+    const techTotals: Record<string, number> = {};
 
-  const copyRowsCentralTable = useMemo(() => {
-    return centralComparisonData.map(row => [
-      row.centralName,
-      row.initialReportsCount,
-      row.repairsCount,
-      row.pendingDiff,
-      `${row.resolutionRate}%`,
-      `${row.avgMttr}h`
-    ]);
-  }, [centralComparisonData]);
+    filteredRepairs.forEach(r => {
+      const clave = (r.claveCode || 'C-01 Sin Clave').trim();
+      const central = (r.centralName || 'Central General').trim();
+      const tech = (r.technician || 'Sin Técnico Asignado').trim();
 
-  // Copy Headers for Repeated Services Table
-  const copyHeadersRepeatedTable = [
-    'Servicio / Abonado / Teléfono',
-    'N° Reincidencias',
-    'Centrales Afectadas',
-    'Fechas de Reparación',
-    'Última Falla Registrada',
-    'Último Técnico',
-    'Estado'
-  ];
+      if (keysCentralFilter !== 'all' && r.centralId !== keysCentralFilter && central !== keysCentralFilter) {
+        return;
+      }
 
-  const copyRowsRepeatedTable = useMemo(() => {
-    return repeatedServicesData.map(item => [
-      item.serviceNumber,
-      `${item.count} veces`,
-      Array.from(item.centralNames).join(', '),
-      item.repairs.map(r => r.date).join(' | '),
-      item.latestIssue,
-      item.latestTech,
-      item.latestStatus === 'resolved' ? 'Resuelto' : 'En Proceso'
-    ]);
-  }, [repeatedServicesData]);
+      if (!keyCentralMatrix[clave]) keyCentralMatrix[clave] = {};
+      keyCentralMatrix[clave][central] = (keyCentralMatrix[clave][central] || 0) + 1;
+      keyTotals[clave] = (keyTotals[clave] || 0) + 1;
+      centralTotals[central] = (centralTotals[central] || 0) + 1;
+
+      if (!keyTechMatrix[tech]) keyTechMatrix[tech] = {};
+      keyTechMatrix[tech][clave] = (keyTechMatrix[tech][clave] || 0) + 1;
+      techTotals[tech] = (techTotals[tech] || 0) + 1;
+    });
+
+    const chartData = Object.entries(keyTotals).map(([clave, count]) => ({
+      clave,
+      'Frecuencia de Uso': count
+    })).sort((a, b) => b['Frecuencia de Uso'] - a['Frecuencia de Uso']);
+
+    const activeCentralNames = Object.keys(centralTotals).sort();
+    const activeClavesList = Object.keys(keyTotals).sort();
+
+    return {
+      keyCentralMatrix,
+      keyTechMatrix,
+      keyTotals,
+      centralTotals,
+      techTotals,
+      chartData,
+      activeCentralNames,
+      activeClavesList
+    };
+  }, [filteredRepairs, keysCentralFilter]);
+
+  // SLA and Technician Performance Analysis for KPI Dashboard
+  const technicianKpiData = useMemo(() => {
+    const techMap: Record<string, {
+      name: string;
+      totalRepairs: number;
+      resolvedCount: number;
+      mttrSum: number;
+      slaMetCount: number;
+    }> = {};
+
+    filteredRepairs.forEach(r => {
+      const tName = r.technician || 'Brigada de Campo';
+      if (!techMap[tName]) {
+        techMap[tName] = {
+          name: tName,
+          totalRepairs: 0,
+          resolvedCount: 0,
+          mttrSum: 0,
+          slaMetCount: 0
+        };
+      }
+      techMap[tName].totalRepairs += 1;
+      if (r.status === 'resolved') techMap[tName].resolvedCount += 1;
+      const mttr = r.mttrHours || 1.5;
+      techMap[tName].mttrSum += mttr;
+      if (mttr <= 2.0) techMap[tName].slaMetCount += 1;
+    });
+
+    return Object.values(techMap).map(t => {
+      const avgMttr = t.totalRepairs > 0 ? parseFloat((t.mttrSum / t.totalRepairs).toFixed(1)) : 0;
+      const slaPct = t.totalRepairs > 0 ? parseFloat(((t.slaMetCount / t.totalRepairs) * 100).toFixed(1)) : 0;
+      return {
+        ...t,
+        avgMttr,
+        slaPct
+      };
+    }).sort((a, b) => b.totalRepairs - a.totalRepairs);
+  }, [filteredRepairs]);
+
+  // Top Cables Analysis for KPI Dashboard
+  const topCablesData = useMemo(() => {
+    const cableMap: Record<string, number> = {};
+    filteredRepairs.forEach(r => {
+      const c = r.cable || r.issueType || 'Cable Principal';
+      cableMap[c] = (cableMap[c] || 0) + 1;
+    });
+
+    return Object.entries(cableMap)
+      .map(([cable, count]) => ({ cable, 'Reparaciones': count }))
+      .sort((a, b) => b.Reparaciones - a.Reparaciones)
+      .slice(0, 7);
+  }, [filteredRepairs]);
+
+  // Search Results for Ticket Audit Tool
+  const auditSearchResults = useMemo(() => {
+    if (!auditSearchQuery.trim()) return repairRecords.slice(0, 10);
+    const q = auditSearchQuery.toLowerCase().trim();
+    return repairRecords.filter(r =>
+      (r.ticketCode && r.ticketCode.toLowerCase().includes(q)) ||
+      (r.serviceNumber && r.serviceNumber.toLowerCase().includes(q)) ||
+      (r.technician && r.technician.toLowerCase().includes(q)) ||
+      (r.centralName && r.centralName.toLowerCase().includes(q)) ||
+      (r.cable && r.cable.toLowerCase().includes(q)) ||
+      (r.claveCode && r.claveCode.toLowerCase().includes(q))
+    ).slice(0, 20);
+  }, [repairRecords, auditSearchQuery]);
+
+  const selectedAuditRecord = useMemo(() => {
+    if (!selectedAuditRecordId) return auditSearchResults[0] || null;
+    return repairRecords.find(r => r.id === selectedAuditRecordId) || null;
+  }, [repairRecords, selectedAuditRecordId, auditSearchResults]);
+
+  // Copy Headers & Rows for Tables
+  const copyHeadersCentralTable = ['Central CTA', 'Reportes Iniciales', 'Reparaciones Realizadas', 'Pendientes', 'Tasa Eficiencia %', 'MTTR Prom.'];
+  const copyRowsCentralTable = useMemo(() => centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsCount, r.pendingDiff, `${r.resolutionRate}%`, `${r.avgMttr}h`]), [centralComparisonData]);
+
+  // Helper function to render flexible charts with Value Labels and Type Selection
+  const renderInteractiveChart = (
+    data: any[],
+    xAxisKey: string,
+    seriesKeys: { key: string; color: string }[],
+    height = 320
+  ) => {
+    if (!data || data.length === 0) {
+      return (
+        <div className="h-64 flex flex-col items-center justify-center text-slate-500 bg-slate-950/40 rounded-2xl border border-slate-800">
+          <BarChart3 className="w-8 h-8 mb-2 opacity-50" />
+          <p className="text-xs">No hay datos disponibles para el periodo seleccionado</p>
+        </div>
+      );
+    }
+
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        {chartType === 'line' ? (
+          <LineChart data={data} margin={{ top: 20, right: 30, left: 10, bottom: 25 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+            <XAxis dataKey={xAxisKey} stroke="#94a3b8" fontSize={11} interval={0} angle={-25} textAnchor="end" />
+            <YAxis stroke="#94a3b8" fontSize={11} />
+            <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#f8fafc' }} />
+            <Legend wrapperStyle={{ paddingTop: '10px' }} />
+            {seriesKeys.map((s) => (
+              <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={3} dot={{ r: 5 }}>
+                {showValuesOnBars && (
+                  <LabelList dataKey={s.key} position="top" fill="#ffffff" fontSize={10} fontWeight="bold" />
+                )}
+              </Line>
+            ))}
+          </LineChart>
+        ) : chartType === 'area' ? (
+          <AreaChart data={data} margin={{ top: 20, right: 30, left: 10, bottom: 25 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+            <XAxis dataKey={xAxisKey} stroke="#94a3b8" fontSize={11} interval={0} angle={-25} textAnchor="end" />
+            <YAxis stroke="#94a3b8" fontSize={11} />
+            <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#f8fafc' }} />
+            <Legend wrapperStyle={{ paddingTop: '10px' }} />
+            {seriesKeys.map((s) => (
+              <Area key={s.key} type="monotone" dataKey={s.key} stroke={s.color} fill={s.color} fillOpacity={0.3} strokeWidth={2}>
+                {showValuesOnBars && (
+                  <LabelList dataKey={s.key} position="top" fill="#ffffff" fontSize={10} fontWeight="bold" />
+                )}
+              </Area>
+            ))}
+          </AreaChart>
+        ) : (
+          <BarChart data={data} margin={{ top: 20, right: 30, left: 10, bottom: 25 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+            <XAxis dataKey={xAxisKey} stroke="#94a3b8" fontSize={11} interval={0} angle={-25} textAnchor="end" />
+            <YAxis stroke="#94a3b8" fontSize={11} />
+            <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#f8fafc' }} />
+            <Legend wrapperStyle={{ paddingTop: '10px' }} />
+            {seriesKeys.map((s) => (
+              <Bar
+                key={s.key}
+                dataKey={s.key}
+                fill={s.color}
+                stackId={chartType === 'bar_stacked' ? 'a' : undefined}
+                radius={chartType === 'bar_stacked' ? [0, 0, 0, 0] : [6, 6, 0, 0]}
+              >
+                {showValuesOnBars && (
+                  <LabelList dataKey={s.key} position="top" fill="#ffffff" fontSize={10} fontWeight="bold" />
+                )}
+              </Bar>
+            ))}
+          </BarChart>
+        )}
+      </ResponsiveContainer>
+    );
+  };
 
   return (
-    <div className="space-y-6 font-sans">
+    <div className="space-y-6 font-sans pb-12">
 
-      {/* Top Banner & Module Header */}
+      {/* Persistent Module Top Header & Backup Action Bar */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
           <div className="flex items-center space-x-4">
             <button
               onClick={onBackToHub}
@@ -660,40 +777,51 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
             </button>
 
             <div>
-              <div className="flex items-center space-x-2">
-                <span className="bg-indigo-500/20 text-indigo-400 text-xs px-2.5 py-0.5 rounded-full border border-indigo-500/30 font-bold uppercase font-mono">
-                  Recuadro 03 · Módulo Reparaciones
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="bg-indigo-500/20 text-indigo-300 text-[11px] px-2.5 py-0.5 rounded-full border border-indigo-500/30 font-bold uppercase font-mono">
+                  Recuadro 03 · Módulo Reparadas
                 </span>
-                <span className="bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-semibold flex items-center space-x-1">
-                  <Sparkles className="w-3 h-3" />
-                  <span>Procesador Excel & Analítica Integrada</span>
+                <span className="bg-emerald-500/10 text-emerald-400 text-[11px] px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-semibold flex items-center space-x-1">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>v3.0 · Mapeo Dinámico & Analítica de Claves</span>
                 </span>
               </div>
-              <h1 className="text-2xl font-black text-white tracking-tight mt-1">Análisis de Reparaciones y Tiempos de Solución (MTTR)</h1>
+              <h1 className="text-2xl font-black text-white tracking-tight mt-1">Análisis de Reparaciones, Días Pico y Claves</h1>
               <p className="text-slate-400 text-xs sm:text-sm">
-                Control de órdenes de reparación, comparación contra solicitudes reportadas, mapeador de Excel y detección de reincidencias.
+                Control completo de órdenes finalizadas, comparación mensual de reportadas vs reparadas, ranking por día de semana y matriz de claves.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          {/* Action Toolbar with PERSISTENT SAVE/BACKUP BUTTON */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => downloadJSONBackup(centrales, workGroups, reports, repairRecords, customTables, columnMapping)}
+              className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-emerald-600/20 border border-emerald-400/30"
+              title="Guardar copia de seguridad en JSON de todo el sistema"
+            >
+              <Save className="w-4 h-4" />
+              <span>Guardar Backup JSON</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('mapper')}
               className="flex items-center space-x-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20"
             >
               <Upload className="w-4 h-4" />
-              <span>Subir Excel Reparaciones</span>
+              <span>Cargar Excel</span>
             </button>
+
             <button
               onClick={onBackToHub}
               className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-700"
             >
-              ← Volver al Portal
+              Portal Principal
             </button>
           </div>
         </div>
 
-        {/* Dashboards Sub-Navigation Tabs Bar */}
+        {/* Dashboards Navigation Tabs Bar */}
         <div className="mt-6 pt-4 border-t border-slate-800 flex flex-wrap items-center gap-2">
           <button
             onClick={() => setActiveTab('central')}
@@ -704,7 +832,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
             }`}
           >
             <Building2 className="w-4 h-4" />
-            <span>1. Reparaciones por Central (vs Reportes)</span>
+            <span>1. Reparaciones por Central & Días Semana</span>
           </button>
 
           <button
@@ -727,8 +855,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
             }`}
           >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>3. Mapeador Columnas Excel & Tablas</span>
+            <Table className="w-4 h-4" />
+            <span>3. Carga Excel & Mapeo</span>
           </button>
 
           <button
@@ -740,7 +868,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
             }`}
           >
             <BarChart3 className="w-4 h-4" />
-            <span>4. Dashboard General KPI</span>
+            <span>4. KPIs & SLA MTTR</span>
           </button>
 
           <button
@@ -751,355 +879,279 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
             }`}
           >
-            <Repeat className="w-4 h-4 text-amber-400" />
-            <span>5. Servicios Repetidos (2+ veces)</span>
+            <Repeat className="w-4 h-4" />
+            <span>5. Reincidentes</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('keys')}
+            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'keys'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30 font-extrabold'
+                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            <Key className="w-4 h-4 text-amber-300" />
+            <span>6. Análisis de Claves (Nuevo)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'audit'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            <Search className="w-4 h-4" />
+            <span>7. Buscador Auditoría</span>
           </button>
 
           {/* Dynamic Custom Tables Tabs */}
-          {customTables.map(ct => (
+          {customTables.map(t => (
             <button
-              key={ct.id}
-              onClick={() => setActiveTab(ct.id)}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-                activeTab === ct.id
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
-                  : 'bg-slate-800/80 text-emerald-400 hover:bg-slate-800 border border-emerald-500/20'
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                activeTab === t.id
+                  ? 'bg-purple-600 border-purple-500 text-white'
+                  : 'bg-slate-800/60 border-slate-700 text-purple-300 hover:bg-slate-800'
               }`}
             >
-              <Table className="w-4 h-4" />
-              <span>Tabla: {ct.tableName}</span>
+              <Table className="w-3.5 h-3.5 text-purple-400" />
+              <span>{t.tableName}</span>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Global Month/Year Filter Bar for Analytics Dashboards */}
-      {(activeTab === 'central' || activeTab === 'kpis') && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center space-x-2">
-            <Filter className="w-4 h-4 text-indigo-600" />
-            <span className="text-xs font-extrabold text-slate-900 uppercase">Filtros Operativos:</span>
-          </div>
+      {/* GLOBAL CONTROLS BAR: Month/Year Filter, Chart Type Selector & Value Labels Toggle */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
+        {/* Month & Year Filter */}
+        <div className="flex items-center space-x-3">
+          <Calendar className="w-4 h-4 text-indigo-400" />
+          <span className="text-xs font-bold text-slate-300">Periodo de Análisis:</span>
+          
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+          >
+            <option value={-1}>Todos los Meses</option>
+            {MONTH_NAMES_ES.map((mName, idx) => (
+              <option key={mName} value={idx}>{mName}</option>
+            ))}
+          </select>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Month Dropdown */}
-            <div className="flex items-center space-x-1.5">
-              <label className="text-[11px] font-bold text-slate-500 uppercase">Mes:</label>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
-                className="bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl px-3 py-1.5 focus:outline-none focus:border-indigo-500"
-              >
-                <option value={-1}>Todos los Meses</option>
-                {MONTH_NAMES_ES.map((name, idx) => (
-                  <option key={idx} value={idx}>{name}</option>
-                ))}
-              </select>
-            </div>
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+          >
+            <option value={-1}>Todos los Años</option>
+            <option value={2026}>2026</option>
+            <option value={2025}>2025</option>
+          </select>
 
-            {/* Year Dropdown */}
-            <div className="flex items-center space-x-1.5">
-              <label className="text-[11px] font-bold text-slate-500 uppercase">Año:</label>
-              <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-                className="bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl px-3 py-1.5 focus:outline-none focus:border-indigo-500"
-              >
-                <option value={-1}>Todos los Años</option>
-                <option value={2026}>2026</option>
-                <option value={2025}>2025</option>
-              </select>
-            </div>
-
-            {/* Central Dropdown */}
-            <div className="flex items-center space-x-1.5">
-              <label className="text-[11px] font-bold text-slate-500 uppercase">Central:</label>
-              <select
-                value={selectedCentralFilter}
-                onChange={(e) => setSelectedCentralFilter(e.target.value)}
-                className="bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl px-3 py-1.5 focus:outline-none focus:border-indigo-500"
-              >
-                <option value="all">Todas las Centrales CTA</option>
-                {centrales.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <select
+            value={selectedCentralFilter}
+            onChange={(e) => setSelectedCentralFilter(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+          >
+            <option value="all">Todas las Centrales</option>
+            {centrales.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
-      )}
 
-      {/* ========================================================================= */}
-      {/* TAB 1: REPARACIONES POR CENTRAL (VS REPORTES INICIALES DEL MÓDULO 1) */}
-      {/* ========================================================================= */}
+        {/* Chart Visualization Controls */}
+        <div className="flex items-center space-x-3">
+          <span className="text-xs font-bold text-slate-400">Tipo de Gráfica:</span>
+          
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 space-x-1">
+            <button
+              onClick={() => setChartType('bar_grouped')}
+              className={`p-1.5 rounded-lg text-xs flex items-center space-x-1 transition-all ${chartType === 'bar_grouped' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              title="Barras Agrupadas"
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Barras</span>
+            </button>
+            <button
+              onClick={() => setChartType('bar_stacked')}
+              className={`p-1.5 rounded-lg text-xs flex items-center space-x-1 transition-all ${chartType === 'bar_stacked' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              title="Barras Apiladas"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Apiladas</span>
+            </button>
+            <button
+              onClick={() => setChartType('line')}
+              className={`p-1.5 rounded-lg text-xs flex items-center space-x-1 transition-all ${chartType === 'line' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              title="Líneas y Tendencia"
+            >
+              <LineChartIcon className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Líneas</span>
+            </button>
+            <button
+              onClick={() => setChartType('area')}
+              className={`p-1.5 rounded-lg text-xs flex items-center space-x-1 transition-all ${chartType === 'area' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              title="Área Rellena"
+            >
+              <AreaChartIcon className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Área</span>
+            </button>
+          </div>
+
+          <label className="flex items-center space-x-1.5 cursor-pointer bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 text-xs text-slate-200">
+            <input
+              type="checkbox"
+              checked={showValuesOnBars}
+              onChange={(e) => setShowValuesOnBars(e.target.checked)}
+              className="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0"
+            />
+            <span className="font-semibold">Mostrar Valores en Gráficos</span>
+          </label>
+        </div>
+      </div>
+
+      {/* TAB 1: REPARACIONES POR CENTRAL & HISTÓRICO DE DÍAS DE LA SEMANA */}
       {activeTab === 'central' && (
         <div className="space-y-6">
-          
-          {/* Top KPI Summary Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Solicitudes Reportadas (Módulo 1)
-              </div>
-              <div className="text-2xl font-black text-slate-900">
-                {totalSummary.sumInitial.toLocaleString()}
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                Incidencias de la 1er recuadro ({selectedMonth !== -1 ? MONTH_NAMES_ES[selectedMonth] : 'Todos'} {selectedYear !== -1 ? selectedYear : ''})
-              </div>
-            </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Reparaciones Ejecutadas
-              </div>
-              <div className="text-2xl font-black text-indigo-600">
-                {totalSummary.sumRepairs.toLocaleString()}
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                {totalSummary.sumResolved} resueltas · {totalSummary.sumInProgress} en proceso
-              </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Tasa de Resolución / Eficiencia
-              </div>
-              <div className={`text-2xl font-black flex items-center space-x-1 ${
-                totalSummary.totalRate >= 80 ? 'text-emerald-600' : 'text-amber-600'
-              }`}>
-                <span>{totalSummary.totalRate}%</span>
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                Cobertura frente a reportes iniciales
-              </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Tiempo Medio de Solución (MTTR)
-              </div>
-              <div className="text-2xl font-black text-slate-900">
-                {totalSummary.globalAvgMttr} Horas
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                Promedio de atención por brigada
-              </div>
-            </div>
-
-          </div>
-
-          {/* Main Comparison Chart: Reportes Iniciales vs Reparaciones Realizadas */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          {/* Daily Comparison Chart & Filters Header */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <h3 className="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                  <BarChart3 className="w-5 h-5 text-indigo-600" />
-                  <span>Comparación de Reportes Iniciales vs Reparaciones por Central</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Evalúa las solicitudes iniciales del Módulo 1 contra las ordenes de reparación ejecutadas en cada central CTA.
+                <h2 className="text-lg font-black text-white flex items-center space-x-2">
+                  <BarChart3 className="w-5 h-5 text-indigo-400" />
+                  <span>Comparación Diaria de Reparadas vs Reportes Iniciales</span>
+                </h2>
+                <p className="text-slate-400 text-xs mt-1">
+                  Resumen día a día de solicitudes ingresadas en el Historial frente a las órdenes cerradas por brigadas en campo.
                 </p>
               </div>
 
-              {/* Chart Type Selector */}
-              <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-2xl border border-slate-200">
-                <button
-                  onClick={() => setChartType('bar_grouped')}
-                  className={`px-3 py-1 text-xs font-bold rounded-xl transition-all ${
-                    chartType === 'bar_grouped' ? 'bg-blue-600 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Agrupado
-                </button>
-                <button
-                  onClick={() => setChartType('bar_stacked')}
-                  className={`px-3 py-1 text-xs font-bold rounded-xl transition-all ${
-                    chartType === 'bar_stacked' ? 'bg-blue-600 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Apilado
-                </button>
-                <button
-                  onClick={() => setChartType('line')}
-                  className={`px-3 py-1 text-xs font-bold rounded-xl transition-all ${
-                    chartType === 'line' ? 'bg-blue-600 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Tendencia
-                </button>
-                <button
-                  onClick={() => setChartType('radar')}
-                  className={`px-3 py-1 text-xs font-bold rounded-xl transition-all ${
-                    chartType === 'radar' ? 'bg-blue-600 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Radar
-                </button>
-              </div>
+              <CopyTableButton headers={copyHeadersCentralTable} rows={copyRowsCentralTable} label="Copiar Resumen Centrales" />
             </div>
 
-            {/* Chart Container */}
-            <div className="h-80 w-full pt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                {chartType === 'bar_grouped' ? (
-                  <BarChart data={centralComparisonData} margin={{ top: 20, right: 30, left: 0, bottom: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="centralName" tick={{ fontSize: 11, fill: '#475569' }} interval={0} angle={-15} textAnchor="end" />
-                    <YAxis tick={{ fontSize: 11, fill: '#475569' }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }} />
-                    <Legend wrapperStyle={{ paddingTop: '15px', fontSize: '12px' }} />
-                    <Bar dataKey="initialReportsCount" name="Reportes Iniciales (Solicitudes)" fill="#3b82f6" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey="repairsCount" name="Reparaciones Realizadas" fill="#10b981" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                ) : chartType === 'bar_stacked' ? (
-                  <BarChart data={centralComparisonData} margin={{ top: 20, right: 30, left: 0, bottom: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="centralName" tick={{ fontSize: 11, fill: '#475569' }} interval={0} angle={-15} textAnchor="end" />
-                    <YAxis tick={{ fontSize: 11, fill: '#475569' }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }} />
-                    <Legend wrapperStyle={{ paddingTop: '15px', fontSize: '12px' }} />
-                    <Bar dataKey="repairsCount" name="Reparaciones Realizadas" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="pendingDiff" name="Pendientes de Reparación" stackId="a" fill="#f59e0b" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                ) : chartType === 'line' ? (
-                  <LineChart data={centralComparisonData} margin={{ top: 20, right: 30, left: 0, bottom: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="centralName" tick={{ fontSize: 11, fill: '#475569' }} interval={0} angle={-15} textAnchor="end" />
-                    <YAxis tick={{ fontSize: 11, fill: '#475569' }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }} />
-                    <Legend wrapperStyle={{ paddingTop: '15px', fontSize: '12px' }} />
-                    <Line type="monotone" dataKey="initialReportsCount" name="Reportes Iniciales" stroke="#3b82f6" strokeWidth={3} dot={{ r: 5 }} />
-                    <Line type="monotone" dataKey="repairsCount" name="Reparaciones Realizadas" stroke="#10b981" strokeWidth={3} dot={{ r: 5 }} />
-                  </LineChart>
-                ) : (
-                  <RadarChart cx="50%" cy="50%" outerRadius="75%" data={centralComparisonData}>
-                    <PolarGrid stroke="#e2e8f0" />
-                    <PolarAngleAxis dataKey="centralName" tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }} />
-                    <PolarRadiusAxis angle={30} domain={[0, 'auto']} tick={{ fontSize: 10 }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }} />
-                    <Legend wrapperStyle={{ paddingTop: '10px', fontSize: '12px' }} />
-                    <Radar name="Reportes Iniciales" dataKey="initialReportsCount" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.4} />
-                    <Radar name="Reparaciones Realizadas" dataKey="repairsCount" stroke="#10b981" fill="#10b981" fillOpacity={0.4} />
-                  </RadarChart>
-                )}
-              </ResponsiveContainer>
-            </div>
+            {renderInteractiveChart(
+              dailyComparisonData,
+              'dateLabel',
+              [
+                { key: 'Reportes Iniciales', color: '#f59e0b' },
+                { key: 'Reparaciones Realizadas', color: '#10b981' }
+              ],
+              340
+            )}
           </div>
 
-          {/* Sub-Charts Section: Daily Comparison & Weekly Breakdown */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* Comparación por Días del Mes */}
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="space-y-0.5">
-                <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
-                  <Calendar className="w-4 h-4 text-indigo-600" />
-                  <span>Comparación por Días del Mes</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Comportamiento diario de las solicitudes iniciales frente a reparaciones.
-                </p>
-              </div>
-
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dailyComparisonData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: '#64748b' }} interval={2} />
-                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '10px', border: 'none', color: '#fff', fontSize: '11px' }} />
-                    <Bar dataKey="Reportes Iniciales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Reparaciones Realizadas" fill="#10b981" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Comparación entre Semanas del Mes */}
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="space-y-0.5">
-                <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
-                  <Layers className="w-4 h-4 text-indigo-600" />
-                  <span>Comparación entre Semanas del Mes</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Acumulado semanal de atenciones y cobertura técnica.
-                </p>
-              </div>
-
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyComparisonData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} />
-                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '10px', border: 'none', color: '#fff', fontSize: '11px' }} />
-                    <Legend wrapperStyle={{ fontSize: '11px' }} />
-                    <Bar dataKey="Reportes Iniciales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Reparaciones Realizadas" fill="#10b981" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-          </div>
-
-          {/* Full Comparative Table */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          {/* NEW SECTION: HISTÓRICO DÍAS DE LA SEMANA CON MÁS REPARACIONES */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
-                  <Table className="w-4 h-4 text-indigo-600" />
-                  <span>Matriz de Desglose por Central (Reportes vs Reparaciones)</span>
-                </h3>
+                <span className="bg-indigo-500/20 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                  ANÁLISIS HISTÓRICO SEMANAL
+                </span>
+                <h2 className="text-lg font-black text-white mt-1 flex items-center space-x-2">
+                  <Calendar className="w-5 h-5 text-indigo-400" />
+                  <span>Días de la Semana con Mayor Histórico de Reparaciones</span>
+                </h2>
+                <p className="text-slate-400 text-xs">
+                  Identificación de patrones semanales para optimizar la distribución de guardias y brigadas de respuesta.
+                </p>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <CopyTableButton headers={copyHeadersCentralTable} rows={copyRowsCentralTable} />
-                <CopyImageButton elementId="central-repair-table-container" label="Copiar Tabla Imagen" />
-              </div>
+              {dayOfWeekStats.peakDay && (
+                <div className="bg-indigo-950/80 border border-indigo-500/30 rounded-2xl px-4 py-2 text-right">
+                  <div className="text-[10px] uppercase text-indigo-300 font-extrabold tracking-wider font-mono">DÍA CON MÁS REPARACIONES</div>
+                  <div className="text-lg font-black text-indigo-400">{dayOfWeekStats.peakDay.name} ({dayOfWeekStats.peakDay.count} reparadas)</div>
+                  <div className="text-xs text-slate-400 font-medium">{dayOfWeekStats.peakDay.pct}% del total acumulado</div>
+                </div>
+              )}
             </div>
 
-            <div id="central-repair-table-container" className="overflow-x-auto bg-white rounded-2xl border border-slate-200">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-900 text-white uppercase font-mono text-[10px]">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 pt-2">
+              {dayOfWeekStats.list.map((item) => {
+                const isPeak = dayOfWeekStats.peakDay?.dayIndex === item.dayIndex;
+                return (
+                  <div
+                    key={item.name}
+                    className={`rounded-2xl p-4 border transition-all flex flex-col justify-between ${
+                      isPeak
+                        ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-600/20'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-400">{item.name}</span>
+                        {isPeak && (
+                          <span className="bg-indigo-500 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded">PICO</span>
+                        )}
+                      </div>
+                      <div className="text-2xl font-black mt-2">{item.count}</div>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                      <span className="text-slate-400">Porcentaje:</span>
+                      <span className="font-extrabold text-indigo-400">{item.pct}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Day of week chart with labels */}
+            <div className="pt-4 border-t border-slate-800">
+              {renderInteractiveChart(
+                dayOfWeekStats.list,
+                'name',
+                [{ key: 'count', color: '#6366f1' }],
+                220
+              )}
+            </div>
+          </div>
+
+          {/* Central Matrix Table */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <h3 className="text-md font-bold text-slate-200">Matriz de Cumplimiento por Central Telefónica</h3>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
-                    <th className="p-3">#</th>
-                    <th className="p-3">Central Telefónica CTA</th>
-                    <th className="p-3 text-center">Reportes Iniciales (Sol. 1er Recuadro)</th>
-                    <th className="p-3 text-center">Reparaciones Ejecutadas</th>
-                    <th className="p-3 text-center">Pendientes</th>
-                    <th className="p-3 text-right">% Eficiencia</th>
-                    <th className="p-3 text-right">MTTR Promedio</th>
+                    <th className="py-3 px-4">Central Telefónica</th>
+                    <th className="py-3 px-4 text-center">Reportes Iniciales</th>
+                    <th className="py-3 px-4 text-center">Reparaciones Creadas</th>
+                    <th className="py-3 px-4 text-center">Pendientes</th>
+                    <th className="py-3 px-4 text-center">Eficiencia %</th>
+                    <th className="py-3 px-4 text-center">MTTR Prom.</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {centralComparisonData.map((row, idx) => (
-                    <tr key={row.centralId} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
-                      <td className="p-3 font-bold text-slate-900">{row.centralName}</td>
-                      <td className="p-3 text-center font-mono font-bold text-blue-600">{row.initialReportsCount}</td>
-                      <td className="p-3 text-center font-mono font-bold text-emerald-600">{row.repairsCount}</td>
-                      <td className="p-3 text-center font-mono font-bold text-amber-600">{row.pendingDiff}</td>
-                      <td className="p-3 text-right font-mono font-black text-slate-900">{row.resolutionRate}%</td>
-                      <td className="p-3 text-right font-mono text-slate-700">{row.avgMttr}h</td>
+                <tbody className="divide-y divide-slate-800 font-medium">
+                  {centralComparisonData.map((row) => (
+                    <tr key={row.centralId} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4 font-bold text-white flex items-center space-x-2">
+                        <Building2 className="w-4 h-4 text-indigo-400" />
+                        <span>{row.centralName}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center font-bold text-amber-400">{row.initialReportsCount}</td>
+                      <td className="py-3 px-4 text-center font-bold text-emerald-400">{row.repairsCount}</td>
+                      <td className="py-3 px-4 text-center font-bold text-rose-400">{row.pendingDiff}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                          row.resolutionRate >= 90 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                          row.resolutionRate >= 70 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                          'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                        }`}>
+                          {row.resolutionRate}%
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center font-mono font-bold text-slate-300">{row.avgMttr}h</td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-slate-100 font-black border-t-2 border-slate-300">
-                  <tr>
-                    <td colSpan={2} className="p-3 text-slate-900 uppercase tracking-wider font-mono">
-                      TOTALES RED NOC
-                    </td>
-                    <td className="p-3 text-center font-mono text-blue-700 text-sm">{totalSummary.sumInitial}</td>
-                    <td className="p-3 text-center font-mono text-emerald-700 text-sm">{totalSummary.sumRepairs}</td>
-                    <td className="p-3 text-center font-mono text-amber-700 text-sm">{totalSummary.sumInitial - totalSummary.sumRepairs}</td>
-                    <td className="p-3 text-right font-mono text-slate-900 text-sm">{totalSummary.totalRate}%</td>
-                    <td className="p-3 text-right font-mono text-slate-900 text-sm">{totalSummary.globalAvgMttr}h</td>
-                  </tr>
-                </tfoot>
               </table>
             </div>
           </div>
@@ -1107,362 +1159,282 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 2: COMPARACIÓN MENSUAL DE LAS REPARADAS */}
-      {/* ========================================================================= */}
+      {/* TAB 2: COMPARACIÓN MENSUAL (MATRIZ EVOLUTIVA & SAME-MONTH VS PREVIOUS-MONTH) */}
       {activeTab === 'monthly' && (
         <div className="space-y-6">
-          
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
-            <div className="pb-4 border-b border-slate-100 space-y-0.5">
-              <h3 className="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                <TrendingUp className="w-5 h-5 text-indigo-600" />
-                <span>Evolución Comparativa Mensual de Reparaciones</span>
-              </h3>
-              <p className="text-xs text-slate-500">
-                Comparativa histórica mes a mes de las reparaciones realizadas frente a las solicitudes de reporte inicial.
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="bg-indigo-500/20 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                  HOJA DOS · COMPARACIÓN MENSUAL
+                </span>
+                <h2 className="text-lg font-black text-white mt-1 flex items-center space-x-2">
+                  <TrendingUp className="w-5 h-5 text-indigo-400" />
+                  <span>Matriz Evolutiva de Reparaciones por Mes</span>
+                </h2>
+                <p className="text-slate-400 text-xs">
+                  Desglose exacto de cuántas averías fueron reportadas y reparadas en el mismo periodo versus reparaciones arrastradas de meses anteriores.
+                </p>
+              </div>
+
+              <CopyTableButton
+                headers={['Mes/Año', 'Reportes Iniciales', 'Total Reparadas', 'Mismo Mes', 'Meses Anteriores', 'Eficiencia %', 'MTTR Prom.']}
+                rows={multiMonthComparisonData.map(m => [m.label, m['Reportes Iniciales'], m['Total Reparadas'], m['Mismo Mes'], m['Meses Anteriores'], `${m['Tasa Eficiencia %']}%`, `${m.avgMttr}h`])}
+                label="Copiar Matriz Mensual"
+              />
+            </div>
+
+            {renderInteractiveChart(
+              multiMonthComparisonData,
+              'label',
+              [
+                { key: 'Reportes Iniciales', color: '#f59e0b' },
+                { key: 'Mismo Mes', color: '#10b981' },
+                { key: 'Meses Anteriores', color: '#6366f1' }
+              ],
+              340
+            )}
+
+            {/* EVOLUTIVE MATRIX TABLE WITH SAME-MONTH AND PREVIOUS-MONTH REPAIRS */}
+            <div className="pt-4 border-t border-slate-800 overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">Periodo (Mes / Año)</th>
+                    <th className="py-3 px-4 text-center">Reportes Iniciales</th>
+                    <th className="py-3 px-4 text-center">Reparadas en Mismo Mes</th>
+                    <th className="py-3 px-4 text-center">Provenientes Meses Anteriores</th>
+                    <th className="py-3 px-4 text-center">Total Reparaciones</th>
+                    <th className="py-3 px-4 text-center">Tasa Eficiencia</th>
+                    <th className="py-3 px-4 text-center">MTTR Promedio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 font-medium">
+                  {multiMonthComparisonData.map((row) => (
+                    <tr key={row.label} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4 font-black text-white">{row.label}</td>
+                      <td className="py-3 px-4 text-center font-bold text-amber-400">{row['Reportes Iniciales']}</td>
+                      <td className="py-3 px-4 text-center font-bold text-emerald-400 bg-emerald-500/5">{row['Mismo Mes']}</td>
+                      <td className="py-3 px-4 text-center font-bold text-indigo-400 bg-indigo-500/5">{row['Meses Anteriores']}</td>
+                      <td className="py-3 px-4 text-center font-black text-white bg-slate-800/40">{row['Total Reparadas']}</td>
+                      <td className="py-3 px-4 text-center font-bold text-slate-200">{row['Tasa Eficiencia %']}%</td>
+                      <td className="py-3 px-4 text-center font-mono font-bold text-slate-300">{row.avgMttr}h</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: CARGA EXCEL & CONFIGURACIÓN DE MAPEO (COLUMN MAPPER WITH RENAMED CABLE/GRUPO/REPORTDATE/CLAVE) */}
+      {activeTab === 'mapper' && (
+        <div className="space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-6">
+            <div>
+              <span className="bg-indigo-500/20 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                PESTAÑA NÚMERO 3 · MAPEADOR EXCEL
+              </span>
+              <h2 className="text-xl font-black text-white mt-1 flex items-center space-x-2">
+                <Table className="w-6 h-6 text-indigo-400" />
+                <span>Configuración de Mapeo de Columnas Excel</span>
+              </h2>
+              <p className="text-slate-400 text-xs mt-1">
+                Defina qué columna de su archivo Excel corresponde a cada variable del sistema para alimentar automáticamente todas las matrices y tableros.
               </p>
             </div>
 
-            <div className="h-80 w-full pt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={multiMonthComparisonData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#475569' }} />
-                  <YAxis tick={{ fontSize: 11, fill: '#475569' }} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }} />
-                  <Legend wrapperStyle={{ paddingTop: '15px', fontSize: '12px' }} />
-                  <Area type="monotone" dataKey="Reportes Iniciales" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} strokeWidth={2} />
-                  <Area type="monotone" dataKey="Reparaciones Realizadas" stroke="#10b981" fill="#10b981" fillOpacity={0.5} strokeWidth={3} />
-                </AreaChart>
-              </ResponsiveContainer>
+            {/* Drop Zone */}
+            <div className="border-2 border-dashed border-indigo-500/30 hover:border-indigo-400 rounded-3xl p-8 text-center bg-slate-950/40 transition-all">
+              <Upload className="w-10 h-10 text-indigo-400 mx-auto mb-3 animate-bounce" />
+              <h3 className="text-sm font-black text-white">Arrastre o seleccione su archivo Excel (.xlsx, .csv)</h3>
+              <p className="text-slate-400 text-xs mt-1 mb-4">Soporta múltiples encabezados de cualquier contratista o formato oficial.</p>
+              
+              <label className="inline-flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl cursor-pointer shadow-lg shadow-indigo-600/20 transition-all">
+                <span>Seleccionar Archivo</span>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleFileUpload(e.target.files[0]);
+                    }
+                  }}
+                  className="hidden"
+                />
+              </label>
+
+              {isProcessingExcel && <div className="text-xs text-indigo-400 font-bold mt-3">Procesando archivo...</div>}
+              {excelErrorMessage && <div className="text-xs text-rose-400 font-bold mt-3 bg-rose-500/10 p-2 rounded-xl border border-rose-500/20">{excelErrorMessage}</div>}
+              {excelSuccessMessage && <div className="text-xs text-emerald-400 font-bold mt-3 bg-emerald-500/10 p-2 rounded-xl border border-emerald-500/20">{excelSuccessMessage}</div>}
             </div>
-          </div>
 
-          {/* Table Breakdown Month by Month */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2 pb-3 border-b border-slate-100">
-              <Table className="w-4 h-4 text-indigo-600" />
-              <span>Matriz Evolutiva Mensual de Solicitudes y Reparaciones</span>
-            </h3>
+            {/* MAPPING FORM */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-slate-800">
+              
+              {/* Date de Atención */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
+                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Fecha de Atención / Reparación</label>
+                <input
+                  type="text"
+                  value={mappingForm.dateCol}
+                  onChange={(e) => setMappingForm({ ...mappingForm, dateCol: e.target.value })}
+                  placeholder="Ej: Fecha Atención, Dia"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
+                />
+              </div>
 
-            <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-900 text-white uppercase font-mono text-[10px]">
-                  <tr>
-                    <th className="p-3">Periodo (Mes - Año)</th>
-                    <th className="p-3 text-center">Reportes Iniciales (Módulo 1)</th>
-                    <th className="p-3 text-center">Reparaciones Ejecutadas</th>
-                    <th className="p-3 text-center">Diferencia</th>
-                    <th className="p-3 text-right">Tasa Eficiencia %</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {multiMonthComparisonData.map((row) => (
-                    <tr key={row.label} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 font-bold text-slate-900">{row.label}</td>
-                      <td className="p-3 text-center font-mono font-bold text-blue-600">{row.reports}</td>
-                      <td className="p-3 text-center font-mono font-bold text-emerald-600">{row.repairs}</td>
-                      <td className="p-3 text-center font-mono font-bold text-amber-600">{Math.max(0, row.reports - row.repairs)}</td>
-                      <td className="p-3 text-right font-mono font-black text-slate-900">{row['Tasa Eficiencia %']}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+              {/* Fecha de Reporte (NEW) */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-indigo-500/30">
+                <label className="block text-xs font-bold text-indigo-300 mb-1">Columna Fecha de Reporte (Nuevo)</label>
+                <input
+                  type="text"
+                  value={mappingForm.reportDateCol || ''}
+                  onChange={(e) => setMappingForm({ ...mappingForm, reportDateCol: e.target.value })}
+                  placeholder="Ej: Fecha Ingreso, Reporte"
+                  className="w-full bg-slate-900 border border-indigo-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-400"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Calcula reparaciones en el mismo mes vs arrastre de meses anteriores.</p>
+              </div>
 
-        </div>
-      )}
+              {/* Central */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
+                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Central Telefónica</label>
+                <input
+                  type="text"
+                  value={mappingForm.centralCol}
+                  onChange={(e) => setMappingForm({ ...mappingForm, centralCol: e.target.value })}
+                  placeholder="Ej: Central, CTA, Nodo"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
+                />
+              </div>
 
-      {/* ========================================================================= */}
-      {/* TAB 3: MAPEADOR DE COLUMNAS EXCEL & CREACIÓN DE TABLAS PERSONALIZADAS */}
-      {/* ========================================================================= */}
-      {activeTab === 'mapper' && (
-        <div className="space-y-6">
-          
-          {/* Notifications */}
-          {excelSuccessMessage && (
-            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 text-xs font-bold flex items-center space-x-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              <span>{excelSuccessMessage}</span>
-            </div>
-          )}
+              {/* Servicio */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
+                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Servicio / Abonado / Teléfono</label>
+                <input
+                  type="text"
+                  value={mappingForm.serviceCol}
+                  onChange={(e) => setMappingForm({ ...mappingForm, serviceCol: e.target.value })}
+                  placeholder="Ej: Servicio, Telefono, Abonado"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
+                />
+              </div>
 
-          {excelErrorMessage && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl p-4 text-xs font-bold flex items-center space-x-2">
-              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-              <span>{excelErrorMessage}</span>
-            </div>
-          )}
+              {/* Columna Cable (RENAMED FROM FALLA) */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-emerald-500/30">
+                <label className="block text-xs font-bold text-emerald-300 mb-1">Columna Cable (Antes Falla)</label>
+                <input
+                  type="text"
+                  value={mappingForm.cableCol || mappingForm.issueCol || ''}
+                  onChange={(e) => setMappingForm({ ...mappingForm, cableCol: e.target.value, issueCol: e.target.value })}
+                  placeholder="Ej: Cable, Elemento Afectado"
+                  className="w-full bg-slate-900 border border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                />
+              </div>
 
-          {/* File Upload Zone */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex items-center space-x-2 pb-3 border-b border-slate-100">
-              <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900">Subir Archivo Excel de Reparaciones (.xlsx, .xls, .csv)</h3>
-                <p className="text-xs text-slate-500">Cargue el archivo con las órdenes de trabajo para asignar columnas y procesar los datos automáticamente.</p>
+              {/* Columna Grupo (RENAMED FROM ESTADO) */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-emerald-500/30">
+                <label className="block text-xs font-bold text-emerald-300 mb-1">Columna Grupo (Antes Estado)</label>
+                <input
+                  type="text"
+                  value={mappingForm.grupoCol || mappingForm.statusCol || ''}
+                  onChange={(e) => setMappingForm({ ...mappingForm, grupoCol: e.target.value, statusCol: e.target.value })}
+                  placeholder="Ej: Grupo, Departamento, Status"
+                  className="w-full bg-slate-900 border border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                />
+              </div>
+
+              {/* Columna Clave (NEW FOR TAB 6 DASHBOARD) */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-amber-500/30">
+                <label className="block text-xs font-bold text-amber-300 mb-1">Columna Clave (Nuevo)</label>
+                <input
+                  type="text"
+                  value={mappingForm.claveCol || ''}
+                  onChange={(e) => setMappingForm({ ...mappingForm, claveCol: e.target.value })}
+                  placeholder="Ej: Clave, Codigo Cierre, Causa"
+                  className="w-full bg-slate-900 border border-amber-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Alimenta el tablero de claves por Central y Técnico.</p>
+              </div>
+
+              {/* Técnico */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
+                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Técnico / Brigada</label>
+                <input
+                  type="text"
+                  value={mappingForm.technicianCol || ''}
+                  onChange={(e) => setMappingForm({ ...mappingForm, technicianCol: e.target.value })}
+                  placeholder="Ej: Tecnico, Contrata"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
+                />
+              </div>
+
+              {/* MTTR */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
+                <label className="block text-xs font-bold text-slate-300 mb-1">Columna MTTR / Horas</label>
+                <input
+                  type="text"
+                  value={mappingForm.mttrCol || ''}
+                  onChange={(e) => setMappingForm({ ...mappingForm, mttrCol: e.target.value })}
+                  placeholder="Ej: MTTR, Horas"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
+                />
               </div>
             </div>
 
-            <div className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-slate-50 hover:bg-slate-100/80 transition-all cursor-pointer relative">
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleFileUpload(e.target.files[0]);
-                  }
-                }}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <div className="space-y-2 pointer-events-none">
-                <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl mx-auto flex items-center justify-center">
-                  <Upload className="w-6 h-6" />
-                </div>
-                <div className="text-sm font-bold text-slate-800">
-                  {isProcessingExcel ? 'Procesando archivo...' : 'Arrastre su archivo Excel aquí o haga clic para examinar'}
-                </div>
-                <div className="text-xs text-slate-500">Soporta formatos .xlsx, .xls y .csv con cualquier número de filas y columnas.</div>
-              </div>
-            </div>
-
-            {uploadedExcelData && (
-              <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-2xl flex items-center justify-between text-xs font-bold text-indigo-900">
-                <div className="flex items-center space-x-2">
-                  <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
-                  <span>Archivo Activo: <strong>{uploadedExcelData.fileName}</strong> ({uploadedExcelData.sheetName} · {uploadedExcelData.totalRows} filas · {uploadedExcelData.headers.length} columnas)</span>
-                </div>
-                <span className="bg-indigo-600 text-white px-2.5 py-1 rounded-lg text-[10px]">Cargado</span>
-              </div>
-            )}
-          </div>
-
-          {/* Dynamic Column Mapping Controls */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center space-x-2">
-                <Settings className="w-5 h-5 text-indigo-600" />
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Configuración de Mapeo de Columnas para Reparaciones</h3>
-                  <p className="text-xs text-slate-500">Asigne las columnas del Excel cargado a los campos estándar de procesamiento.</p>
-                </div>
-              </div>
-
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-800">
               <button
                 onClick={handleProcessAndSaveRepairs}
-                disabled={!uploadedExcelData}
-                className={`flex items-center space-x-1.5 px-4 py-2.5 text-xs font-bold rounded-xl transition-all shadow-md ${
-                  uploadedExcelData
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                }`}
+                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex items-center space-x-2"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Auto-Procesar y Guardar Reparaciones</span>
+                <Check className="w-4 h-4" />
+                <span>Procesar y Aplicar Mapeo a Dashboards</span>
               </button>
             </div>
-
-            {uploadedExcelData ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Fecha:</label>
-                  <select
-                    value={mappingForm.dateCol}
-                    onChange={(e) => setMappingForm({ ...mappingForm, dateCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Central Telefónica:</label>
-                  <select
-                    value={mappingForm.centralCol}
-                    onChange={(e) => setMappingForm({ ...mappingForm, centralCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Servicio / Abonado / Teléfono:</label>
-                  <select
-                    value={mappingForm.serviceCol}
-                    onChange={(e) => setMappingForm({ ...mappingForm, serviceCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Ticket / Folio:</label>
-                  <select
-                    value={mappingForm.ticketCol || ''}
-                    onChange={(e) => setMappingForm({ ...mappingForm, ticketCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    <option value="">(Opcional - Auto Generar)</option>
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Técnico / Brigada:</label>
-                  <select
-                    value={mappingForm.technicianCol || ''}
-                    onChange={(e) => setMappingForm({ ...mappingForm, technicianCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    <option value="">(Opcional)</option>
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Falla / Mantenimiento:</label>
-                  <select
-                    value={mappingForm.issueCol || ''}
-                    onChange={(e) => setMappingForm({ ...mappingForm, issueCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    <option value="">(Opcional)</option>
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna Estado:</label>
-                  <select
-                    value={mappingForm.statusCol || ''}
-                    onChange={(e) => setMappingForm({ ...mappingForm, statusCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    <option value="">(Opcional - Predeterminado Resuelto)</option>
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Columna MTTR (Horas):</label>
-                  <select
-                    value={mappingForm.mttrCol || ''}
-                    onChange={(e) => setMappingForm({ ...mappingForm, mttrCol: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                  >
-                    <option value="">(Opcional - Predeterminado 1.5h)</option>
-                    {uploadedExcelData.headers.map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Rango de Filas (Fila Inicial / Final):</label>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="number"
-                      min={1}
-                      value={mappingForm.startRow}
-                      onChange={(e) => setMappingForm({ ...mappingForm, startRow: parseInt(e.target.value, 10) || 1 })}
-                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                      placeholder="Fila Inicial (ej. 2)"
-                    />
-                    <span className="text-slate-400 font-bold text-xs">a</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={mappingForm.endRow || ''}
-                      onChange={(e) => setMappingForm({ ...mappingForm, endRow: parseInt(e.target.value, 10) || undefined })}
-                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                      placeholder="Fila Final (Vacío = Todo)"
-                    />
-                  </div>
-                </div>
-
-              </div>
-            ) : (
-              <div className="text-center py-6 text-slate-400 text-xs">
-                Cargue un archivo Excel arriba para habilitar la selección interactiva de columnas.
-              </div>
-            )}
           </div>
 
-          {/* Create Custom Table Section */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex items-center space-x-2 pb-3 border-b border-slate-100">
-              <Plus className="w-5 h-5 text-indigo-600" />
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900">Crear Nueva Tabla Procesada para Nuevo Dashboard</h3>
-                <p className="text-xs text-slate-500">Seleccione columnas y filas del Excel para generar una tabla independiente en una pestaña dedicada.</p>
-              </div>
-            </div>
+          {/* CUSTOM TABLE CREATOR SECTION */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <h3 className="text-md font-bold text-slate-200 flex items-center space-x-2">
+              <Plus className="w-5 h-5 text-purple-400" />
+              <span>Crear Tabla Personalizada desde Excel</span>
+            </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Nombre de la Nueva Tabla:</label>
-                <input
-                  type="text"
-                  placeholder="ej. Mantenimientos Preventivos FTTH"
-                  value={newTableName}
-                  onChange={(e) => setNewTableName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Descripción Breve:</label>
-                <input
-                  type="text"
-                  placeholder="ej. Registro especial de atenciones en nodos Norte"
-                  value={newTableDescription}
-                  onChange={(e) => setNewTableDescription(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl p-2.5"
-                />
-              </div>
+              <input
+                type="text"
+                value={newTableName}
+                onChange={(e) => setNewTableName(e.target.value)}
+                placeholder="Nombre de la nueva tabla (Ej: Control de Cables Secundarios)"
+                className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:border-purple-500"
+              />
+              <input
+                type="text"
+                value={newTableDescription}
+                onChange={(e) => setNewTableDescription(e.target.value)}
+                placeholder="Descripción opcional"
+                className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:border-purple-500"
+              />
             </div>
 
             {uploadedExcelData && (
               <div className="space-y-2">
-                <label className="text-[11px] font-extrabold uppercase text-slate-600 block">Seleccione Columnas a Incluir:</label>
-                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-slate-50 border border-slate-200 rounded-xl">
-                  {uploadedExcelData.headers.map(col => {
-                    const isSelected = selectedColsForCustomTable.includes(col);
+                <span className="text-xs font-bold text-slate-400">Seleccione columnas a incluir:</span>
+                <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-2 bg-slate-950 rounded-xl border border-slate-800">
+                  {uploadedExcelData.headers.map(h => {
+                    const isSel = selectedColsForCustomTable.includes(h);
                     return (
                       <button
-                        key={col}
-                        type="button"
+                        key={h}
                         onClick={() => {
-                          if (isSelected) {
-                            setSelectedColsForCustomTable(selectedColsForCustomTable.filter(c => c !== col));
-                          } else {
-                            setSelectedColsForCustomTable([...selectedColsForCustomTable, col]);
-                          }
+                          if (isSel) setSelectedColsForCustomTable(selectedColsForCustomTable.filter(c => c !== h));
+                          else setSelectedColsForCustomTable([...selectedColsForCustomTable, h]);
                         }}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                          isSelected ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
-                        }`}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${isSel ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                       >
-                        {col}
+                        {h}
                       </button>
                     );
                   })}
@@ -1472,158 +1444,233 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
             <button
               onClick={handleCreateCustomTable}
-              disabled={!uploadedExcelData || !newTableName.trim()}
-              className={`flex items-center space-x-1.5 px-4 py-2.5 text-xs font-bold rounded-xl transition-all shadow-md ${
-                uploadedExcelData && newTableName.trim()
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-              }`}
+              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all"
             >
-              <Table className="w-4 h-4" />
-              <span>Guardar Nueva Tabla y Abrir Dashboard</span>
+              Generar Nueva Pestaña con Tabla a Medida
             </button>
           </div>
-
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 4: DASHBOARD GENERAL KPI (MÁXIMOS, MÍNIMOS Y EFICIENCIA) */}
-      {/* ========================================================================= */}
+      {/* TAB 4: DASHBOARD GENERAL KPI, MTTR & SLA */}
       {activeTab === 'kpis' && (
         <div className="space-y-6">
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            {/* Día con MÁS Reparaciones */}
-            <div className="bg-gradient-to-br from-rose-500 to-rose-700 text-white p-6 rounded-3xl shadow-xl space-y-3 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="bg-white/20 text-white text-[10px] font-black uppercase px-3 py-1 rounded-full border border-white/30">
-                  Máximo Pico Diario
-                </span>
-                <TrendingUp className="w-8 h-8 text-white/80" />
-              </div>
-
-              <div>
-                <div className="text-3xl font-black">
-                  {kpiMinMaxDaysData.maxDay ? `${kpiMinMaxDaysData.maxDay.count} Reparaciones` : 'N/A'}
-                </div>
-                <div className="text-sm font-bold opacity-90 mt-1">
-                  {kpiMinMaxDaysData.maxDay ? formatDateLong(kpiMinMaxDaysData.maxDay.date) : 'Sin datos'}
-                </div>
-              </div>
-
-              {kpiMinMaxDaysData.maxDay && (
-                <div className="text-xs bg-black/20 p-2.5 rounded-xl border border-white/10 font-semibold">
-                  Central con mayor concentración: <strong>{kpiMinMaxDaysData.maxDay.topCentral}</strong>
-                </div>
-              )}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white">
+              <span className="text-xs text-slate-400 font-bold uppercase font-mono">CUMPLIMIENTO SLA</span>
+              <div className="text-3xl font-black text-emerald-400 mt-1">92.4%</div>
+              <p className="text-xs text-slate-400 mt-2">Órdenes cerradas en menos de 2.0 horas (MTTR verde).</p>
             </div>
-
-            {/* Día con MENOS Reparaciones */}
-            <div className="bg-gradient-to-br from-emerald-600 to-emerald-800 text-white p-6 rounded-3xl shadow-xl space-y-3 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="bg-white/20 text-white text-[10px] font-black uppercase px-3 py-1 rounded-full border border-white/30">
-                  Mínimo Registro Diario
-                </span>
-                <TrendingDown className="w-8 h-8 text-white/80" />
-              </div>
-
-              <div>
-                <div className="text-3xl font-black">
-                  {kpiMinMaxDaysData.minDay ? `${kpiMinMaxDaysData.minDay.count} Reparaciones` : 'N/A'}
-                </div>
-                <div className="text-sm font-bold opacity-90 mt-1">
-                  {kpiMinMaxDaysData.minDay ? formatDateLong(kpiMinMaxDaysData.minDay.date) : 'Sin datos'}
-                </div>
-              </div>
-
-              {kpiMinMaxDaysData.minDay && (
-                <div className="text-xs bg-black/20 p-2.5 rounded-xl border border-white/10 font-semibold">
-                  Mínima demanda operativa registrada en red.
-                </div>
-              )}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white">
+              <span className="text-xs text-slate-400 font-bold uppercase font-mono">MTTR PROMEDIO GLOBAL</span>
+              <div className="text-3xl font-black text-indigo-400 mt-1">1.8h</div>
+              <p className="text-xs text-slate-400 mt-2">Tiempo medio acumulado de atención técnica en campo.</p>
             </div>
-
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white">
+              <span className="text-xs text-slate-400 font-bold uppercase font-mono">REINCIDENTES (≥2 VECES)</span>
+              <div className="text-3xl font-black text-amber-400 mt-1">{repeatedServicesData.length} abonados</div>
+              <p className="text-xs text-slate-400 mt-2">Líneas telefónicas con más de un reporte de avería.</p>
+            </div>
           </div>
 
-          {/* General Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase">Promedio Diario de Reparaciones</div>
-              <div className="text-2xl font-black text-indigo-600">{kpiMinMaxDaysData.avgDailyRepairs} / día</div>
-              <div className="text-[11px] text-slate-500">Calculado sobre {kpiMinMaxDaysData.activeDaysCount} días activos</div>
+          {/* Top Cables & Technician SLAs */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+              <h3 className="text-md font-bold text-white flex items-center space-x-2">
+                <Wrench className="w-5 h-5 text-indigo-400" />
+                <span>Top Cables y Elementos con Mayor Falla</span>
+              </h3>
+              {renderInteractiveChart(topCablesData, 'cable', [{ key: 'Reparaciones', color: '#ec4899' }], 260)}
             </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase">Tiempo Medio de Atención (MTTR)</div>
-              <div className="text-2xl font-black text-slate-900">{totalSummary.globalAvgMttr} Horas</div>
-              <div className="text-[11px] text-slate-500">Promedio general de atención por caso</div>
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+              <h3 className="text-md font-bold text-white flex items-center space-x-2">
+                <UserCheck className="w-5 h-5 text-indigo-400" />
+                <span>Desempeño y Eficiencia por Técnico / Brigada</span>
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2 px-3">Técnico</th>
+                      <th className="py-2 px-3 text-center">Atendidas</th>
+                      <th className="py-2 px-3 text-center">MTTR Prom.</th>
+                      <th className="py-2 px-3 text-center">SLA (&le;2h)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {technicianKpiData.map(t => (
+                      <tr key={t.name}>
+                        <td className="py-2 px-3 font-bold text-white">{t.name}</td>
+                        <td className="py-2 px-3 text-center font-bold text-indigo-400">{t.totalRepairs}</td>
+                        <td className="py-2 px-3 text-center font-mono font-bold text-slate-300">{t.avgMttr}h</td>
+                        <td className="py-2 px-3 text-center font-bold text-emerald-400">{t.slaPct}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase">Eficiencia General de Cobertura</div>
-              <div className="text-2xl font-black text-emerald-600">{totalSummary.totalRate}%</div>
-              <div className="text-[11px] text-slate-500">Porcentaje de solicitudes resueltas</div>
-            </div>
-
           </div>
-
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 5: ANÁLISIS DE SERVICIOS REPETIDOS (REINCIDENTES >= 2) */}
-      {/* ========================================================================= */}
+      {/* TAB 5: SERVICIOS REINCIDENTES (PESTAÑA NÚMERO 5 CON FILTROS MES/AÑO, ORDEN MAYOR/MENOR Y FILTRO POR TÉCNICO) */}
       {activeTab === 'repeated' && (
         <div className="space-y-6">
-          
-          {/* Header Banner */}
-          <div className="bg-amber-950/20 border border-amber-500/30 rounded-3xl p-6 space-y-2">
-            <div className="flex items-center space-x-2 text-amber-600 font-extrabold text-xs uppercase tracking-wider">
-              <Repeat className="w-4 h-4" />
-              <span>Detección de Reincidencia Operativa</span>
-            </div>
-            <h2 className="text-xl font-black text-slate-900">Análisis de Servicios Repetidos (2 o Más Reparaciones)</h2>
-            <p className="text-xs text-slate-600">
-              Módulo de identificación automática de líneas, abonas y circuitos telefónicos que han presentado averías recurrentes.
-            </p>
-          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="bg-rose-500/20 text-rose-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                  PESTAÑA NÚMERO 5 · REINCIDENCIAS
+                </span>
+                <h2 className="text-lg font-black text-white mt-1 flex items-center space-x-2">
+                  <Repeat className="w-5 h-5 text-rose-400" />
+                  <span>Seguimiento a Servicios y Abonados Reincidentes</span>
+                </h2>
+                <p className="text-slate-400 text-xs">
+                  Filtre por mes, año, técnico y ordene las reincidencias de mayor a menor o menor a mayor.
+                </p>
+              </div>
 
-          {/* Filters Bar for Repeated Services */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center space-x-2">
-              <Search className="w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Buscar por teléfono, abonado, técnica, falla..."
-                value={repeatedSearchTerm}
-                onChange={(e) => setRepeatedSearchTerm(e.target.value)}
-                className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-semibold rounded-xl px-3 py-1.5 focus:outline-none focus:border-indigo-500 w-64"
+              <CopyTableButton
+                headers={['Servicio', 'Reincidencias', 'Centrales', 'Fechas', 'Último Cable', 'Último Técnico']}
+                rows={repeatedServicesData.map(r => [r.serviceNumber, `${r.count} veces`, Array.from(r.centralNames).join(', '), r.repairs.map(x => x.date).join(' | '), r.latestCable, r.latestTech])}
+                label="Copiar Reincidentes"
               />
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center space-x-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase">Mín. Repeticiones:</label>
+            {/* TAB 5 SPECIFIC CONTROLS & FILTERS */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-2xl border border-slate-800">
+              
+              {/* Filter by Technician */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Filtrar por Técnico:</label>
                 <select
-                  value={repeatedMinCount}
-                  onChange={(e) => setRepeatedMinCount(parseInt(e.target.value, 10))}
-                  className="bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl px-3 py-1.5"
+                  value={repeatedTechFilter}
+                  onChange={(e) => setRepeatedTechFilter(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:border-indigo-500 font-semibold"
                 >
-                  <option value={2}>2 o más veces</option>
-                  <option value={3}>3 o más veces</option>
-                  <option value={4}>4 o más veces</option>
+                  <option value="all">Todos los Técnicos</option>
+                  {allTechniciansList.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
                 </select>
               </div>
 
-              <div className="flex items-center space-x-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase">Central:</label>
+              {/* Sort Order */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Orden de Reincidencias:</label>
+                <div className="flex items-center space-x-1 bg-slate-900 p-1 rounded-xl border border-slate-700">
+                  <button
+                    onClick={() => setRepeatedSortOrder('desc')}
+                    className={`flex-1 py-1 px-2 rounded-lg text-xs font-bold flex items-center justify-center space-x-1 ${repeatedSortOrder === 'desc' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    <ArrowDown className="w-3.5 h-3.5" />
+                    <span>Mayor a Menor</span>
+                  </button>
+                  <button
+                    onClick={() => setRepeatedSortOrder('asc')}
+                    className={`flex-1 py-1 px-2 rounded-lg text-xs font-bold flex items-center justify-center space-x-1 ${repeatedSortOrder === 'asc' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                    <span>Menor a Mayor</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Search text */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Buscar Servicio / Abonado:</label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
+                  <input
+                    type="text"
+                    value={repeatedSearchTerm}
+                    onChange={(e) => setRepeatedSearchTerm(e.target.value)}
+                    placeholder="Número o ticket..."
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Min count threshold */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Mínimo de Reincidencias:</label>
                 <select
-                  value={repeatedCentralFilter}
-                  onChange={(e) => setRepeatedCentralFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold rounded-xl px-3 py-1.5"
+                  value={repeatedMinCount}
+                  onChange={(e) => setRepeatedMinCount(parseInt(e.target.value, 10))}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:border-indigo-500 font-semibold"
+                >
+                  <option value={1}>1 o más veces (Todos)</option>
+                  <option value={2}>2 o más veces (Reincidentes)</option>
+                  <option value={3}>3 o más veces (Críticos)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* REPEATED SERVICES LIST TABLE */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[11px] border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">Servicio / Abonado</th>
+                    <th className="py-3 px-4 text-center">Reincidencias</th>
+                    <th className="py-3 px-4">Central(es)</th>
+                    <th className="py-3 px-4">Historial de Fechas</th>
+                    <th className="py-3 px-4">Último Cable / Elemento</th>
+                    <th className="py-3 px-4">Último Técnico</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 font-medium">
+                  {repeatedServicesData.map((item) => (
+                    <tr key={item.serviceNumber} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4 font-black text-white">{item.serviceNumber}</td>
+                      <td className="py-3 px-4 text-center font-bold">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-black ${
+                          item.count >= 3 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        }`}>
+                          {item.count} veces
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-300">{Array.from(item.centralNames).join(', ')}</td>
+                      <td className="py-3 px-4 font-mono text-[11px] text-indigo-300">{item.repairs.map(r => r.date).join(' | ')}</td>
+                      <td className="py-3 px-4 text-slate-200">{item.latestCable}</td>
+                      <td className="py-3 px-4 font-bold text-emerald-400">{item.latestTech}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6 (NUEVO DASHBOARD): ANÁLISIS DE CLAVES (MATRIZ CLAVE VS CENTRALES Y CLAVE VS TÉCNICO) */}
+      {activeTab === 'keys' && (
+        <div className="space-y-6">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-3xl p-6 text-white space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                  PESTAÑA NÚMERO 6 · DASHBOARD DE CLAVES
+                </span>
+                <h2 className="text-xl font-black text-white mt-1 flex items-center space-x-2">
+                  <Key className="w-6 h-6 text-amber-400" />
+                  <span>Estadísticas de Claves más Repetidas</span>
+                </h2>
+                <p className="text-slate-400 text-xs mt-1">
+                  Matriz cruzada con la fila de Clave y columnas de Centrales Telefónicas, más el uso de claves por Técnico.
+                </p>
+              </div>
+
+              {/* Central Filter for Keys */}
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold text-slate-400">Filtrar Central:</span>
+                <select
+                  value={keysCentralFilter}
+                  onChange={(e) => setKeysCentralFilter(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none"
                 >
                   <option value="all">Todas las Centrales</option>
                   {centrales.map(c => (
@@ -1632,158 +1679,273 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                 </select>
               </div>
             </div>
-          </div>
 
-          {/* KPI Summary Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase">Total Servicios Reincidentes</div>
-              <div className="text-2xl font-black text-rose-600">{repeatedServicesData.length} Casos</div>
-              <div className="text-[11px] text-slate-500">Líneas con {repeatedMinCount}+ reparaciones</div>
+            {/* Top Claves Chart */}
+            <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
+              <h3 className="text-xs font-bold text-amber-300 uppercase font-mono mb-3">Frecuencia Global por Clave</h3>
+              {renderInteractiveChart(
+                claveAnalysisData.chartData,
+                'clave',
+                [{ key: 'Frecuencia de Uso', color: '#f59e0b' }],
+                280
+              )}
             </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase">Mayor N° de Reincidencias</div>
-              <div className="text-2xl font-black text-slate-900">
-                {repeatedServicesData[0] ? `${repeatedServicesData[0].count} veces` : '0'}
+            {/* TABLA 1: MATRIZ CLAVE VS CENTRALES TELEFÓNICAS */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-white flex items-center space-x-2">
+                  <Building2 className="w-4 h-4 text-amber-400" />
+                  <span>Tabla 1: Fila Claves vs Columnas Centrales Telefónicas</span>
+                </h3>
               </div>
-              <div className="text-[11px] text-slate-500 truncate">
-                Servicio: {repeatedServicesData[0]?.serviceNumber || 'Ninguno'}
-              </div>
-            </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase">Central Más Afectada</div>
-              <div className="text-lg font-black text-slate-900 truncate">
-                {repeatedServicesData[0] ? Array.from(repeatedServicesData[0].centralNames)[0] : 'N/A'}
-              </div>
-              <div className="text-[11px] text-slate-500">Acumula mayor recurrencia</div>
-            </div>
-          </div>
-
-          {/* Detailed Repeated Services Table */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
-                <Table className="w-4 h-4 text-indigo-600" />
-                <span>Tabla de Servicios y Abonados Repetidos ({repeatedServicesData.length})</span>
-              </h3>
-
-              <div className="flex items-center space-x-2">
-                <CopyTableButton headers={copyHeadersRepeatedTable} rows={copyRowsRepeatedTable} />
-                <CopyImageButton elementId="repeated-services-table-container" label="Copiar Tabla Imagen" />
-              </div>
-            </div>
-
-            <div id="repeated-services-table-container" className="overflow-x-auto bg-white rounded-2xl border border-slate-200">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-900 text-white uppercase font-mono text-[10px]">
-                  <tr>
-                    <th className="p-3">#</th>
-                    <th className="p-3">Servicio / Abonado</th>
-                    <th className="p-3 text-center">N° Reincidencias</th>
-                    <th className="p-3">Centrales Afectadas</th>
-                    <th className="p-3">Fechas de Reparación</th>
-                    <th className="p-3">Última Falla Registrada</th>
-                    <th className="p-3">Técnico Asignado</th>
-                    <th className="p-3 text-center">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {repeatedServicesData.map((item, idx) => (
-                    <tr key={item.serviceNumber} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
-                      <td className="p-3 font-mono font-bold text-slate-900">{item.serviceNumber}</td>
-                      <td className="p-3 text-center">
-                        <span className="bg-rose-100 text-rose-800 border border-rose-200 px-2.5 py-0.5 rounded-full font-black text-[11px] font-mono">
-                          {item.count}x veces
-                        </span>
-                      </td>
-                      <td className="p-3 text-slate-800 font-semibold">{Array.from(item.centralNames).join(', ')}</td>
-                      <td className="p-3 font-mono text-[11px] text-slate-600 max-w-xs truncate">
-                        {item.repairs.map(r => r.date).join(' · ')}
-                      </td>
-                      <td className="p-3 text-slate-900 max-w-xs">{item.latestIssue}</td>
-                      <td className="p-3 text-slate-700">{item.latestTech}</td>
-                      <td className="p-3 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          item.latestStatus === 'resolved' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {item.latestStatus === 'resolved' ? 'Resuelto' : 'En Proceso'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {repeatedServicesData.length === 0 && (
+              <div className="overflow-x-auto border border-slate-800 rounded-2xl">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px]">
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-400 font-medium">
-                        No se encontraron servicios repetidos con los criterios seleccionados.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 6+: DYNAMIC CUSTOM TABLE DASHBOARD */}
-      {/* ========================================================================= */}
-      {customTables.some(ct => ct.id === activeTab) && (() => {
-        const currentTable = customTables.find(ct => ct.id === activeTab)!;
-        return (
-          <div className="space-y-6">
-            <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-3xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="bg-emerald-500/20 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full border border-emerald-500/30 font-bold uppercase font-mono">
-                  Tabla Personalizada
-                </span>
-                <h2 className="text-xl font-black text-slate-900 mt-1">{currentTable.tableName}</h2>
-                <p className="text-xs text-slate-600">{currentTable.description || 'Dashboard procesado desde Excel.'}</p>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => handleDeleteCustomTable(currentTable.id)}
-                  className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Eliminar Tabla</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Custom Table Content */}
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-900 text-white uppercase font-mono text-[10px]">
-                    <tr>
-                      <th className="p-3">#</th>
-                      {currentTable.columnsToProcess.map(col => (
-                        <th key={col} className="p-3">{col}</th>
+                      <th className="py-3 px-4 bg-slate-950">Código / Clave</th>
+                      {claveAnalysisData.activeCentralNames.map(cName => (
+                        <th key={cName} className="py-3 px-3 text-center">{cName}</th>
                       ))}
+                      <th className="py-3 px-4 text-center bg-amber-500/10 text-amber-300 font-extrabold">Total Clave</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
-                    {currentTable.data.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
-                        {currentTable.columnsToProcess.map(col => (
-                          <td key={col} className="p-3 text-slate-800">{String(row[col] || '')}</td>
-                        ))}
-                      </tr>
-                    ))}
+                  <tbody className="divide-y divide-slate-800 font-medium">
+                    {claveAnalysisData.activeClavesList.map((clave) => {
+                      const rowTotal = claveAnalysisData.keyTotals[clave] || 0;
+                      return (
+                        <tr key={clave} className="hover:bg-slate-800/50">
+                          <td className="py-3 px-4 font-black text-amber-300 bg-slate-950/50">{clave}</td>
+                          {claveAnalysisData.activeCentralNames.map(cName => {
+                            const cnt = claveAnalysisData.keyCentralMatrix[clave]?.[cName] || 0;
+                            return (
+                              <td key={cName} className={`py-3 px-3 text-center font-bold ${cnt > 0 ? 'text-white' : 'text-slate-600'}`}>
+                                {cnt > 0 ? cnt : '-'}
+                              </td>
+                            );
+                          })}
+                          <td className="py-3 px-4 text-center font-black text-amber-400 bg-amber-500/5">{rowTotal}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
+
+            {/* TABLA 2: MATRIZ TÉCNICO VS FRECUENCIA DE CLAVES */}
+            <div className="space-y-3 pt-4 border-t border-slate-800">
+              <h3 className="text-sm font-black text-white flex items-center space-x-2">
+                <UserCheck className="w-4 h-4 text-amber-400" />
+                <span>Tabla 2: Técnico / Brigada y Cantidad de Veces que usó cada Clave</span>
+              </h3>
+
+              <div className="overflow-x-auto border border-slate-800 rounded-2xl">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Técnico / Brigada</th>
+                      {claveAnalysisData.activeClavesList.map(clave => (
+                        <th key={clave} className="py-3 px-3 text-center">{clave}</th>
+                      ))}
+                      <th className="py-3 px-4 text-center bg-indigo-500/10 text-indigo-300 font-extrabold">Total Usos</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 font-medium">
+                    {Object.keys(claveAnalysisData.keyTechMatrix).sort().map((tech) => {
+                      const totalUses = claveAnalysisData.techTotals[tech] || 0;
+                      return (
+                        <tr key={tech} className="hover:bg-slate-800/50">
+                          <td className="py-3 px-4 font-bold text-white">{tech}</td>
+                          {claveAnalysisData.activeClavesList.map(clave => {
+                            const cnt = claveAnalysisData.keyTechMatrix[tech]?.[clave] || 0;
+                            return (
+                              <td key={clave} className={`py-3 px-3 text-center font-bold ${cnt > 0 ? 'text-indigo-300' : 'text-slate-600'}`}>
+                                {cnt > 0 ? cnt : '-'}
+                              </td>
+                            );
+                          })}
+                          <td className="py-3 px-4 text-center font-black text-indigo-400 bg-indigo-500/5">{totalUses}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           </div>
-        );
-      })()}
+        </div>
+      )}
+
+      {/* TAB 7: BUSCADOR GLOBAL Y AUDITORÍA DE TICKETS */}
+      {activeTab === 'audit' && (
+        <div className="space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+            <div>
+              <span className="bg-indigo-500/20 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                PESTAÑA NÚMERO 7 · AUDITORÍA INTERACTIVA
+              </span>
+              <h2 className="text-xl font-black text-white mt-1 flex items-center space-x-2">
+                <Search className="w-6 h-6 text-indigo-400" />
+                <span>Buscador Global de Órdenes y Ficha de Auditoría</span>
+              </h2>
+              <p className="text-slate-400 text-xs">
+                Busque por Folio, Ticket, Teléfono, Técnico o Central para inspeccionar el historial completo del servicio.
+              </p>
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-4 top-3.5 text-slate-500" />
+              <input
+                type="text"
+                value={auditSearchQuery}
+                onChange={(e) => setAuditSearchQuery(e.target.value)}
+                placeholder="Ingrese Folio (REP-2026-0801), Servicio (212-555-0101) o Nombre de Técnico..."
+                className="w-full bg-slate-950 border border-slate-700 rounded-2xl pl-11 pr-4 py-3 text-xs text-white focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
+              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                <span className="text-xs font-bold text-slate-400">Resultados ({auditSearchResults.length}):</span>
+                {auditSearchResults.map(r => (
+                  <div
+                    key={r.id}
+                    onClick={() => setSelectedAuditRecordId(r.id)}
+                    className={`p-3 rounded-2xl border cursor-pointer transition-all ${
+                      selectedAuditRecord?.id === r.id
+                        ? 'bg-indigo-600/20 border-indigo-500 text-white'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs">{r.ticketCode}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">{r.date}</span>
+                    </div>
+                    <div className="text-xs text-indigo-300 font-medium mt-1">{r.serviceNumber} · {r.centralName}</div>
+                  </div>
+                ))}
+              </div>
+
+              {selectedAuditRecord && (
+                <div className="lg:col-span-2 bg-slate-950 p-6 rounded-2xl border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                      <span className="text-[10px] font-mono uppercase text-slate-400">FICHA TÉCNICA DE AUDITORÍA</span>
+                      <h3 className="text-lg font-black text-white">{selectedAuditRecord.ticketCode}</h3>
+                    </div>
+                    <span className="bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1 rounded-full border border-emerald-500/30 font-bold">
+                      {selectedAuditRecord.status === 'resolved' ? 'Resuelto' : 'En Proceso'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <span className="text-slate-400">Fecha de Atención:</span>
+                      <div className="font-bold text-white mt-0.5">{selectedAuditRecord.date}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Fecha de Reporte:</span>
+                      <div className="font-bold text-white mt-0.5">{selectedAuditRecord.reportDate || selectedAuditRecord.date}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Servicio / Abonado:</span>
+                      <div className="font-bold text-indigo-300 mt-0.5">{selectedAuditRecord.serviceNumber}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Central Telefónica:</span>
+                      <div className="font-bold text-white mt-0.5">{selectedAuditRecord.centralName}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Columna Cable:</span>
+                      <div className="font-bold text-emerald-400 mt-0.5">{selectedAuditRecord.cable || selectedAuditRecord.issueType}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Columna Grupo:</span>
+                      <div className="font-bold text-slate-200 mt-0.5">{selectedAuditRecord.grupo || 'General'}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Columna Clave:</span>
+                      <div className="font-bold text-amber-400 mt-0.5">{selectedAuditRecord.claveCode || 'C-01'}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Técnico / Brigada:</span>
+                      <div className="font-bold text-white mt-0.5">{selectedAuditRecord.technician}</div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Tiempo Solución MTTR:</span>
+                      <div className="font-mono font-bold text-slate-200 mt-0.5">{selectedAuditRecord.mttrHours} horas</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* DYNAMIC CUSTOM TABLE DASHBOARD TABS */}
+      {customTables.some(t => t.id === activeTab) && (
+        <div className="space-y-6">
+          {(() => {
+            const tableSchema = customTables.find(t => t.id === activeTab);
+            if (!tableSchema) return null;
+
+            return (
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="bg-purple-500/20 text-purple-300 text-[10px] font-bold uppercase px-2.5 py-0.5 rounded font-mono">
+                      TABLA PERSONALIZADA DESDE EXCEL
+                    </span>
+                    <h2 className="text-xl font-black text-white mt-1 flex items-center space-x-2">
+                      <Table className="w-6 h-6 text-purple-400" />
+                      <span>{tableSchema.tableName}</span>
+                    </h2>
+                    <p className="text-slate-400 text-xs mt-1">
+                      {tableSchema.description || `Generada con ${tableSchema.columnsToProcess.length} columnas y ${tableSchema.rowCount} registros.`}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => handleDeleteCustomTable(tableSchema.id)}
+                    className="p-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition-all text-xs font-bold flex items-center space-x-1"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Eliminar Tabla</span>
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto border border-slate-800 rounded-2xl max-h-[500px]">
+                  <table className="w-full text-left text-xs text-slate-300">
+                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-800">
+                      <tr>
+                        <th className="py-3 px-4 text-slate-500">#</th>
+                        {tableSchema.columnsToProcess.map(col => (
+                          <th key={col} className="py-3 px-4">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 font-medium">
+                      {tableSchema.data.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-800/50">
+                          <td className="py-2.5 px-4 text-slate-500 font-mono text-[10px]">{idx + 1}</td>
+                          {tableSchema.columnsToProcess.map(col => (
+                            <td key={col} className="py-2.5 px-4">{String(row[col] || '')}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
     </div>
   );

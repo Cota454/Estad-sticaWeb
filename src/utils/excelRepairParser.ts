@@ -107,19 +107,22 @@ export function processRepairRowsWithMapping(
   targetRows.forEach((row, idx) => {
     // 1. Extract raw column values
     const rawDate = row[mapping.dateCol];
+    const rawReportDate = mapping.reportDateCol ? row[mapping.reportDateCol] : '';
     const rawCentral = String(row[mapping.centralCol] || '').trim();
     const rawService = String(row[mapping.serviceCol] || '').trim();
     const rawTicket = mapping.ticketCol ? String(row[mapping.ticketCol] || '').trim() : '';
     const rawTech = mapping.technicianCol ? String(row[mapping.technicianCol] || '').trim() : '';
-    const rawIssue = mapping.issueCol ? String(row[mapping.issueCol] || '').trim() : '';
-    const rawStatus = mapping.statusCol ? String(row[mapping.statusCol] || '').trim() : '';
+    const rawCable = mapping.cableCol ? String(row[mapping.cableCol] || '').trim() : (mapping.issueCol ? String(row[mapping.issueCol] || '').trim() : '');
+    const rawGrupo = mapping.grupoCol ? String(row[mapping.grupoCol] || '').trim() : (mapping.statusCol ? String(row[mapping.statusCol] || '').trim() : '');
+    const rawClave = mapping.claveCol ? String(row[mapping.claveCol] || '').trim() : '';
     const rawMttr = mapping.mttrCol ? row[mapping.mttrCol] : '';
 
     // Ignore row if key fields are completely empty
     if (!rawCentral && !rawService && !rawTicket) return;
 
-    // 2. Normalize date
+    // 2. Normalize dates
     const { dateStr } = normalizeDateString(rawDate, todayStr);
+    const reportDateNorm = rawReportDate ? normalizeDateString(rawReportDate, dateStr).dateStr : dateStr;
 
     // 3. Match Central CTA
     let matchedCentralId: string | undefined = undefined;
@@ -141,7 +144,7 @@ export function processRepairRowsWithMapping(
 
     // 4. Normalize Status
     let status: 'resolved' | 'in_progress' | 'pending' = 'resolved';
-    const sLower = rawStatus.toLowerCase();
+    const sLower = rawGrupo.toLowerCase();
     if (sLower.includes('proceso') || sLower.includes('pendiente') || sLower.includes('abierto')) {
       status = sLower.includes('proceso') ? 'in_progress' : 'pending';
     }
@@ -162,11 +165,15 @@ export function processRepairRowsWithMapping(
       id: `rep_excel_${Date.now()}_${idx}`,
       ticketCode,
       date: dateStr,
+      reportDate: reportDateNorm,
       centralId: matchedCentralId,
       centralName: matchedCentralName,
       serviceNumber,
       technician: rawTech || 'Brigada de Campo',
-      issueType: rawIssue || 'Mantenimiento / Avería General',
+      issueType: rawCable || 'Avería General',
+      cable: rawCable || 'Cable Principal',
+      grupo: rawGrupo || 'Planta Exterior',
+      claveCode: rawClave || 'C-01',
       status,
       mttrHours,
       rawRowData: row

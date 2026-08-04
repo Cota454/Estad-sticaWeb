@@ -299,21 +299,22 @@ export function saveReports(reports: DailyReport[], userEmail?: string): void {
 // Initial Seed Repair Records for Demo & Initial Load
 export const INITIAL_REPAIR_RECORDS: RepairRecord[] = [
   // August 2026
-  { id: 'rep_001', ticketCode: 'REP-2026-0801', date: '2026-08-01', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Avería en Cable de Fibra Cupla 04', status: 'resolved', mttrHours: 1.5, workGroupId: 'grp_trans' },
-  { id: 'rep_002', ticketCode: 'REP-2026-0802', date: '2026-08-01', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0102', technician: 'Téc. Roberto Gómez', issueType: 'Caída de Enlace GPON OLT-1', status: 'resolved', mttrHours: 2.1, workGroupId: 'grp_broad' },
-  { id: 'rep_003', ticketCode: 'REP-2026-0802b', date: '2026-08-01', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Sin tono de marcación - Par Sulfatado', status: 'resolved', mttrHours: 1.1, workGroupId: 'grp_ing_ext' },
-  { id: 'rep_004', ticketCode: 'REP-2026-0803', date: '2026-08-02', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Reincidencia: Ruido en la línea y cortes', status: 'resolved', mttrHours: 1.8, workGroupId: 'grp_ing_ext' },
-  { id: 'rep_005', ticketCode: 'REP-2026-0804', date: '2026-08-02', centralId: 'cnt_este', centralName: 'Central Este', serviceNumber: '212-555-0340', technician: 'Ing. Luis Fernández', issueType: 'Módulo SFP Quemado en Switch', status: 'resolved', mttrHours: 3.0, workGroupId: 'grp_conm' },
-  { id: 'rep_006', ticketCode: 'REP-2026-0805', date: '2026-08-03', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Reincidencia: Atenuación Alta en FOS', status: 'resolved', mttrHours: 2.5, workGroupId: 'grp_trans' },
-  { id: 'rep_007', ticketCode: 'REP-2026-0806', date: '2026-08-03', centralId: 'cnt_sur', centralName: 'Central Sur', serviceNumber: '212-555-0550', technician: 'Téc. Javier Ortiz', issueType: 'Fallo de Rectificador N° 2', status: 'resolved', mttrHours: 4.2, workGroupId: 'grp_ener' },
-  { id: 'rep_008', ticketCode: 'REP-2026-0807', date: '2026-08-03', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Reincidencia (3a vez): Cambio total de acometida', status: 'resolved', mttrHours: 2.2, workGroupId: 'grp_ing_ext' },
-  { id: 'rep_009', ticketCode: 'REP-2026-0808', date: '2026-08-04', centralId: 'cnt_este', centralName: 'Central Este', serviceNumber: '212-555-0340', technician: 'Ing. Luis Fernández', issueType: 'Reincidencia: Puerto Flapping', status: 'in_progress', mttrHours: 1.0, workGroupId: 'grp_conm' },
-  { id: 'rep_010', ticketCode: 'REP-2026-0809', date: '2026-08-04', centralId: 'cnt_centro', centralName: 'Central Centro', serviceNumber: '212-555-0811', technician: 'Téc. Andrés Silva', issueType: 'Divisor Splitter FTTH dañado', status: 'resolved', mttrHours: 1.4, workGroupId: 'grp_broad' },
+  { id: 'rep_001', ticketCode: 'REP-2026-0801', date: '2026-08-01', reportDate: '2026-08-01', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Falla en Cable Alimentador FO-01', cable: 'FO-01 Alimentador Metro', grupo: 'Ingeniería Exterior', claveCode: 'C-01', status: 'resolved', mttrHours: 1.5, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_002', ticketCode: 'REP-2026-0802', date: '2026-08-01', reportDate: '2026-07-25', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0102', technician: 'Téc. Roberto Gómez', issueType: 'Caída de Enlace GPON OLT-1', cable: 'CABLE-GPON-04', grupo: 'Banda Ancha', claveCode: 'C-02', status: 'resolved', mttrHours: 2.1, workGroupId: 'grp_broad' },
+  { id: 'rep_003', ticketCode: 'REP-2026-0802b', date: '2026-08-01', reportDate: '2026-07-28', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Par Sulfatado en Multipair', cable: 'CU-200 Norte', grupo: 'Ingeniería Exterior', claveCode: 'C-01', status: 'resolved', mttrHours: 1.1, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_004', ticketCode: 'REP-2026-0803', date: '2026-08-02', reportDate: '2026-08-02', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Reincidencia: Ruido en la línea', cable: 'CU-200 Norte', grupo: 'Ingeniería Exterior', claveCode: 'C-03', status: 'resolved', mttrHours: 1.8, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_005', ticketCode: 'REP-2026-0804', date: '2026-08-02', reportDate: '2026-07-30', centralId: 'cnt_este', centralName: 'Central Este', serviceNumber: '212-555-0340', technician: 'Ing. Luis Fernández', issueType: 'Módulo SFP Quemado en Switch', cable: 'FOS-08 Este', grupo: 'Conmutación', claveCode: 'C-04', status: 'resolved', mttrHours: 3.0, workGroupId: 'grp_conm' },
+  { id: 'rep_006', ticketCode: 'REP-2026-0805', date: '2026-08-03', reportDate: '2026-08-03', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Reincidencia: Atenuación en FOS', cable: 'FO-01 Alimentador Metro', grupo: 'Transmisión', claveCode: 'C-01', status: 'resolved', mttrHours: 2.5, workGroupId: 'grp_trans' },
+  { id: 'rep_007', ticketCode: 'REP-2026-0806', date: '2026-08-03', reportDate: '2026-08-01', centralId: 'cnt_sur', centralName: 'Central Sur', serviceNumber: '212-555-0550', technician: 'Téc. Javier Ortiz', issueType: 'Fallo de Rectificador Baterías', cable: 'PW-RECT-02', grupo: 'Energía', claveCode: 'C-05', status: 'resolved', mttrHours: 4.2, workGroupId: 'grp_ener' },
+  { id: 'rep_008', ticketCode: 'REP-2026-0807', date: '2026-08-03', reportDate: '2026-08-03', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Cambio total de acometida', cable: 'CU-200 Norte', grupo: 'Ingeniería Exterior', claveCode: 'C-01', status: 'resolved', mttrHours: 2.2, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_009', ticketCode: 'REP-2026-0808', date: '2026-08-04', reportDate: '2026-08-04', centralId: 'cnt_este', centralName: 'Central Este', serviceNumber: '212-555-0340', technician: 'Ing. Luis Fernández', issueType: 'Puerto Flapping en DSLAM', cable: 'DSLAM-CAB-02', grupo: 'Conmutación', claveCode: 'C-02', status: 'in_progress', mttrHours: 1.0, workGroupId: 'grp_conm' },
+  { id: 'rep_010', ticketCode: 'REP-2026-0809', date: '2026-08-04', reportDate: '2026-08-02', centralId: 'cnt_centro', centralName: 'Central Fibra Centro', serviceNumber: '212-555-0811', technician: 'Téc. Andrés Silva', issueType: 'Divisor Splitter FTTH dañado', cable: 'FTTH-SPLIT-16', grupo: 'Banda Ancha', claveCode: 'C-03', status: 'resolved', mttrHours: 1.4, workGroupId: 'grp_broad' },
+  { id: 'rep_014', ticketCode: 'REP-2026-0810', date: '2026-08-04', reportDate: '2026-08-04', centralId: 'cnt_oeste', centralName: 'Central Digital Oeste', serviceNumber: '212-555-0712', technician: 'Ing. Carlos Mendoza', issueType: 'Restablecimiento Par Secundario', cable: 'CU-100 Oeste', grupo: 'Ingeniería Exterior', claveCode: 'C-01', status: 'resolved', mttrHours: 1.8, workGroupId: 'grp_ing_ext' },
 
   // July 2026
-  { id: 'rep_011', ticketCode: 'REP-2026-0710', date: '2026-07-05', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Reemplazo de latiguillo óptico', status: 'resolved', mttrHours: 1.2, workGroupId: 'grp_trans' },
-  { id: 'rep_012', ticketCode: 'REP-2026-0711', date: '2026-07-12', centralId: 'cnt_sur', centralName: 'Central Sur', serviceNumber: '212-555-0550', technician: 'Téc. Javier Ortiz', issueType: 'Revisión de fusible Batería', status: 'resolved', mttrHours: 2.0, workGroupId: 'grp_ener' },
-  { id: 'rep_013', ticketCode: 'REP-2026-0720', date: '2026-07-20', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0909', technician: 'Téc. Roberto Gómez', issueType: 'Mantenimiento preventivo OLT', status: 'resolved', mttrHours: 1.5, workGroupId: 'grp_broad' }
+  { id: 'rep_011', ticketCode: 'REP-2026-0710', date: '2026-07-05', reportDate: '2026-07-05', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Reemplazo de latiguillo óptico', cable: 'FO-01 Alimentador Metro', grupo: 'Transmisión', claveCode: 'C-01', status: 'resolved', mttrHours: 1.2, workGroupId: 'grp_trans' },
+  { id: 'rep_012', ticketCode: 'REP-2026-0711', date: '2026-07-12', reportDate: '2026-06-28', centralId: 'cnt_sur', centralName: 'Central Sur', serviceNumber: '212-555-0550', technician: 'Téc. Javier Ortiz', issueType: 'Revisión de fusible Batería', cable: 'PW-RECT-02', grupo: 'Energía', claveCode: 'C-05', status: 'resolved', mttrHours: 2.0, workGroupId: 'grp_ener' },
+  { id: 'rep_013', ticketCode: 'REP-2026-0720', date: '2026-07-20', reportDate: '2026-07-20', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0909', technician: 'Téc. Roberto Gómez', issueType: 'Mantenimiento preventivo OLT', cable: 'CABLE-GPON-04', grupo: 'Banda Ancha', claveCode: 'C-02', status: 'resolved', mttrHours: 1.5, workGroupId: 'grp_broad' }
 ];
 
 const REPAIR_RECORDS_KEY = 'telecom_repair_records_v1';
@@ -364,35 +365,30 @@ export function saveCustomTables(tables: CustomTableSchema[], userEmail?: string
 }
 
 export function loadRepairColumnMapping(userEmail?: string): RepairColumnMapping {
+  const defaultMapping: RepairColumnMapping = {
+    dateCol: 'Fecha',
+    reportDateCol: 'Fecha Reporte',
+    centralCol: 'Central',
+    serviceCol: 'Servicio',
+    ticketCol: 'Ticket',
+    technicianCol: 'Técnico',
+    cableCol: 'Cable',
+    grupoCol: 'Grupo',
+    claveCol: 'Clave',
+    issueCol: 'Cable',
+    statusCol: 'Grupo',
+    mttrCol: 'MTTR',
+    startRow: 2
+  };
   try {
     const key = getStorageKey(REPAIR_MAPPING_KEY, userEmail);
     const raw = localStorage.getItem(key);
     if (!raw) {
-      return {
-        dateCol: 'Fecha',
-        centralCol: 'Central',
-        serviceCol: 'Servicio',
-        ticketCol: 'Ticket',
-        technicianCol: 'Técnico',
-        issueCol: 'Falla',
-        statusCol: 'Estado',
-        mttrCol: 'MTTR',
-        startRow: 2
-      };
+      return defaultMapping;
     }
-    return JSON.parse(raw);
+    return { ...defaultMapping, ...JSON.parse(raw) };
   } catch (e) {
-    return {
-      dateCol: 'Fecha',
-      centralCol: 'Central',
-      serviceCol: 'Servicio',
-      ticketCol: 'Ticket',
-      technicianCol: 'Técnico',
-      issueCol: 'Falla',
-      statusCol: 'Estado',
-      mttrCol: 'MTTR',
-      startRow: 2
-    };
+    return defaultMapping;
   }
 }
 

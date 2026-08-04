@@ -86,12 +86,16 @@ export interface ExcelImportRow {
 export interface RepairRecord {
   id: string;
   ticketCode: string;       // e.g. "REP-2026-0881" or "FOL-8819"
-  date: string;             // ISO YYYY-MM-DD
+  date: string;             // ISO YYYY-MM-DD (Fecha de Atención / Reparación)
+  reportDate?: string;      // ISO YYYY-MM-DD (Fecha de Reporte / Ingreso)
   centralId?: string;       // Matched central ID
   centralName: string;      // Central name or code
   serviceNumber: string;    // Service / Phone line / Subscriber ID / Abonado (for repeated service analysis)
   technician: string;       // Brigada / Técnico
   issueType: string;        // Tipo de falla / descripción
+  cable?: string;           // Columna Cable
+  grupo?: string;           // Columna Grupo
+  claveCode?: string;       // Columna Clave
   status: 'resolved' | 'in_progress' | 'pending';
   mttrHours: number;        // Tiempo de solución en horas
   workGroupId?: string;     // Work group if matched
@@ -100,13 +104,17 @@ export interface RepairRecord {
 }
 
 export interface RepairColumnMapping {
-  dateCol: string;          // Excel column name for Date
+  dateCol: string;          // Excel column name for Date de Reparación
+  reportDateCol?: string;   // Excel column name for Date de Reporte
   centralCol: string;       // Excel column name for Central
   serviceCol: string;       // Excel column name for Servicio / Abonado / Línea
   ticketCol?: string;       // Excel column name for Ticket / Folio
   technicianCol?: string;   // Excel column name for Técnico / Brigada
-  issueCol?: string;        // Excel column name for Tipo de Falla
-  statusCol?: string;       // Excel column name for Estado
+  cableCol?: string;        // Excel column name for Cable
+  issueCol?: string;        // Fallback for Cable
+  grupoCol?: string;        // Excel column name for Grupo
+  statusCol?: string;       // Fallback for Grupo
+  claveCol?: string;        // Excel column name for Clave
   mttrCol?: string;         // Excel column name for MTTR / Horas
   startRow: number;         // Starting row index for processing (1-indexed)
   endRow?: number;          // Optional ending row index
