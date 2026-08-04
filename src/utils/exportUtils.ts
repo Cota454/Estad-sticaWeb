@@ -1,20 +1,26 @@
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { getSafeHtml2CanvasOptions } from './html2canvasFix';
-import { Central, WorkGroup, DailyReport, SystemDataBackup } from '../types';
+import { Central, WorkGroup, DailyReport, RepairRecord, CustomTableSchema, RepairColumnMapping, SystemDataBackup } from '../types';
 import { getTodayStr, formatDateLong } from './dateUtils';
 
 export function downloadJSONBackup(
   centrales: Central[],
   workGroups: WorkGroup[],
-  reports: DailyReport[]
+  reports: DailyReport[],
+  repairRecords?: RepairRecord[],
+  customTables?: CustomTableSchema[],
+  repairColumnMapping?: RepairColumnMapping
 ) {
   const backupData: SystemDataBackup = {
-    version: '1.0.0',
+    version: '3.0.0',
     exportedAt: new Date().toISOString(),
     centrales,
     workGroups,
-    reports
+    reports,
+    repairRecords,
+    customTables,
+    repairColumnMapping
   };
 
   const now = new Date();

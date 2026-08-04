@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle, Cloud, User, LogOut, CheckCircle2 } from 'lucide-react';
 import { downloadJSONBackup, parseJSONBackupFile } from '../utils/exportUtils';
-import { Central, WorkGroup, DailyReport, UserProfile } from '../types';
+import { Central, WorkGroup, DailyReport, UserProfile, RepairRecord, CustomTableSchema, RepairColumnMapping } from '../types';
 import { getTodayStr, formatDateShort } from '../utils/dateUtils';
 import { ADMIN_EMAIL } from '../utils/googleDriveService';
 
@@ -9,12 +9,16 @@ interface HeaderProps {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
-  onImportBackup: (backup: { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] }) => void;
+  repairRecords?: RepairRecord[];
+  customTables?: CustomTableSchema[];
+  columnMapping?: RepairColumnMapping;
+  onImportBackup: (backup: any) => void;
   onOpenExportModal: (format: 'pdf' | 'word') => void;
   activeTab: string;
   currentUser?: UserProfile;
   onNavigateToDrive?: () => void;
   onLogout?: () => void;
+  onBackToHub?: () => void;
   syncStatus?: 'synced' | 'syncing' | 'idle';
 }
 
@@ -22,12 +26,16 @@ export const Header: React.FC<HeaderProps> = ({
   centrales,
   workGroups,
   reports,
+  repairRecords,
+  customTables,
+  columnMapping,
   onImportBackup,
   onOpenExportModal,
   activeTab,
   currentUser,
   onNavigateToDrive,
   onLogout,
+  onBackToHub,
   syncStatus = 'synced'
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -81,6 +89,17 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Quick Date Restriction Indicator & Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             
+            {/* Return to Modules Hub Button */}
+            {onBackToHub && (
+              <button
+                onClick={onBackToHub}
+                className="inline-flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-black transition-all border border-indigo-400/40 shadow-md shadow-indigo-600/20"
+                title="Volver al Portal Principal de Módulos"
+              >
+                <span>← Portal Módulos</span>
+              </button>
+            )}
+
             <div className="hidden xl:flex items-center space-x-1.5 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60 text-xs text-slate-300">
               <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
               <span>Max Fecha: <strong>≤ {formatDateShort(getTodayStr())}</strong></span>
@@ -120,7 +139,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Export JSON */}
             <button
-              onClick={() => downloadJSONBackup(centrales, workGroups, reports)}
+              onClick={() => downloadJSONBackup(centrales, workGroups, reports, repairRecords, customTables, columnMapping)}
               className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-medium transition-colors border border-slate-700"
               title="Descargar copia de seguridad en formato JSON"
             >

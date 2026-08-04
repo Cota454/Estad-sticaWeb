@@ -1,4 +1,4 @@
-import { Central, WorkGroup, DailyReport } from '../types';
+import { Central, WorkGroup, DailyReport, RepairRecord, CustomTableSchema, RepairColumnMapping } from '../types';
 import { getTodayStr } from '../utils/dateUtils';
 
 export const INITIAL_WORK_GROUPS: WorkGroup[] = [
@@ -296,14 +296,133 @@ export function saveReports(reports: DailyReport[], userEmail?: string): void {
   }
 }
 
-export function resetToDefaultData(userEmail?: string): { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] } {
+// Initial Seed Repair Records for Demo & Initial Load
+export const INITIAL_REPAIR_RECORDS: RepairRecord[] = [
+  // August 2026
+  { id: 'rep_001', ticketCode: 'REP-2026-0801', date: '2026-08-01', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Avería en Cable de Fibra Cupla 04', status: 'resolved', mttrHours: 1.5, workGroupId: 'grp_trans' },
+  { id: 'rep_002', ticketCode: 'REP-2026-0802', date: '2026-08-01', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0102', technician: 'Téc. Roberto Gómez', issueType: 'Caída de Enlace GPON OLT-1', status: 'resolved', mttrHours: 2.1, workGroupId: 'grp_broad' },
+  { id: 'rep_003', ticketCode: 'REP-2026-0802b', date: '2026-08-01', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Sin tono de marcación - Par Sulfatado', status: 'resolved', mttrHours: 1.1, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_004', ticketCode: 'REP-2026-0803', date: '2026-08-02', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Reincidencia: Ruido en la línea y cortes', status: 'resolved', mttrHours: 1.8, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_005', ticketCode: 'REP-2026-0804', date: '2026-08-02', centralId: 'cnt_este', centralName: 'Central Este', serviceNumber: '212-555-0340', technician: 'Ing. Luis Fernández', issueType: 'Módulo SFP Quemado en Switch', status: 'resolved', mttrHours: 3.0, workGroupId: 'grp_conm' },
+  { id: 'rep_006', ticketCode: 'REP-2026-0805', date: '2026-08-03', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Reincidencia: Atenuación Alta en FOS', status: 'resolved', mttrHours: 2.5, workGroupId: 'grp_trans' },
+  { id: 'rep_007', ticketCode: 'REP-2026-0806', date: '2026-08-03', centralId: 'cnt_sur', centralName: 'Central Sur', serviceNumber: '212-555-0550', technician: 'Téc. Javier Ortiz', issueType: 'Fallo de Rectificador N° 2', status: 'resolved', mttrHours: 4.2, workGroupId: 'grp_ener' },
+  { id: 'rep_008', ticketCode: 'REP-2026-0807', date: '2026-08-03', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0199', technician: 'Téc. María Elena', issueType: 'Reincidencia (3a vez): Cambio total de acometida', status: 'resolved', mttrHours: 2.2, workGroupId: 'grp_ing_ext' },
+  { id: 'rep_009', ticketCode: 'REP-2026-0808', date: '2026-08-04', centralId: 'cnt_este', centralName: 'Central Este', serviceNumber: '212-555-0340', technician: 'Ing. Luis Fernández', issueType: 'Reincidencia: Puerto Flapping', status: 'in_progress', mttrHours: 1.0, workGroupId: 'grp_conm' },
+  { id: 'rep_010', ticketCode: 'REP-2026-0809', date: '2026-08-04', centralId: 'cnt_centro', centralName: 'Central Centro', serviceNumber: '212-555-0811', technician: 'Téc. Andrés Silva', issueType: 'Divisor Splitter FTTH dañado', status: 'resolved', mttrHours: 1.4, workGroupId: 'grp_broad' },
+
+  // July 2026
+  { id: 'rep_011', ticketCode: 'REP-2026-0710', date: '2026-07-05', centralId: 'cnt_metro', centralName: 'Central Metropolitana', serviceNumber: '212-555-0101', technician: 'Ing. Carlos Mendoza', issueType: 'Reemplazo de latiguillo óptico', status: 'resolved', mttrHours: 1.2, workGroupId: 'grp_trans' },
+  { id: 'rep_012', ticketCode: 'REP-2026-0711', date: '2026-07-12', centralId: 'cnt_sur', centralName: 'Central Sur', serviceNumber: '212-555-0550', technician: 'Téc. Javier Ortiz', issueType: 'Revisión de fusible Batería', status: 'resolved', mttrHours: 2.0, workGroupId: 'grp_ener' },
+  { id: 'rep_013', ticketCode: 'REP-2026-0720', date: '2026-07-20', centralId: 'cnt_norte', centralName: 'Central Norte (Tele)', serviceNumber: '212-555-0909', technician: 'Téc. Roberto Gómez', issueType: 'Mantenimiento preventivo OLT', status: 'resolved', mttrHours: 1.5, workGroupId: 'grp_broad' }
+];
+
+const REPAIR_RECORDS_KEY = 'telecom_repair_records_v1';
+const REPAIR_MAPPING_KEY = 'telecom_repair_mapping_v1';
+const CUSTOM_TABLES_KEY = 'telecom_custom_tables_v1';
+
+export function loadRepairRecords(userEmail?: string): RepairRecord[] {
+  try {
+    const key = getStorageKey(REPAIR_RECORDS_KEY, userEmail);
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      saveRepairRecords(INITIAL_REPAIR_RECORDS, userEmail);
+      return INITIAL_REPAIR_RECORDS;
+    }
+    return JSON.parse(raw);
+  } catch (e) {
+    return INITIAL_REPAIR_RECORDS;
+  }
+}
+
+export function saveRepairRecords(records: RepairRecord[], userEmail?: string): void {
+  try {
+    const key = getStorageKey(REPAIR_RECORDS_KEY, userEmail);
+    localStorage.setItem(key, JSON.stringify(records));
+  } catch (e) {
+    console.error('Failed to save repair records', e);
+  }
+}
+
+export function loadCustomTables(userEmail?: string): CustomTableSchema[] {
+  try {
+    const key = getStorageKey(CUSTOM_TABLES_KEY, userEmail);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    return [];
+  }
+}
+
+export function saveCustomTables(tables: CustomTableSchema[], userEmail?: string): void {
+  try {
+    const key = getStorageKey(CUSTOM_TABLES_KEY, userEmail);
+    localStorage.setItem(key, JSON.stringify(tables));
+  } catch (e) {
+    console.error('Failed to save custom tables', e);
+  }
+}
+
+export function loadRepairColumnMapping(userEmail?: string): RepairColumnMapping {
+  try {
+    const key = getStorageKey(REPAIR_MAPPING_KEY, userEmail);
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      return {
+        dateCol: 'Fecha',
+        centralCol: 'Central',
+        serviceCol: 'Servicio',
+        ticketCol: 'Ticket',
+        technicianCol: 'Técnico',
+        issueCol: 'Falla',
+        statusCol: 'Estado',
+        mttrCol: 'MTTR',
+        startRow: 2
+      };
+    }
+    return JSON.parse(raw);
+  } catch (e) {
+    return {
+      dateCol: 'Fecha',
+      centralCol: 'Central',
+      serviceCol: 'Servicio',
+      ticketCol: 'Ticket',
+      technicianCol: 'Técnico',
+      issueCol: 'Falla',
+      statusCol: 'Estado',
+      mttrCol: 'MTTR',
+      startRow: 2
+    };
+  }
+}
+
+export function saveRepairColumnMapping(mapping: RepairColumnMapping, userEmail?: string): void {
+  try {
+    const key = getStorageKey(REPAIR_MAPPING_KEY, userEmail);
+    localStorage.setItem(key, JSON.stringify(mapping));
+  } catch (e) {
+    console.error('Failed to save repair mapping', e);
+  }
+}
+
+export function resetToDefaultData(userEmail?: string): {
+  centrales: Central[];
+  workGroups: WorkGroup[];
+  reports: DailyReport[];
+  repairRecords: RepairRecord[];
+  customTables: CustomTableSchema[];
+} {
   const seedReports = generateSeedDailyReports();
   saveCentrales(INITIAL_CENTRALES, userEmail);
   saveWorkGroups(INITIAL_WORK_GROUPS, userEmail);
   saveReports(seedReports, userEmail);
+  saveRepairRecords(INITIAL_REPAIR_RECORDS, userEmail);
+  saveCustomTables([], userEmail);
   return {
     centrales: INITIAL_CENTRALES,
     workGroups: INITIAL_WORK_GROUPS,
-    reports: seedReports
+    reports: seedReports,
+    repairRecords: INITIAL_REPAIR_RECORDS,
+    customTables: []
   };
 }

@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList
 } from 'recharts';
 import {
-  TrendingUp, TrendingDown, Calendar, Bot, RefreshCw, AlertTriangle, Sparkles, CheckCircle2, ChevronRight
+  TrendingUp, TrendingDown, Calendar, Bot, RefreshCw, AlertTriangle, Sparkles, CheckCircle2, ChevronRight, Layers
 } from 'lucide-react';
 import { Central, WorkGroup, DailyReport } from '../types';
 import { calculateDayOfWeekStats, filterReportsByDateRange } from '../utils/statCalculations';
@@ -14,12 +14,14 @@ interface AnalisisSemanalHistoricoProps {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
+  onNavigateToComparativa?: () => void;
 }
 
 export const AnalisisSemanalHistorico: React.FC<AnalisisSemanalHistoricoProps> = ({
   centrales,
   workGroups,
-  reports
+  reports,
+  onNavigateToComparativa
 }) => {
   const weekRanges = useMemo(() => getWeekDateRanges(), []);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
@@ -178,9 +180,20 @@ export const AnalisisSemanalHistorico: React.FC<AnalisisSemanalHistoricoProps> =
             </p>
           </div>
 
-          <div className="flex items-center space-x-2 text-xs bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 font-medium">
-            <Calendar className="w-3.5 h-3.5 text-blue-600" />
-            <span>Actual: {formatDateShort(weekRanges.currentWeekStart)} - {formatDateShort(weekRanges.currentWeekEnd)}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {onNavigateToComparativa && (
+              <button
+                onClick={onNavigateToComparativa}
+                className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition-all shadow-md shadow-indigo-600/20"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Comparar 2 a 5 Periodos</span>
+              </button>
+            )}
+            <div className="flex items-center space-x-2 text-xs bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 font-medium">
+              <Calendar className="w-3.5 h-3.5 text-blue-600" />
+              <span>Actual: {formatDateShort(weekRanges.currentWeekStart)} - {formatDateShort(weekRanges.currentWeekEnd)}</span>
+            </div>
           </div>
         </div>
 

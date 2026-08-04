@@ -24,7 +24,7 @@ import {
   ChevronDown,
   ListFilter
 } from 'lucide-react';
-import { Central, WorkGroup, DailyReport, UserProfile, DriveBackupFile, SystemDataBackup } from '../types';
+import { Central, WorkGroup, DailyReport, UserProfile, DriveBackupFile, SystemDataBackup, RepairRecord, CustomTableSchema, RepairColumnMapping } from '../types';
 import {
   ADMIN_EMAIL,
   loadGsiScript,
@@ -44,6 +44,9 @@ interface GoogleDriveBackupViewProps {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
+  repairRecords?: RepairRecord[];
+  customTables?: CustomTableSchema[];
+  repairColumnMapping?: RepairColumnMapping;
   onImportBackup: (backup: SystemDataBackup) => void;
   currentUser: UserProfile;
   onUpdateCurrentUser: (user: UserProfile) => void;
@@ -53,6 +56,9 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
   centrales,
   workGroups,
   reports,
+  repairRecords,
+  customTables,
+  repairColumnMapping,
   onImportBackup,
   currentUser,
   onUpdateCurrentUser
@@ -250,11 +256,14 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
     setStatusMessage(null);
 
     const backupPayload: SystemDataBackup = {
-      version: '2.5',
+      version: '3.0.0',
       exportedAt: new Date().toISOString(),
       centrales,
       workGroups,
-      reports
+      reports,
+      repairRecords,
+      customTables,
+      repairColumnMapping
     };
 
     try {

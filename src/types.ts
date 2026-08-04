@@ -83,12 +83,70 @@ export interface ExcelImportRow {
   groupValues: Record<string, number>;
 }
 
+export interface RepairRecord {
+  id: string;
+  ticketCode: string;       // e.g. "REP-2026-0881" or "FOL-8819"
+  date: string;             // ISO YYYY-MM-DD
+  centralId?: string;       // Matched central ID
+  centralName: string;      // Central name or code
+  serviceNumber: string;    // Service / Phone line / Subscriber ID / Abonado (for repeated service analysis)
+  technician: string;       // Brigada / Técnico
+  issueType: string;        // Tipo de falla / descripción
+  status: 'resolved' | 'in_progress' | 'pending';
+  mttrHours: number;        // Tiempo de solución en horas
+  workGroupId?: string;     // Work group if matched
+  rawRowData?: Record<string, any>; // Extra dynamic columns from Excel
+  tableName?: string;       // Custom table tag if uploaded into a named table
+}
+
+export interface RepairColumnMapping {
+  dateCol: string;          // Excel column name for Date
+  centralCol: string;       // Excel column name for Central
+  serviceCol: string;       // Excel column name for Servicio / Abonado / Línea
+  ticketCol?: string;       // Excel column name for Ticket / Folio
+  technicianCol?: string;   // Excel column name for Técnico / Brigada
+  issueCol?: string;        // Excel column name for Tipo de Falla
+  statusCol?: string;       // Excel column name for Estado
+  mttrCol?: string;         // Excel column name for MTTR / Horas
+  startRow: number;         // Starting row index for processing (1-indexed)
+  endRow?: number;          // Optional ending row index
+}
+
+export interface CustomTableSchema {
+  id: string;
+  tableName: string;
+  description?: string;
+  columnsToProcess: string[]; // List of selected Excel column names
+  startRow: number;
+  endRow?: number;
+  createdDate: string;
+  rowCount: number;
+  data: Record<string, any>[]; // Processed rows
+}
+
 export interface SystemDataBackup {
   version: string;
   exportedAt: string;
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
+  repairRecords?: RepairRecord[];
+  customTables?: CustomTableSchema[];
+  repairColumnMapping?: RepairColumnMapping;
+}
+
+export type PortalModuleId = 'report_analysis' | 'ip_analysis' | 'repairs_analysis';
+
+export interface PortalUser {
+  id: string;
+  username: string;
+  password?: string;
+  name: string;
+  role: 'admin' | 'operator';
+  permissions: PortalModuleId[];
+  active: boolean;
+  createdAt: string;
+  lastLogin?: string;
 }
 
 export interface UserProfile {
@@ -99,6 +157,7 @@ export interface UserProfile {
   isAuthenticated: boolean;
   accessToken?: string;
   tokenExpiry?: number;
+  portalUsername?: string;
 }
 
 export interface DriveBackupFile {

@@ -4,11 +4,14 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Central, WorkGroup, DailyReport, UserProfile } from './types';
+import { Central, WorkGroup, DailyReport, UserProfile, RepairRecord, CustomTableSchema, RepairColumnMapping, SystemDataBackup } from './types';
 import {
   loadCentrales, saveCentrales,
   loadWorkGroups, saveWorkGroups,
   loadReports, saveReports,
+  loadRepairRecords, saveRepairRecords,
+  loadCustomTables, saveCustomTables,
+  loadRepairColumnMapping, saveRepairColumnMapping,
   resetToDefaultData
 } from './data/mockData';
 import { Header } from './components/Header';
@@ -35,14 +38,24 @@ import {
   uploadBackupToDrive
 } from './utils/googleDriveService';
 import { WelcomeLandingView } from './components/WelcomeLandingView';
+import { ModulesHubView } from './components/ModulesHubView';
+import { AnalisisIpView } from './components/AnalisisIpView';
+import { AnalisisReparacionesView } from './components/AnalisisReparacionesView';
+import { ComparativaMultiPeriodoView } from './components/ComparativaMultiPeriodoView';
+import { PortalUser, PortalModuleId } from './types';
+import { getActivePortalSession, clearActivePortalSession } from './utils/authService';
 import { LogOut, CloudUpload, ShieldAlert, CheckCircle2, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [centrales, setCentrales] = useState<Central[]>([]);
   const [workGroups, setWorkGroups] = useState<WorkGroup[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
+  const [repairRecords, setRepairRecords] = useState<RepairRecord[]>([]);
+  const [customTables, setCustomTables] = useState<CustomTableSchema[]>([]);
+  const [columnMapping, setColumnMapping] = useState<RepairColumnMapping>(loadRepairColumnMapping());
   const [reportSettings, setReportSettings] = useState<ReportSettings>(loadReportSettings());
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [activeModule, setActiveModule] = useState<PortalModuleId | 'hub'>('hub');
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'idle'>('synced');
 
@@ -50,8 +63,15 @@ export default function App() {
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState<boolean>(false);
   const [isSavingBeforeLogout, setIsSavingBeforeLogout] = useState<boolean>(false);
 
-  // User Profile State
+  // Portal Session & User Profile State
+  const [portalUser, setPortalUser] = useState<PortalUser | null>(() => {
+    const session = getActivePortalSession();
+    return session ? session.portalUser : null;
+  });
+
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    const session = getActivePortalSession();
+    if (session) return session.userProfile;
     return getStoredUserProfile();
   });
 
@@ -65,39 +85,64 @@ export default function App() {
     const c = loadCentrales(userEmail);
     const wg = loadWorkGroups(userEmail);
     const r = loadReports(userEmail);
+    const rep = loadRepairRecords(userEmail);
+    const tbls = loadCustomTables(userEmail);
+    const map = loadRepairColumnMapping(userEmail);
 
     setCentrales(c);
     setWorkGroups(wg);
     setReports(r);
+    setRepairRecords(rep);
+    setCustomTables(tbls);
+    setColumnMapping(map);
     setIsLoaded(true);
   }, [currentUser?.email]);
 
   // Handle Login Success from Welcome Landing Screen
-  const handleLoginSuccess = (profile: UserProfile) => {
+  const handleLoginSuccess = (profile: UserProfile, pUser: PortalUser) => {
     setCurrentUser(profile);
+    setPortalUser(pUser);
     saveStoredUserProfile(profile);
 
     // Load data for this user
     const c = loadCentrales(profile.email);
     const wg = loadWorkGroups(profile.email);
     const r = loadReports(profile.email);
+    const rep = loadRepairRecords(profile.email);
+    const tbls = loadCustomTables(profile.email);
+    const map = loadRepairColumnMapping(profile.email);
+
     setCentrales(c);
     setWorkGroups(wg);
     setReports(r);
+    setRepairRecords(rep);
+    setCustomTables(tbls);
+    setColumnMapping(map);
 
+    setActiveModule('hub');
     setActiveTab('dashboard');
   };
 
   // Helper for Auto-Drive-Backup
-  const triggerAutoDriveBackup = (updatedCentrales: Central[], updatedWorkGroups: WorkGroup[], updatedReports: DailyReport[]) => {
+  const triggerAutoDriveBackup = (
+    updatedCentrales: Central[],
+    updatedWorkGroups: WorkGroup[],
+    updatedReports: DailyReport[],
+    updatedRepairs: RepairRecord[] = repairRecords,
+    updatedCustomTables: CustomTableSchema[] = customTables,
+    updatedMapping: RepairColumnMapping = columnMapping
+  ) => {
     if (getAutoDriveBackupEnabled() && currentUser?.isAuthenticated && currentUser.accessToken) {
       setSyncStatus('syncing');
       uploadBackupToDrive(currentUser.accessToken, {
-        version: '2.5',
+        version: '3.0.0',
         exportedAt: new Date().toISOString(),
         centrales: updatedCentrales,
         workGroups: updatedWorkGroups,
-        reports: updatedReports
+        reports: updatedReports,
+        repairRecords: updatedRepairs,
+        customTables: updatedCustomTables,
+        repairColumnMapping: updatedMapping
       }, 'auto')
         .then(() => setSyncStatus('synced'))
         .catch(err => {
@@ -120,15 +165,46 @@ export default function App() {
     triggerAutoDriveBackup(centrales, updated, reports);
   };
 
-  const handleImportBackup = (backup: { centrales: Central[]; workGroups: WorkGroup[]; reports: DailyReport[] }) => {
-    setCentrales(backup.centrales);
-    setWorkGroups(backup.workGroups);
-    setReports(backup.reports);
+  const handleUpdateRepairRecords = (updated: RepairRecord[]) => {
+    setRepairRecords(updated);
+    saveRepairRecords(updated, currentUser?.email);
+    triggerAutoDriveBackup(centrales, workGroups, reports, updated);
+  };
 
-    saveCentrales(backup.centrales, currentUser?.email);
-    saveWorkGroups(backup.workGroups, currentUser?.email);
-    saveReports(backup.reports, currentUser?.email);
-    triggerAutoDriveBackup(backup.centrales, backup.workGroups, backup.reports);
+  const handleUpdateCustomTables = (updated: CustomTableSchema[]) => {
+    setCustomTables(updated);
+    saveCustomTables(updated, currentUser?.email);
+    triggerAutoDriveBackup(centrales, workGroups, reports, repairRecords, updated);
+  };
+
+  const handleUpdateColumnMapping = (updated: RepairColumnMapping) => {
+    setColumnMapping(updated);
+    saveRepairColumnMapping(updated, currentUser?.email);
+  };
+
+  const handleImportBackup = (backup: SystemDataBackup) => {
+    setCentrales(backup.centrales || []);
+    setWorkGroups(backup.workGroups || []);
+    setReports(backup.reports || []);
+    if (backup.repairRecords) setRepairRecords(backup.repairRecords);
+    if (backup.customTables) setCustomTables(backup.customTables);
+    if (backup.repairColumnMapping) setColumnMapping(backup.repairColumnMapping);
+
+    saveCentrales(backup.centrales || [], currentUser?.email);
+    saveWorkGroups(backup.workGroups || [], currentUser?.email);
+    saveReports(backup.reports || [], currentUser?.email);
+    if (backup.repairRecords) saveRepairRecords(backup.repairRecords, currentUser?.email);
+    if (backup.customTables) saveCustomTables(backup.customTables, currentUser?.email);
+    if (backup.repairColumnMapping) saveRepairColumnMapping(backup.repairColumnMapping, currentUser?.email);
+
+    triggerAutoDriveBackup(
+      backup.centrales || [],
+      backup.workGroups || [],
+      backup.reports || [],
+      backup.repairRecords || repairRecords,
+      backup.customTables || customTables,
+      backup.repairColumnMapping || columnMapping
+    );
   };
 
   const handleClearAllReports = () => {
@@ -161,14 +237,20 @@ export default function App() {
     }
     setIsSavingBeforeLogout(false);
     setIsLogoutModalOpen(false);
+    clearActivePortalSession();
     saveStoredUserProfile(null);
     setCurrentUser(null);
+    setPortalUser(null);
+    setActiveModule('hub');
   };
 
   const handleLogoutDirect = () => {
     setIsLogoutModalOpen(false);
+    clearActivePortalSession();
     saveStoredUserProfile(null);
     setCurrentUser(null);
+    setPortalUser(null);
+    setActiveModule('hub');
   };
 
   const handleResetData = () => {
@@ -262,6 +344,122 @@ export default function App() {
     return <WelcomeLandingView onLoginSuccess={handleLoginSuccess} />;
   }
 
+  // Fallback portal user if needed
+  const activePortalUser: PortalUser = portalUser || {
+    id: 'usr_admin',
+    username: 'Admin',
+    name: currentUser.name || 'Administrador General',
+    role: currentUser.role === 'admin' ? 'admin' : 'operator',
+    permissions: ['report_analysis', 'ip_analysis', 'repairs_analysis'],
+    active: true,
+    createdAt: ''
+  };
+
+  // 1. Modules Hub View ("Cuadrados")
+  if (activeModule === 'hub') {
+    return (
+      <>
+        <ModulesHubView
+          portalUser={activePortalUser}
+          onSelectModule={(modId) => setActiveModule(modId)}
+          onLogout={() => setIsLogoutModalOpen(true)}
+          syncStatus={syncStatus}
+        />
+
+        {/* Logout Modal */}
+        {isLogoutModalOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 text-white space-y-5 shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="flex items-center space-x-3 text-rose-400">
+                <div className="p-3 bg-rose-500/10 rounded-2xl border border-rose-500/20">
+                  <LogOut className="w-6 h-6 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-extrabold text-white">¿Cerrar Sesión de Trabajo?</h3>
+                  <p className="text-xs text-slate-400">Usuario: {activePortalUser.username}</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed bg-slate-950 p-4 rounded-2xl border border-slate-800">
+                ¿Desea realizar una copia de seguridad en su cuenta de <strong>Google Drive ({ADMIN_EMAIL})</strong> antes de salir para asegurar todos los folios y cambios recientes?
+              </p>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  onClick={handleLogoutConfirmSave}
+                  disabled={isSavingBeforeLogout}
+                  className="w-full flex items-center justify-center space-x-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 px-4 rounded-xl transition-all shadow-lg shadow-emerald-600/20"
+                >
+                  {isSavingBeforeLogout ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Guardando en Google Drive y Saliendo...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CloudUpload className="w-4 h-4" />
+                      <span>Guardar Respaldo en Drive y Salir</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={handleLogoutDirect}
+                  disabled={isSavingBeforeLogout}
+                  className="w-full flex items-center justify-center space-x-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition-colors"
+                >
+                  <span>Cerrar Sesión sin Guardar</span>
+                </button>
+
+                <button
+                  onClick={() => setIsLogoutModalOpen(false)}
+                  disabled={isSavingBeforeLogout}
+                  className="w-full text-center text-xs text-slate-400 hover:text-white py-1.5 transition-colors"
+                >
+                  Cancelar y Permanecer en la App
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // 2. Análisis de IP Module View
+  if (activeModule === 'ip_analysis') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 sm:p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          <AnalisisIpView onBackToHub={() => setActiveModule('hub')} />
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Análisis Reparaciones Module View
+  if (activeModule === 'repairs_analysis') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 sm:p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          <AnalisisReparacionesView
+            onBackToHub={() => setActiveModule('hub')}
+            reports={reports}
+            centrales={centrales}
+            workGroups={workGroups}
+            repairRecords={repairRecords}
+            onUpdateRepairRecords={handleUpdateRepairRecords}
+            customTables={customTables}
+            onUpdateCustomTables={handleUpdateCustomTables}
+            columnMapping={columnMapping}
+            onUpdateColumnMapping={handleUpdateColumnMapping}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Análisis de Reporte (Full NOC System)
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 flex flex-col">
       
@@ -270,12 +468,16 @@ export default function App() {
         centrales={centrales}
         workGroups={workGroups}
         reports={reports}
+        repairRecords={repairRecords}
+        customTables={customTables}
+        columnMapping={columnMapping}
         onImportBackup={handleImportBackup}
         onOpenExportModal={handleOpenExportModal}
         activeTab={activeTab}
         currentUser={currentUser}
         onNavigateToDrive={() => setActiveTab('drive_backup')}
         onLogout={() => setIsLogoutModalOpen(true)}
+        onBackToHub={() => setActiveModule('hub')}
         syncStatus={syncStatus}
       />
 
@@ -283,6 +485,7 @@ export default function App() {
       <Navigation
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        onBackToHub={() => setActiveModule('hub')}
       />
 
       {/* Active Module Body */}
@@ -298,6 +501,15 @@ export default function App() {
 
         {activeTab === 'semanal' && (
           <AnalisisSemanalHistorico
+            centrales={centrales}
+            workGroups={workGroups}
+            reports={reports}
+            onNavigateToComparativa={() => setActiveTab('comparativa')}
+          />
+        )}
+
+        {activeTab === 'comparativa' && (
+          <ComparativaMultiPeriodoView
             centrales={centrales}
             workGroups={workGroups}
             reports={reports}
@@ -362,6 +574,9 @@ export default function App() {
             centrales={centrales}
             workGroups={workGroups}
             reports={reports}
+            repairRecords={repairRecords}
+            customTables={customTables}
+            repairColumnMapping={columnMapping}
             onImportBackup={handleImportBackup}
             currentUser={currentUser}
             onUpdateCurrentUser={setCurrentUser}
