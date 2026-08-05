@@ -8,7 +8,7 @@ import {
   Search, Filter, Sparkles, ArrowLeft, UserCheck, Building2,
   Calendar, Upload, Download, Table, Layers, BarChart3, LineChart as LineChartIcon,
   AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
-  Key, Save, ShieldAlert
+  Key, Save, ShieldAlert, RefreshCw
 } from 'lucide-react';
 import { Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema, UserProfile, SystemDataBackup } from '../types';
 import { MONTH_NAMES_ES } from '../utils/dateUtils';
@@ -115,7 +115,11 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
         return headers.find(h => keywords.some(k => h.toLowerCase().includes(k))) || headers[0] || '';
       };
 
-      const updatedMapping: RepairColumnMapping = {
+      // Check if we already have a saved mapping configured
+      const activeMapping = columnMapping || mappingForm;
+      const hasSavedMapping = activeMapping && activeMapping.dateCol && activeMapping.centralCol;
+
+      const updatedMapping: RepairColumnMapping = hasSavedMapping ? activeMapping : {
         dateCol: findCol(['fecha', 'date', 'atencion', 'dia']),
         reportDateCol: findCol(['reporte', 'ingreso', 'solicitud', 'creacion']),
         centralCol: findCol(['central', 'cta', 'nodo', 'sucursal']),
@@ -132,9 +136,25 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       };
 
       setMappingForm(updatedMapping);
-      onUpdateColumnMapping(updatedMapping);
+      if (!hasSavedMapping) {
+        onUpdateColumnMapping(updatedMapping);
+      }
       setSelectedColsForCustomTable(headers.slice(0, Math.min(6, headers.length)));
-      setExcelSuccessMessage(`¡Archivo "${file.name}" cargado! Se detectaron ${parsedData.totalRows} filas y ${headers.length} columnas.`);
+
+      // Automatically process using the active mapping
+      const processed = processRepairRowsWithMapping(
+        parsedData.rows,
+        updatedMapping,
+        centrales,
+        workGroups
+      );
+
+      if (processed.length > 0) {
+        onUpdateRepairRecords(processed);
+        setExcelSuccessMessage(`¡Archivo "${file.name}" cargado y procesado exitosamente! Se extrajeron ${processed.length} órdenes de reparación utilizando la configuración de mapeo guardada.`);
+      } else {
+        setExcelSuccessMessage(`¡Archivo "${file.name}" cargado! Se detectaron ${parsedData.totalRows} filas y ${headers.length} columnas.`);
+      }
     } catch (err: any) {
       setExcelErrorMessage(err.message || 'Error al procesar el archivo Excel.');
     } finally {
@@ -142,10 +162,38 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     }
   };
 
-  // 2. Process and Save Repair Records
-  const handleProcessAndSaveRepairs = () => {
+  // 2a. Process File using active mapping
+  const handleProcessExcel = () => {
     if (!uploadedExcelData || uploadedExcelData.rows.length === 0) {
       setExcelErrorMessage('Primero debe subir un archivo Excel con registros para procesar.');
+      return;
+    }
+
+    try {
+      const activeMapping = columnMapping || mappingForm;
+      const processed = processRepairRowsWithMapping(
+        uploadedExcelData.rows,
+        activeMapping,
+        centrales,
+        workGroups
+      );
+
+      if (processed.length === 0) {
+        setExcelErrorMessage('No se pudieron extraer registros válidos con la configuración de columnas activa.');
+        return;
+      }
+
+      onUpdateRepairRecords(processed);
+      setExcelSuccessMessage(`¡Se procesaron ${processed.length} órdenes de reparación correctamente con el mapeo activo! Todos los tableros han sido actualizados.`);
+    } catch (err: any) {
+      setExcelErrorMessage(`Error al procesar filas: ${err.message || err}`);
+    }
+  };
+
+  // 2b. Apply new mapping configuration and re-process
+  const handleApplyMappingChanges = () => {
+    if (!uploadedExcelData || uploadedExcelData.rows.length === 0) {
+      setExcelErrorMessage('Primero debe subir un archivo Excel con registros para aplicar el mapeo.');
       return;
     }
 
@@ -158,15 +206,15 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       );
 
       if (processed.length === 0) {
-        setExcelErrorMessage('No se pudieron extraer registros válidos con la configuración de columnas seleccionada.');
+        setExcelErrorMessage('No se pudieron extraer registros válidos con el nuevo mapeo seleccionado.');
         return;
       }
 
       onUpdateRepairRecords(processed);
       onUpdateColumnMapping(mappingForm);
-      setExcelSuccessMessage(`¡Se procesaron y guardaron ${processed.length} órdenes de reparación correctamente! Todos los módulos han sido actualizados.`);
+      setExcelSuccessMessage(`¡Nuevo mapeo guardado y aplicado con éxito! Se re-procesaron ${processed.length} órdenes de reparación.`);
     } catch (err: any) {
-      setExcelErrorMessage(`Error al procesar filas: ${err.message || err}`);
+      setExcelErrorMessage(`Error al aplicar nuevo mapeo: ${err.message || err}`);
     }
   };
 
@@ -246,6 +294,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       centralName: string;
       initialReportsCount: number;
       repairsCount: number;
+      repairsPreviousMonths: number;
+      repairsSameMonth: number;
       resolvedCount: number;
       inProgressCount: number;
       pendingCount: number;
@@ -259,6 +309,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
         centralName: c.name,
         initialReportsCount: 0,
         repairsCount: 0,
+        repairsPreviousMonths: 0,
+        repairsSameMonth: 0,
         resolvedCount: 0,
         inProgressCount: 0,
         pendingCount: 0,
@@ -277,6 +329,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           centralName: found ? found.name : r.centralId,
           initialReportsCount: r.reportCount || 0,
           repairsCount: 0,
+          repairsPreviousMonths: 0,
+          repairsSameMonth: 0,
           resolvedCount: 0,
           inProgressCount: 0,
           pendingCount: 0,
@@ -298,6 +352,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           centralName: r.centralName,
           initialReportsCount: 0,
           repairsCount: 0,
+          repairsPreviousMonths: 0,
+          repairsSameMonth: 0,
           resolvedCount: 0,
           inProgressCount: 0,
           pendingCount: 0,
@@ -307,13 +363,28 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       }
       map[key].repairsCount += 1;
       map[key].mttrSum += (r.mttrHours || 0);
+
+      // Distinguish same-month vs previous-months repair reports
+      if (r.reportDate && r.date) {
+        const [repY, repM] = r.reportDate.split('-').map(Number);
+        const [actY, actM] = r.date.split('-').map(Number);
+        if (repY < actY || (repY === actY && repM < actM)) {
+          map[key].repairsPreviousMonths += 1;
+        } else {
+          map[key].repairsSameMonth += 1;
+        }
+      } else {
+        map[key].repairsSameMonth += 1;
+      }
+
       if (r.status === 'resolved') map[key].resolvedCount += 1;
       else if (r.status === 'in_progress') map[key].inProgressCount += 1;
       else map[key].pendingCount += 1;
     });
 
     const rows = Object.values(map).map(item => {
-      const pendingDiff = Math.max(0, item.initialReportsCount - item.repairsCount);
+      const diferenciaVal = item.repairsCount - item.initialReportsCount;
+      const diferenciaFormatted = diferenciaVal > 0 ? `+${diferenciaVal}` : `${diferenciaVal}`;
       const resolutionRate = item.initialReportsCount > 0
         ? parseFloat(((item.repairsCount / item.initialReportsCount) * 100).toFixed(1))
         : item.repairsCount > 0 ? 100 : 0;
@@ -321,7 +392,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
       return {
         ...item,
-        pendingDiff,
+        diferenciaVal,
+        diferenciaFormatted,
         resolutionRate,
         avgMttr
       };
@@ -1235,16 +1307,33 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
           {/* Central Matrix Table */}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
-            <h3 className="text-md font-bold text-slate-200">Matriz de Cumplimiento por Central Telefónica</h3>
-            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-md font-bold text-slate-200">Matriz de Cumplimiento por Central Telefónica</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Comparativa de reportes recibidos vs reparaciones ejecutadas (separando averías viejas de meses anteriores vs reparaciones del mes actual).
+                </p>
+              </div>
+
+              <CopyTableButton
+                headers={['Central', 'Reportes Iniciales', 'Reparaciones IP Viejas', `Reparaciones ${selectedMonth >= 0 ? MONTH_NAMES_ES[selectedMonth] : 'Mismo Mes'}`, 'Reparaciones Totales', 'Diferencia', 'Eficiencia %', 'MTTR Prom.']}
+                rows={centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsPreviousMonths, r.repairsSameMonth, r.repairsCount, r.diferenciaFormatted, `${r.resolutionRate}%`, `${r.avgMttr}h`])}
+                label="Copiar Matriz Cumplimiento"
+              />
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
                 <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
                     <th className="py-3 px-4">Central Telefónica</th>
-                    <th className="py-3 px-4 text-center">Reportes Iniciales</th>
-                    <th className="py-3 px-4 text-center">Reparaciones Creadas</th>
-                    <th className="py-3 px-4 text-center">Pendientes</th>
+                    <th className="py-3 px-4 text-center text-amber-300">Reportes Iniciales</th>
+                    <th className="py-3 px-4 text-center text-indigo-300">Reparaciones IP Viejas</th>
+                    <th className="py-3 px-4 text-center text-emerald-300">
+                      Reparaciones {selectedMonth >= 0 ? MONTH_NAMES_ES[selectedMonth] : 'Mismo Mes'}
+                    </th>
+                    <th className="py-3 px-4 text-center text-white">Reparaciones Totales</th>
+                    <th className="py-3 px-4 text-center">Diferencia</th>
                     <th className="py-3 px-4 text-center">Eficiencia %</th>
                     <th className="py-3 px-4 text-center">MTTR Prom.</th>
                   </tr>
@@ -1257,8 +1346,18 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                         <span>{row.centralName}</span>
                       </td>
                       <td className="py-3 px-4 text-center font-bold text-amber-400">{row.initialReportsCount}</td>
-                      <td className="py-3 px-4 text-center font-bold text-emerald-400">{row.repairsCount}</td>
-                      <td className="py-3 px-4 text-center font-bold text-rose-400">{row.pendingDiff}</td>
+                      <td className="py-3 px-4 text-center font-bold text-indigo-400">{row.repairsPreviousMonths}</td>
+                      <td className="py-3 px-4 text-center font-bold text-emerald-400">{row.repairsSameMonth}</td>
+                      <td className="py-3 px-4 text-center font-black text-white">{row.repairsCount}</td>
+                      <td className="py-3 px-4 text-center font-bold">
+                        <span className={`px-2 py-0.5 rounded-md font-mono ${
+                          row.diferenciaVal > 0 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                          row.diferenciaVal < 0 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
+                          'bg-slate-800 text-slate-300'
+                        }`}>
+                          {row.diferenciaFormatted}
+                        </span>
+                      </td>
                       <td className="py-3 px-4 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
                           row.resolutionRate >= 90 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
@@ -1272,6 +1371,43 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                     </tr>
                   ))}
                 </tbody>
+                <tfoot className="bg-slate-950 font-black text-white border-t-2 border-slate-700">
+                  <tr>
+                    <td className="py-3 px-4 uppercase text-[11px] text-slate-300">Suma Total</td>
+                    <td className="py-3 px-4 text-center text-amber-300 font-extrabold">
+                      {centralComparisonData.reduce((s, r) => s + r.initialReportsCount, 0)}
+                    </td>
+                    <td className="py-3 px-4 text-center text-indigo-300 font-extrabold">
+                      {centralComparisonData.reduce((s, r) => s + r.repairsPreviousMonths, 0)}
+                    </td>
+                    <td className="py-3 px-4 text-center text-emerald-300 font-extrabold">
+                      {centralComparisonData.reduce((s, r) => s + r.repairsSameMonth, 0)}
+                    </td>
+                    <td className="py-3 px-4 text-center text-white font-black">
+                      {centralComparisonData.reduce((s, r) => s + r.repairsCount, 0)}
+                    </td>
+                    <td className="py-3 px-4 text-center font-mono font-black">
+                      {(() => {
+                        const totDiff = centralComparisonData.reduce((s, r) => s + r.diferenciaVal, 0);
+                        return totDiff > 0 ? `+${totDiff}` : `${totDiff}`;
+                      })()}
+                    </td>
+                    <td className="py-3 px-4 text-center text-emerald-400">
+                      {(() => {
+                        const totInit = centralComparisonData.reduce((s, r) => s + r.initialReportsCount, 0);
+                        const totRep = centralComparisonData.reduce((s, r) => s + r.repairsCount, 0);
+                        return totInit > 0 ? `${((totRep / totInit) * 100).toFixed(1)}%` : '100%';
+                      })()}
+                    </td>
+                    <td className="py-3 px-4 text-center font-mono text-slate-300">
+                      {(() => {
+                        const totRep = centralComparisonData.reduce((s, r) => s + r.repairsCount, 0);
+                        const totMttrSum = centralComparisonData.reduce((s, r) => s + r.mttrSum, 0);
+                        return totRep > 0 ? `${(totMttrSum / totRep).toFixed(1)}h` : '0h';
+                      })()}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>
@@ -1504,14 +1640,30 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
               )}
             </div>
 
-            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-800">
-              <button
-                onClick={handleProcessAndSaveRepairs}
-                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex items-center space-x-2"
-              >
-                <Check className="w-4 h-4" />
-                <span>Procesar y Aplicar Mapeo a Dashboards</span>
-              </button>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-800">
+              <span className="text-xs text-slate-400">
+                Al subir un Excel, se procesará automáticamente con la configuración guardada sin obligarle a reconfigurar los nombres de columnas.
+              </span>
+              
+              <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
+                <button
+                  onClick={handleProcessExcel}
+                  className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center space-x-2"
+                  title="Procesa el archivo Excel manteniendo el mapeo previamente guardado"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Procesar Excel con Mapeo Guardado</span>
+                </button>
+
+                <button
+                  onClick={handleApplyMappingChanges}
+                  className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex items-center space-x-2"
+                  title="Aplica y guarda los cambios de columnas seleccionados en los menús desplegables"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Aplicar Nuevo Mapeo de Columnas</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1850,6 +2002,24 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                       );
                     })}
                   </tbody>
+                  <tfoot className="bg-slate-950 font-black text-amber-300 border-t-2 border-slate-700">
+                    <tr>
+                      <td className="py-3 px-4 uppercase text-[11px] bg-slate-950">Suma Total</td>
+                      {claveAnalysisData.activeCentralNames.map(cName => {
+                        const colSum = claveAnalysisData.activeClavesList.reduce((sum, clave) => {
+                          return sum + (claveAnalysisData.keyCentralMatrix[clave]?.[cName] || 0);
+                        }, 0);
+                        return (
+                          <td key={cName} className="py-3 px-3 text-center text-white font-extrabold">
+                            {colSum > 0 ? colSum : '-'}
+                          </td>
+                        );
+                      })}
+                      <td className="py-3 px-4 text-center text-amber-400 bg-amber-500/20 text-sm font-black">
+                        {claveAnalysisData.activeClavesList.reduce((sum, clave) => sum + (claveAnalysisData.keyTotals[clave] || 0), 0)}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
@@ -1891,6 +2061,24 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                       );
                     })}
                   </tbody>
+                  <tfoot className="bg-slate-950 font-black text-indigo-300 border-t-2 border-slate-700">
+                    <tr>
+                      <td className="py-3 px-4 uppercase text-[11px] bg-slate-950">Suma Total</td>
+                      {claveAnalysisData.activeClavesList.map(clave => {
+                        const colSum = Object.keys(claveAnalysisData.keyTechMatrix).reduce((sum, tech) => {
+                          return sum + (claveAnalysisData.keyTechMatrix[tech]?.[clave] || 0);
+                        }, 0);
+                        return (
+                          <td key={clave} className="py-3 px-3 text-center text-indigo-300 font-extrabold">
+                            {colSum > 0 ? colSum : '-'}
+                          </td>
+                        );
+                      })}
+                      <td className="py-3 px-4 text-center text-indigo-400 bg-indigo-500/20 text-sm font-black">
+                        {Object.keys(claveAnalysisData.keyTechMatrix).reduce((sum, tech) => sum + (claveAnalysisData.techTotals[tech] || 0), 0)}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>

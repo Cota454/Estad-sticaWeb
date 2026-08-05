@@ -103,6 +103,7 @@ export function processRepairRowsWithMapping(
 
   const todayStr = getTodayStr();
   const records: RepairRecord[] = [];
+  const seenTicketsSet = new Set<string>();
 
   targetRows.forEach((row, idx) => {
     // 1. Extract raw column values
@@ -119,6 +120,30 @@ export function processRepairRowsWithMapping(
 
     // Ignore row if key fields are completely empty
     if (!rawCentral && !rawService && !rawTicket) return;
+
+    // Ignore row if it contains header label titles
+    const centralLower = rawCentral.toLowerCase();
+    const ticketLower = rawTicket.toLowerCase();
+    const serviceLower = rawService.toLowerCase();
+    if (
+      centralLower === 'central' || centralLower === 'cta' || centralLower === 'nodo' ||
+      ticketLower === 'ticket' || ticketLower === 'folio' || ticketLower === 'folio/ticket' ||
+      serviceLower === 'servicio' || serviceLower === 'telefono' || serviceLower === 'abonado'
+    ) {
+      return;
+    }
+
+    // Deduplicate by ticket or service+central+date
+    const dedupKey = ticketLower
+      ? ticketLower
+      : `${serviceLower}_${centralLower}_${String(rawDate).trim().toLowerCase()}`;
+    if (dedupKey && seenTicketsSet.has(dedupKey)) {
+      // Skip duplicate record
+      return;
+    }
+    if (dedupKey) {
+      seenTicketsSet.add(dedupKey);
+    }
 
     // 2. Normalize dates
     const { dateStr } = normalizeDateString(rawDate, todayStr);

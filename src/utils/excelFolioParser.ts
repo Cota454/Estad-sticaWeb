@@ -258,6 +258,9 @@ export function processRawMatrixData(
   const futureDatesSet = new Set<string>();
   let invalidDatesCount = 0;
 
+  // Track seen folios to deduplicate repeated records
+  const seenFoliosSet = new Set<string>();
+
   // Key for counting: `${date}_${centralId}_${groupId}` => count
   const reportCountMap = new Map<string, { date: string; centralId: string; workGroupId: string; count: number }>();
 
@@ -267,7 +270,27 @@ export function processRawMatrixData(
     const folioVal = row[mapping.folioColIndex] !== undefined ? String(row[mapping.folioColIndex]).trim() : '';
     const rawCentral = row[mapping.centralColIndex] !== undefined ? String(row[mapping.centralColIndex]).trim() : '';
     const rawGroup = row[mapping.groupColIndex] !== undefined ? String(row[mapping.groupColIndex]).trim() : '';
-    
+
+    // Ignore row if it's a repeated header row or empty
+    const folioLower = folioVal.toLowerCase();
+    if (
+      folioLower === 'folio' || folioLower === 'ticket' || folioLower === 'folio/ticket' ||
+      folioLower === 'n° ticket' || folioLower === 'id' || folioLower === 'num' ||
+      (rawCentral.toLowerCase() === 'central' && rawGroup.toLowerCase() === 'grupo')
+    ) {
+      return;
+    }
+
+    // Deduplicate by Folio (if folio is present)
+    if (folioVal) {
+      const folioKey = `${folioLower}_${rawCentral.toLowerCase()}_${rawGroup.toLowerCase()}`;
+      if (seenFoliosSet.has(folioKey)) {
+        // Skip duplicate folio entry
+        return;
+      }
+      seenFoliosSet.add(folioKey);
+    }
+
     // Extract date
     let rawDateVal = mapping.dateColIndex >= 0 && row[mapping.dateColIndex] !== undefined 
       ? row[mapping.dateColIndex] 
