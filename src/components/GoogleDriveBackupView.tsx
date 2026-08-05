@@ -38,7 +38,10 @@ import {
   downloadAndParseDriveBackup,
   deleteDriveBackup
 } from '../utils/googleDriveService';
-import { formatDateShort } from '../utils/dateUtils';
+import { parseJSONBackupFile, downloadJSONBackup } from '../utils/exportUtils';
+
+// Memory cache for mock backups in preview mode
+const mockBackupStore = new Map<string, SystemDataBackup>();
 
 interface GoogleDriveBackupViewProps {
   centrales: Central[];
@@ -270,13 +273,15 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
       if (currentUser.accessToken.includes('simulated') || currentUser.accessToken.includes('preview')) {
         // Mock upload success for preview
         await new Promise(r => setTimeout(r, 800));
+        const fileId = `mock_drive_${Date.now()}`;
         const newMockFile: DriveBackupFile = {
-          id: `mock_drive_${Date.now()}`,
+          id: fileId,
           name: `telecomstat_backup_${new Date().toISOString().split('T')[0]}_${new Date().getHours()}-${new Date().getMinutes()}.json`,
           createdTime: new Date().toISOString(),
           size: `${(JSON.stringify(backupPayload).length / 1024).toFixed(1)} KB`,
           mimeType: 'application/json'
         };
+        mockBackupStore.set(fileId, backupPayload);
         setDriveBackups(prev => [newMockFile, ...prev]);
         setStatusMessage({
           type: 'success',
@@ -304,7 +309,7 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
   const handleRestoreFromDrive = async (file: DriveBackupFile) => {
     if (!currentUser.accessToken) return;
 
-    if (!window.confirm(`¿Está seguro de restaurar el respaldo "${file.name}"? Esto actualizará las centrales, grupos y reportes de la aplicación.`)) {
+    if (!window.confirm(`¿Está seguro de restaurar el respaldo "${file.name}"? Esto actualizará las centrales, grupos, reportes y datos de reparaciones de la aplicación.`)) {
       return;
     }
 
@@ -314,21 +319,26 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
     try {
       let backupData: SystemDataBackup;
       if (file.id.startsWith('mock_drive')) {
-        backupData = {
-          version: '2.5',
+        backupData = mockBackupStore.get(file.id) || {
+          version: '3.0.0',
           exportedAt: file.createdTime,
           centrales,
           workGroups,
-          reports
+          reports,
+          repairRecords,
+          customTables,
+          repairColumnMapping
         };
       } else {
         backupData = await downloadAndParseDriveBackup(currentUser.accessToken, file.id);
       }
 
       onImportBackup(backupData);
+      const repCount = backupData.repairRecords ? backupData.repairRecords.length : 0;
+      const reportCount = backupData.reports ? backupData.reports.length : 0;
       setStatusMessage({
         type: 'success',
-        text: `¡Copia de seguridad restaurada correctamente desde Google Drive! (${backupData.reports.length} reportes cargados).`
+        text: `¡Copia de seguridad restaurada correctamente! (${reportCount} reportes diarios, ${repCount} órdenes de reparación cargadas).`
       });
     } catch (err: any) {
       console.error(err);
@@ -338,6 +348,34 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
       });
     } finally {
       setIsRestoringId(null);
+    }
+  };
+
+  const handleRestoreFromLocalFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm(`¿Está seguro de restaurar el respaldo local "${file.name}"? Esto actualizará todos los datos en la aplicación.`)) {
+      if (e.target) e.target.value = '';
+      return;
+    }
+
+    try {
+      const backup = await parseJSONBackupFile(file);
+      onImportBackup(backup);
+      const repCount = backup.repairRecords ? backup.repairRecords.length : 0;
+      const reportCount = backup.reports ? backup.reports.length : 0;
+      setStatusMessage({
+        type: 'success',
+        text: `¡Copia de seguridad local "${file.name}" restaurada con éxito! (${backup.centrales?.length || 0} centrales, ${reportCount} reportes, ${repCount} reparaciones).`
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: `Error al importar archivo local: ${err.message}`
+      });
+    } finally {
+      if (e.target) e.target.value = '';
     }
   };
 
@@ -466,23 +504,46 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
               </p>
             </div>
 
-            <button
-              onClick={handleCreateDriveBackup}
-              disabled={isUploading}
-              className="w-full inline-flex items-center justify-center space-x-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-slate-950 font-extrabold text-xs px-4 py-3 rounded-xl transition-all shadow-lg shadow-emerald-500/20"
-            >
-              {isUploading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                  <span>Subiendo a Google Drive...</span>
-                </>
-              ) : (
-                <>
-                  <CloudUpload className="w-4 h-4" />
-                  <span>Crear Respaldo en Google Drive</span>
-                </>
-              )}
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={handleCreateDriveBackup}
+                disabled={isUploading}
+                className="w-full inline-flex items-center justify-center space-x-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-slate-950 font-extrabold text-xs px-4 py-3 rounded-xl transition-all shadow-lg shadow-emerald-500/20"
+              >
+                {isUploading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                    <span>Subiendo a Google Drive...</span>
+                  </>
+                ) : (
+                  <>
+                    <CloudUpload className="w-4 h-4" />
+                    <span>Crear Respaldo en Google Drive</span>
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => downloadJSONBackup(centrales, workGroups, reports, repairRecords, customTables, repairColumnMapping)}
+                  className="flex-1 inline-flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-2 px-3 rounded-xl border border-slate-700 transition-colors"
+                >
+                  <FileJson className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Descargar JSON</span>
+                </button>
+
+                <label className="flex-1 inline-flex items-center justify-center space-x-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs py-2 px-3 rounded-xl cursor-pointer transition-all shadow-md shadow-blue-600/20">
+                  <CloudDownload className="w-3.5 h-3.5" />
+                  <span>Cargar JSON</span>
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={handleRestoreFromLocalFile}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* Action 2: Automatic Backup Configuration */}

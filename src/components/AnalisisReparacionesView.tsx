@@ -10,7 +10,7 @@ import {
   AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
   Key, Save, ShieldAlert
 } from 'lucide-react';
-import { Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema } from '../types';
+import { Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema, UserProfile, SystemDataBackup } from '../types';
 import { MONTH_NAMES_ES } from '../utils/dateUtils';
 import { filterReportsByMonthYear } from '../utils/statCalculations';
 import {
@@ -18,6 +18,7 @@ import {
 } from '../utils/excelRepairParser';
 import { downloadJSONBackup } from '../utils/exportUtils';
 import { CopyTableButton } from './CopyButton';
+import { GoogleDriveBackupView } from './GoogleDriveBackupView';
 
 interface AnalisisReparacionesViewProps {
   centrales: Central[];
@@ -30,6 +31,9 @@ interface AnalisisReparacionesViewProps {
   columnMapping: RepairColumnMapping;
   onUpdateColumnMapping: (mapping: RepairColumnMapping) => void;
   onBackToHub: () => void;
+  onImportBackup: (backup: SystemDataBackup) => void;
+  currentUser: UserProfile;
+  onUpdateCurrentUser: (user: UserProfile) => void;
 }
 
 type TabType = 'central' | 'monthly' | 'mapper' | 'kpis' | 'repeated' | 'keys' | 'audit' | string;
@@ -48,7 +52,10 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   onUpdateCustomTables,
   columnMapping,
   onUpdateColumnMapping,
-  onBackToHub
+  onBackToHub,
+  onImportBackup,
+  currentUser,
+  onUpdateCurrentUser
 }) => {
   // Navigation State
   const [activeTab, setActiveTab] = useState<TabType>('central');
@@ -685,6 +692,107 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   const copyHeadersCentralTable = ['Central CTA', 'Reportes Iniciales', 'Reparaciones Realizadas', 'Pendientes', 'Tasa Eficiencia %', 'MTTR Prom.'];
   const copyRowsCentralTable = useMemo(() => centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsCount, r.pendingDiff, `${r.resolutionRate}%`, `${r.avgMttr}h`]), [centralComparisonData]);
 
+  // List of available headers from uploaded Excel or common defaults
+  const excelHeaderOptions = useMemo(() => {
+    const defaultHeaders = [
+      'Fecha', 'Fecha Atención', 'Fecha Reparación', 'Fecha Reporte', 'Fecha Ingreso',
+      'Central', 'CTA', 'Nodo', 'Servicio', 'Abonado', 'Teléfono', 'Ticket', 'Folio',
+      'Técnico', 'Brigada', 'Cable', 'Falla', 'Grupo', 'Estado', 'Status',
+      'Clave', 'Código', 'MTTR', 'Horas'
+    ];
+    if (uploadedExcelData && uploadedExcelData.headers && uploadedExcelData.headers.length > 0) {
+      const set = new Set([...uploadedExcelData.headers, ...defaultHeaders]);
+      return Array.from(set);
+    }
+    return defaultHeaders;
+  }, [uploadedExcelData]);
+
+  // Helper function to render Column Mapping Dropdowns
+  const renderMappingSelect = (
+    label: string,
+    fieldValue: string,
+    onValueChange: (val: string) => void,
+    placeholder: string,
+    badgeText?: string,
+    description?: string,
+    colorScheme: 'slate' | 'emerald' | 'amber' | 'indigo' = 'slate'
+  ) => {
+    const options = Array.from(new Set([
+      ...(fieldValue ? [fieldValue] : []),
+      ...excelHeaderOptions
+    ]));
+
+    const isExcelHeader = (h: string) => uploadedExcelData?.headers.includes(h);
+
+    const borderClass =
+      colorScheme === 'emerald' ? 'border-emerald-500/40 bg-emerald-950/20' :
+      colorScheme === 'amber' ? 'border-amber-500/40 bg-amber-950/20' :
+      colorScheme === 'indigo' ? 'border-indigo-500/40 bg-indigo-950/20' :
+      'border-slate-800 bg-slate-950/80';
+
+    const labelClass =
+      colorScheme === 'emerald' ? 'text-emerald-300' :
+      colorScheme === 'amber' ? 'text-amber-300' :
+      colorScheme === 'indigo' ? 'text-indigo-300' :
+      'text-slate-300';
+
+    const focusBorderClass =
+      colorScheme === 'emerald' ? 'focus:border-emerald-400' :
+      colorScheme === 'amber' ? 'focus:border-amber-400' :
+      colorScheme === 'indigo' ? 'focus:border-indigo-400' :
+      'focus:border-indigo-500';
+
+    return (
+      <div className={`p-4 rounded-2xl border ${borderClass} space-y-1.5 transition-all shadow-sm`}>
+        <div className="flex items-center justify-between">
+          <label className={`block text-xs font-extrabold ${labelClass}`}>
+            {label}
+          </label>
+          {badgeText && (
+            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700">
+              {badgeText}
+            </span>
+          )}
+        </div>
+
+        <div className="relative">
+          <select
+            value={fieldValue || ''}
+            onChange={(e) => onValueChange(e.target.value)}
+            className={`w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-bold cursor-pointer appearance-none ${focusBorderClass} pr-8 shadow-inner`}
+          >
+            <option value="">-- Seleccionar Columna del Excel --</option>
+            {uploadedExcelData && uploadedExcelData.headers.length > 0 && (
+              <optgroup label="📋 Columnas Detectadas en el Excel Cargado">
+                {uploadedExcelData.headers.map((h) => (
+                  <option key={`excel-${h}`} value={h}>
+                    ✓ {h}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label="💡 Sugerencias y Nombres Frecuentes">
+              {options.map((h) => (
+                <option key={`opt-${h}`} value={h}>
+                  {h} {isExcelHeader(h) ? '(Excel)' : ''}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-400 text-xs">
+            ▼
+          </div>
+        </div>
+
+        {description ? (
+          <p className="text-[10px] text-slate-400">{description}</p>
+        ) : (
+          <p className="text-[10px] text-slate-500 font-mono">Valor asignado: <strong className="text-slate-300">{fieldValue || 'Sin elegir'}</strong></p>
+        )}
+      </div>
+    );
+  };
+
   // Helper function to render flexible charts with Value Labels and Type Selection
   const renderInteractiveChart = (
     data: any[],
@@ -905,6 +1013,18 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           >
             <Search className="w-4 h-4" />
             <span>7. Buscador Auditoría</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('backup')}
+            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'backup'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 font-extrabold ring-2 ring-blue-400/30'
+                : 'bg-slate-800/80 text-blue-300 hover:bg-slate-800'
+            }`}
+          >
+            <Save className="w-4 h-4 text-blue-400" />
+            <span>8. Copia de Seguridad (Drive)</span>
           </button>
 
           {/* Dynamic Custom Tables Tabs */}
@@ -1274,114 +1394,114 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-slate-800">
               
               {/* Date de Atención */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
-                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Fecha de Atención / Reparación</label>
-                <input
-                  type="text"
-                  value={mappingForm.dateCol}
-                  onChange={(e) => setMappingForm({ ...mappingForm, dateCol: e.target.value })}
-                  placeholder="Ej: Fecha Atención, Dia"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
-                />
-              </div>
+              {renderMappingSelect(
+                'Columna Fecha de Atención / Reparación',
+                mappingForm.dateCol,
+                (val) => setMappingForm({ ...mappingForm, dateCol: val }),
+                'Ej: Fecha Atención, Dia',
+                undefined,
+                'Columna con la fecha en que se concluyó la reparación.',
+                'slate'
+              )}
 
-              {/* Fecha de Reporte (NEW) */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-indigo-500/30">
-                <label className="block text-xs font-bold text-indigo-300 mb-1">Columna Fecha de Reporte (Nuevo)</label>
-                <input
-                  type="text"
-                  value={mappingForm.reportDateCol || ''}
-                  onChange={(e) => setMappingForm({ ...mappingForm, reportDateCol: e.target.value })}
-                  placeholder="Ej: Fecha Ingreso, Reporte"
-                  className="w-full bg-slate-900 border border-indigo-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-400"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Calcula reparaciones en el mismo mes vs arrastre de meses anteriores.</p>
-              </div>
+              {/* Fecha de Reporte */}
+              {renderMappingSelect(
+                'Columna Fecha de Reporte',
+                mappingForm.reportDateCol || '',
+                (val) => setMappingForm({ ...mappingForm, reportDateCol: val }),
+                'Ej: Fecha Ingreso, Reporte',
+                'Nuevo',
+                'Calcula reparaciones en el mismo mes vs arrastre de meses anteriores.',
+                'indigo'
+              )}
 
               {/* Central */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
-                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Central Telefónica</label>
-                <input
-                  type="text"
-                  value={mappingForm.centralCol}
-                  onChange={(e) => setMappingForm({ ...mappingForm, centralCol: e.target.value })}
-                  placeholder="Ej: Central, CTA, Nodo"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
-                />
-              </div>
+              {renderMappingSelect(
+                'Columna Central Telefónica / Nodo',
+                mappingForm.centralCol,
+                (val) => setMappingForm({ ...mappingForm, centralCol: val }),
+                'Ej: Central, CTA, Nodo',
+                undefined,
+                'Agrupa los datos por Central CTA o Nodo.',
+                'slate'
+              )}
 
               {/* Servicio */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
-                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Servicio / Abonado / Teléfono</label>
-                <input
-                  type="text"
-                  value={mappingForm.serviceCol}
-                  onChange={(e) => setMappingForm({ ...mappingForm, serviceCol: e.target.value })}
-                  placeholder="Ej: Servicio, Telefono, Abonado"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
-                />
-              </div>
+              {renderMappingSelect(
+                'Columna Servicio / Abonado / Teléfono',
+                mappingForm.serviceCol,
+                (val) => setMappingForm({ ...mappingForm, serviceCol: val }),
+                'Ej: Servicio, Telefono, Abonado',
+                undefined,
+                'Identificador del servicio o número telefónico del abonado.',
+                'slate'
+              )}
 
-              {/* Columna Cable (RENAMED FROM FALLA) */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-emerald-500/30">
-                <label className="block text-xs font-bold text-emerald-300 mb-1">Columna Cable (Antes Falla)</label>
-                <input
-                  type="text"
-                  value={mappingForm.cableCol || mappingForm.issueCol || ''}
-                  onChange={(e) => setMappingForm({ ...mappingForm, cableCol: e.target.value, issueCol: e.target.value })}
-                  placeholder="Ej: Cable, Elemento Afectado"
-                  className="w-full bg-slate-900 border border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
-                />
-              </div>
+              {/* Ticket / Folio */}
+              {renderMappingSelect(
+                'Columna Ticket / Folio / OS',
+                mappingForm.ticketCol || '',
+                (val) => setMappingForm({ ...mappingForm, ticketCol: val }),
+                'Ej: Ticket, Folio, OT',
+                undefined,
+                'Número correlativo del ticket u orden de servicio.',
+                'slate'
+              )}
 
-              {/* Columna Grupo (RENAMED FROM ESTADO) */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-emerald-500/30">
-                <label className="block text-xs font-bold text-emerald-300 mb-1">Columna Grupo (Antes Estado)</label>
-                <input
-                  type="text"
-                  value={mappingForm.grupoCol || mappingForm.statusCol || ''}
-                  onChange={(e) => setMappingForm({ ...mappingForm, grupoCol: e.target.value, statusCol: e.target.value })}
-                  placeholder="Ej: Grupo, Departamento, Status"
-                  className="w-full bg-slate-900 border border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
-                />
-              </div>
+              {/* Cable (antes Falla) */}
+              {renderMappingSelect(
+                'Columna Cable (Antes Falla)',
+                mappingForm.cableCol || mappingForm.issueCol || '',
+                (val) => setMappingForm({ ...mappingForm, cableCol: val, issueCol: val }),
+                'Ej: Cable, Elemento Afectado',
+                'Mapeo Actualizado',
+                'Muestra el tipo de cable o elemento de red reparado.',
+                'emerald'
+              )}
 
-              {/* Columna Clave (NEW FOR TAB 6 DASHBOARD) */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-amber-500/30">
-                <label className="block text-xs font-bold text-amber-300 mb-1">Columna Clave (Nuevo)</label>
-                <input
-                  type="text"
-                  value={mappingForm.claveCol || ''}
-                  onChange={(e) => setMappingForm({ ...mappingForm, claveCol: e.target.value })}
-                  placeholder="Ej: Clave, Codigo Cierre, Causa"
-                  className="w-full bg-slate-900 border border-amber-500/50 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Alimenta el tablero de claves por Central y Técnico.</p>
-              </div>
+              {/* Grupo (antes Estado) */}
+              {renderMappingSelect(
+                'Columna Grupo (Antes Estado)',
+                mappingForm.grupoCol || mappingForm.statusCol || '',
+                (val) => setMappingForm({ ...mappingForm, grupoCol: val, statusCol: val }),
+                'Ej: Grupo, Departamento, Status',
+                'Mapeo Actualizado',
+                'Grupo operativo o cuadrilla responsable de la reparación.',
+                'emerald'
+              )}
+
+              {/* Clave */}
+              {renderMappingSelect(
+                'Columna Clave',
+                mappingForm.claveCol || '',
+                (val) => setMappingForm({ ...mappingForm, claveCol: val }),
+                'Ej: Clave, Codigo Cierre, Causa',
+                'Nuevo',
+                'Alimenta el tablero de claves por Central y Técnico.',
+                'amber'
+              )}
 
               {/* Técnico */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
-                <label className="block text-xs font-bold text-slate-300 mb-1">Columna Técnico / Brigada</label>
-                <input
-                  type="text"
-                  value={mappingForm.technicianCol || ''}
-                  onChange={(e) => setMappingForm({ ...mappingForm, technicianCol: e.target.value })}
-                  placeholder="Ej: Tecnico, Contrata"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
-                />
-              </div>
+              {renderMappingSelect(
+                'Columna Técnico / Brigada',
+                mappingForm.technicianCol || '',
+                (val) => setMappingForm({ ...mappingForm, technicianCol: val }),
+                'Ej: Tecnico, Contrata',
+                undefined,
+                'Técnico responsable que ejecutó el trabajo de campo.',
+                'slate'
+              )}
 
               {/* MTTR */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800">
-                <label className="block text-xs font-bold text-slate-300 mb-1">Columna MTTR / Horas</label>
-                <input
-                  type="text"
-                  value={mappingForm.mttrCol || ''}
-                  onChange={(e) => setMappingForm({ ...mappingForm, mttrCol: e.target.value })}
-                  placeholder="Ej: MTTR, Horas"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500"
-                />
-              </div>
+              {renderMappingSelect(
+                'Columna MTTR / Horas',
+                mappingForm.mttrCol || '',
+                (val) => setMappingForm({ ...mappingForm, mttrCol: val }),
+                'Ej: MTTR, Horas',
+                undefined,
+                'Horas transcurridas para la resolución del reporte.',
+                'slate'
+              )}
             </div>
 
             <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-800">
@@ -1885,6 +2005,21 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
           </div>
         </div>
+      )}
+
+      {/* TAB 8: COPIA DE SEGURIDAD EN GOOGLE DRIVE & LOCAL */}
+      {activeTab === 'backup' && (
+        <GoogleDriveBackupView
+          centrales={centrales}
+          workGroups={workGroups}
+          reports={reports}
+          repairRecords={repairRecords}
+          customTables={customTables}
+          repairColumnMapping={columnMapping}
+          onImportBackup={onImportBackup}
+          currentUser={currentUser}
+          onUpdateCurrentUser={onUpdateCurrentUser}
+        />
       )}
 
       {/* DYNAMIC CUSTOM TABLE DASHBOARD TABS */}

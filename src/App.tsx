@@ -431,7 +431,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 sm:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
-          <AnalisisIpView onBackToHub={() => setActiveModule('hub')} />
+          <AnalisisIpView
+            onBackToHub={() => setActiveModule('hub')}
+            centrales={centrales}
+            workGroups={workGroups}
+            reports={reports}
+            repairRecords={repairRecords}
+            customTables={customTables}
+            repairColumnMapping={columnMapping}
+            onImportBackup={handleImportBackup}
+            currentUser={currentUser}
+            onUpdateCurrentUser={setCurrentUser}
+          />
         </div>
       </div>
     );
@@ -453,6 +464,9 @@ export default function App() {
             onUpdateCustomTables={handleUpdateCustomTables}
             columnMapping={columnMapping}
             onUpdateColumnMapping={handleUpdateColumnMapping}
+            onImportBackup={handleImportBackup}
+            currentUser={currentUser}
+            onUpdateCurrentUser={setCurrentUser}
           />
         </div>
       </div>

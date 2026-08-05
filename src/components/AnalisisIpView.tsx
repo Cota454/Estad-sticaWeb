@@ -14,11 +14,24 @@ import {
   Cpu,
   ArrowLeft,
   SlidersHorizontal,
-  Layers
+  Layers,
+  Cloud,
+  Save
 } from 'lucide-react';
+import { Central, WorkGroup, DailyReport, RepairRecord, CustomTableSchema, RepairColumnMapping, UserProfile, SystemDataBackup } from '../types';
+import { GoogleDriveBackupView } from './GoogleDriveBackupView';
 
 interface AnalisisIpViewProps {
   onBackToHub: () => void;
+  centrales?: Central[];
+  workGroups?: WorkGroup[];
+  reports?: DailyReport[];
+  repairRecords?: RepairRecord[];
+  customTables?: CustomTableSchema[];
+  repairColumnMapping?: RepairColumnMapping;
+  onImportBackup?: (backup: SystemDataBackup) => void;
+  currentUser?: UserProfile;
+  onUpdateCurrentUser?: (user: UserProfile) => void;
 }
 
 interface IpSubnet {
@@ -33,7 +46,19 @@ interface IpSubnet {
   type: string;
 }
 
-export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({ onBackToHub }) => {
+export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
+  onBackToHub,
+  centrales = [],
+  workGroups = [],
+  reports = [],
+  repairRecords = [],
+  customTables = [],
+  repairColumnMapping,
+  onImportBackup,
+  currentUser,
+  onUpdateCurrentUser
+}) => {
+  const [activeTab, setActiveTab] = useState<'network' | 'backup'>('network');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [pingingIp, setPingingIp] = useState<string | null>(null);
@@ -104,16 +129,62 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({ onBackToHub }) =
             </div>
           </div>
 
-          <button
-            onClick={onBackToHub}
-            className="self-start sm:self-center px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20"
-          >
-            ← Volver al Portal
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setActiveTab('network')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'network'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              Network IP
+            </button>
+
+            <button
+              onClick={() => setActiveTab('backup')}
+              className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'backup'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-2 ring-blue-400/30'
+                  : 'bg-slate-800 text-blue-300 hover:bg-slate-700'
+              }`}
+            >
+              <Cloud className="w-3.5 h-3.5 text-blue-400" />
+              <span>Copia de Seguridad</span>
+            </button>
+
+            <button
+              onClick={onBackToHub}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-700"
+            >
+              ← Portal
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* KPI Cards Grid */}
+      {activeTab === 'backup' ? (
+        currentUser && onImportBackup ? (
+          <GoogleDriveBackupView
+            centrales={centrales}
+            workGroups={workGroups}
+            reports={reports}
+            repairRecords={repairRecords}
+            customTables={customTables}
+            repairColumnMapping={repairColumnMapping}
+            onImportBackup={onImportBackup}
+            currentUser={currentUser}
+            onUpdateCurrentUser={onUpdateCurrentUser || (() => {})}
+          />
+        ) : (
+          <div className="bg-slate-900 text-white p-8 rounded-3xl text-center space-y-3">
+            <Cloud className="w-10 h-10 text-blue-400 mx-auto" />
+            <h3 className="text-lg font-bold">Copia de Seguridad no disponible</h3>
+            <p className="text-xs text-slate-400">Por favor, inicie sesión en la plataforma para acceder al gestor de respaldos.</p>
+          </div>
+        )
+      ) : (
+        <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
@@ -317,6 +388,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({ onBackToHub }) =
           </table>
         </div>
       </div>
+      </>
+      )}
 
     </div>
   );
