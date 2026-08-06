@@ -1,1 +1,84 @@
 @import "tailwindcss";
+
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spinSlow 12s linear infinite;
+}
+
+/* Light Mode Theme Overrides */
+html.light-mode {
+  color-scheme: light;
+}
+
+html.light-mode body {
+  background-color: #f8fafc !important; /* bg-slate-50 */
+  color: #0f172a !important; /* text-slate-900 */
+}
+
+/* Light Mode adjustments for dark containers and panels */
+html.light-mode .bg-slate-950 {
+  background-color: #f1f5f9 !important; /* slate-100 */
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light-mode .bg-slate-900 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+html.light-mode .bg-slate-800,
+html.light-mode .bg-slate-800\/80,
+html.light-mode .bg-slate-800\/90 {
+  background-color: #f8fafc !important;
+  color: #1e293b !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light-mode .text-white {
+  color: #0f172a !important;
+}
+
+html.light-mode .text-slate-100 {
+  color: #0f172a !important;
+}
+
+html.light-mode .text-slate-200 {
+  color: #1e293b !important;
+}
+
+html.light-mode .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.light-mode .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.light-mode .border-slate-800,
+html.light-mode .border-slate-700 {
+  border-color: #e2e8f0 !important;
+}
+
+html.light-mode header {
+  background-color: #ffffff !important;
+  border-bottom-color: #cbd5e1 !important;
+}
+
+html.light-mode input[type="text"],
+html.light-mode input[type="date"],
+html.light-mode select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}

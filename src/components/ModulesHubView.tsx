@@ -14,7 +14,9 @@ import {
   Clock,
   Radio,
   Building2,
-  Sliders
+  Sliders,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { PortalUser, PortalModuleId } from '../types';
 import { UserManagementModal } from './UserManagementModal';
@@ -24,13 +26,17 @@ interface ModulesHubViewProps {
   onSelectModule: (moduleId: PortalModuleId) => void;
   onLogout: () => void;
   syncStatus?: 'synced' | 'syncing' | 'idle';
+  isDarkMode?: boolean;
+  onToggleTheme?: () => void;
 }
 
 export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
   portalUser,
   onSelectModule,
   onLogout,
-  syncStatus = 'synced'
+  syncStatus = 'synced',
+  isDarkMode = true,
+  onToggleTheme
 }) => {
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState<boolean>(false);
 
@@ -66,6 +72,27 @@ export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
           {/* User Info & Actions Bar */}
           <div className="flex items-center space-x-3">
             
+            {/* Theme Toggle Button */}
+            {onToggleTheme && (
+              <button
+                onClick={onToggleTheme}
+                className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs px-3 py-2 rounded-xl border border-slate-700 transition-all shadow-sm"
+                title={isDarkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
+              >
+                {isDarkMode ? (
+                  <>
+                    <Sun className="w-4 h-4 text-amber-400" />
+                    <span className="hidden sm:inline">Modo Claro</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-4 h-4 text-indigo-400" />
+                    <span className="hidden sm:inline">Modo Oscuro</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {/* Google Drive Status Badge */}
             <div className="hidden lg:flex items-center space-x-1.5 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
               <HardDrive className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'text-amber-400 animate-spin' : 'text-emerald-400'}`} />

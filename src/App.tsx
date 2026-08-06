@@ -59,6 +59,27 @@ export default function App() {
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'idle'>('synced');
 
+  // Dark / Light Mode Theme State
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('app_theme');
+    return (saved === 'light' || saved === 'dark') ? saved : 'dark';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('app_theme', theme);
+    if (theme === 'light') {
+      document.documentElement.classList.add('light-mode');
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.remove('light-mode');
+      document.documentElement.classList.add('dark');
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
   // Logout Modal Confirmation State
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState<boolean>(false);
   const [isSavingBeforeLogout, setIsSavingBeforeLogout] = useState<boolean>(false);
@@ -364,6 +385,8 @@ export default function App() {
           onSelectModule={(modId) => setActiveModule(modId)}
           onLogout={() => setIsLogoutModalOpen(true)}
           syncStatus={syncStatus}
+          isDarkMode={theme === 'dark'}
+          onToggleTheme={toggleTheme}
         />
 
         {/* Logout Modal */}
@@ -467,6 +490,8 @@ export default function App() {
             onImportBackup={handleImportBackup}
             currentUser={currentUser}
             onUpdateCurrentUser={setCurrentUser}
+            isDarkMode={theme === 'dark'}
+            onToggleTheme={toggleTheme}
           />
         </div>
       </div>
@@ -493,6 +518,8 @@ export default function App() {
         onLogout={() => setIsLogoutModalOpen(true)}
         onBackToHub={() => setActiveModule('hub')}
         syncStatus={syncStatus}
+        isDarkMode={theme === 'dark'}
+        onToggleTheme={toggleTheme}
       />
 
       {/* Module Navigation */}

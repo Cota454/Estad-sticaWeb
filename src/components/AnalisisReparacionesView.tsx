@@ -8,7 +8,7 @@ import {
   Search, Filter, Sparkles, ArrowLeft, UserCheck, Building2,
   Calendar, Upload, Download, Table, Layers, BarChart3, LineChart as LineChartIcon,
   AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
-  Key, Save, ShieldAlert, RefreshCw, History, Database, AlertCircle
+  Key, Save, ShieldAlert, RefreshCw, History, Database, AlertCircle, Sun, Moon
 } from 'lucide-react';
 import { Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema, UserProfile, SystemDataBackup } from '../types';
 import { MONTH_NAMES_ES } from '../utils/dateUtils';
@@ -34,6 +34,8 @@ interface AnalisisReparacionesViewProps {
   onImportBackup: (backup: SystemDataBackup) => void;
   currentUser: UserProfile;
   onUpdateCurrentUser: (user: UserProfile) => void;
+  isDarkMode?: boolean;
+  onToggleTheme?: () => void;
 }
 
 type TabType = 'central' | 'monthly' | 'mapper' | 'kpis' | 'repeated' | 'keys' | 'audit' | 'history' | 'backup' | string;
@@ -55,7 +57,9 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   onBackToHub,
   onImportBackup,
   currentUser,
-  onUpdateCurrentUser
+  onUpdateCurrentUser,
+  isDarkMode = true,
+  onToggleTheme
 }) => {
   // Navigation State
   const [activeTab, setActiveTab] = useState<TabType>('central');
@@ -1088,6 +1092,26 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
           {/* Action Toolbar with PERSISTENT SAVE/BACKUP BUTTON */}
           <div className="flex flex-wrap items-center gap-2">
+            {onToggleTheme && (
+              <button
+                onClick={onToggleTheme}
+                className="flex items-center space-x-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-xl transition-all border border-slate-700 shadow-md"
+                title={isDarkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
+              >
+                {isDarkMode ? (
+                  <>
+                    <Sun className="w-4 h-4 text-amber-400" />
+                    <span>Modo Claro</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-4 h-4 text-indigo-400" />
+                    <span>Modo Oscuro</span>
+                  </>
+                )}
+              </button>
+            )}
+
             <button
               onClick={() => downloadJSONBackup(centrales, workGroups, reports, repairRecords, customTables, columnMapping)}
               className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-emerald-600/20 border border-emerald-400/30"

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle, Cloud, User, LogOut, CheckCircle2 } from 'lucide-react';
+import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle, Cloud, User, LogOut, CheckCircle2, Sun, Moon } from 'lucide-react';
 import { downloadJSONBackup, parseJSONBackupFile } from '../utils/exportUtils';
 import { Central, WorkGroup, DailyReport, UserProfile, RepairRecord, CustomTableSchema, RepairColumnMapping } from '../types';
 import { getTodayStr, formatDateShort } from '../utils/dateUtils';
@@ -20,6 +20,8 @@ interface HeaderProps {
   onLogout?: () => void;
   onBackToHub?: () => void;
   syncStatus?: 'synced' | 'syncing' | 'idle';
+  isDarkMode?: boolean;
+  onToggleTheme?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -36,7 +38,9 @@ export const Header: React.FC<HeaderProps> = ({
   onNavigateToDrive,
   onLogout,
   onBackToHub,
-  syncStatus = 'synced'
+  syncStatus = 'synced',
+  isDarkMode = true,
+  onToggleTheme
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -89,6 +93,27 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Quick Date Restriction Indicator & Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             
+            {/* Dark/Light Mode Toggle Button */}
+            {onToggleTheme && (
+              <button
+                onClick={onToggleTheme}
+                className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 px-3 py-1.5 rounded-lg font-bold transition-all border border-slate-700 shadow-sm"
+                title={isDarkMode ? 'Cambiar a Modo Claro (Luz)' : 'Cambiar a Modo Oscuro (Noche)'}
+              >
+                {isDarkMode ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-amber-400 animate-spin-slow" />
+                    <span>Modo Claro</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Modo Oscuro</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {/* Return to Modules Hub Button */}
             {onBackToHub && (
               <button
