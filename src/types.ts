@@ -143,7 +143,38 @@ export interface SystemDataBackup {
   repairColumnMapping?: RepairColumnMapping;
 }
 
-export type PortalModuleId = 'report_analysis' | 'ip_analysis' | 'repairs_analysis';
+export type PortalModuleId = 'report_analysis' | 'ip_analysis' | 'repairs_analysis' | 'word_reports';
+
+export type WordReportSectionKey =
+  | 'sec1_tech'
+  | 'sec2_same_period'
+  | 'sec3_daily_month'
+  | 'sec4_daily_groups'
+  | 'sec5_mttr'
+  | 'sec6_claves'
+  | 'sec7_repetidos';
+
+export interface WordReportSectionConfig {
+  id: string;
+  key: WordReportSectionKey;
+  title: string;
+  enabled: boolean;
+  includeTables: boolean;
+  includeCharts: boolean;
+  customNotes?: string;
+}
+
+export interface WordReportProfile {
+  id: string;
+  name: string; // e.g., "Informe General Completo", "Informe de Claves y Repetidos", "Informe de Grupos Operativos"
+  description: string;
+  fileNamePrefix: string;
+  documentTitle: string;
+  departmentName: string;
+  sections: WordReportSectionConfig[];
+  createdDate: string;
+  updatedAt?: string;
+}
 
 export interface PortalUser {
   id: string;

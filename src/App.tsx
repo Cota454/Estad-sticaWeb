@@ -41,6 +41,7 @@ import { WelcomeLandingView } from './components/WelcomeLandingView';
 import { ModulesHubView } from './components/ModulesHubView';
 import { AnalisisIpView } from './components/AnalisisIpView';
 import { AnalisisReparacionesView } from './components/AnalisisReparacionesView';
+import { WordReportManagerView } from './components/WordReportManagerView';
 import { ComparativaMultiPeriodoView } from './components/ComparativaMultiPeriodoView';
 import { PortalUser, PortalModuleId } from './types';
 import { getActivePortalSession, clearActivePortalSession } from './utils/authService';
@@ -492,6 +493,23 @@ export default function App() {
             onUpdateCurrentUser={setCurrentUser}
             isDarkMode={theme === 'dark'}
             onToggleTheme={toggleTheme}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Gestor de Informes Word Module View
+  if (activeModule === 'word_reports') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 sm:p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          <WordReportManagerView
+            onBackToHub={() => setActiveModule('hub')}
+            centrales={centrales}
+            workGroups={workGroups}
+            reports={reports}
+            repairRecords={repairRecords}
           />
         </div>
       </div>

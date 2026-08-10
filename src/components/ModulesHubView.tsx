@@ -16,7 +16,9 @@ import {
   Building2,
   Sliders,
   Sun,
-  Moon
+  Moon,
+  FileSpreadsheet,
+  FileText
 } from 'lucide-react';
 import { PortalUser, PortalModuleId } from '../types';
 import { UserManagementModal } from './UserManagementModal';
@@ -155,8 +157,8 @@ export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
           </div>
         </div>
 
-        {/* The 3 Interactive Cards ("Cuadrados") */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* The 4 Interactive Cards ("Cuadrados") */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           
           {/* CARD 1: Análisis de Reporte */}
           <div
@@ -298,6 +300,54 @@ export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
 
             <button className="w-full py-3 px-4 bg-indigo-600 group-hover:bg-indigo-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-indigo-600/20">
               <span>Ingresar a Análisis de Reparadas</span>
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </button>
+          </div>
+
+          {/* CARD 4: Gestor de Informes Word */}
+          <div
+            onClick={() => onSelectModule('word_reports')}
+            className="group cursor-pointer bg-slate-900 border-2 border-blue-500/40 hover:border-blue-400 rounded-3xl p-6 transition-all duration-300 hover:scale-[1.02] shadow-xl hover:shadow-blue-500/20 flex flex-col justify-between space-y-6 relative overflow-hidden"
+          >
+            <div className="absolute -top-12 -right-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
+
+            <div className="space-y-4 relative z-10">
+              <div className="flex items-center justify-between">
+                <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-2xl text-blue-400 group-hover:scale-110 transition-transform">
+                  <FileText className="w-7 h-7" />
+                </div>
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-black uppercase px-2.5 py-1 rounded-full tracking-wider font-mono">
+                  MÓDULO INFORMES
+                </span>
+              </div>
+
+              <div>
+                <h3 className="text-xl font-black text-white group-hover:text-blue-300 transition-colors">
+                  4. Gestor Informes Word
+                </h3>
+                <p className="text-slate-300 text-xs mt-2 leading-relaxed">
+                  Procesador y creador de documentos Word (.docx): modifique o quite secciones/tablas, agregue nuevos modelos de informe a medida y expórtelos instantáneamente.
+                </p>
+              </div>
+
+              <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Personalización de Secciones, Tablas y Gráficas</span>
+                </div>
+                <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Creación de Múltiples Plantillas / Pestañas Word</span>
+                </div>
+                <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Exportación .docx Directa e Integrada</span>
+                </div>
+              </div>
+            </div>
+
+            <button className="w-full py-3 px-4 bg-blue-600 group-hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/20">
+              <span>Ingresar a Gestor Informes Word</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
           </div>

@@ -3,7 +3,7 @@ import { saveAs } from 'file-saver';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { getSafeHtml2CanvasOptions } from './html2canvasFix';
-import { Central, WorkGroup, DailyReport, RepairRecord, ReportSettings } from '../types';
+import { Central, WorkGroup, DailyReport, RepairRecord, ReportSettings, WordReportProfile, WordReportSectionConfig } from '../types';
 import { DEFAULT_REPORT_SETTINGS } from './settingsUtils';
 import { loadRepairRecords } from '../data/mockData';
 
@@ -393,7 +393,7 @@ function getDatesArray(startStr: string, endStr: string): string[] {
   return dates;
 }
 
-interface ReportExportParams {
+export interface ReportExportParams {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
@@ -403,6 +403,8 @@ interface ReportExportParams {
   displayDate: string; // The user-selected or current date string for document name
   format: 'pdf' | 'word';
   settings?: ReportSettings;
+  profile?: WordReportProfile;
+  sectionsConfig?: WordReportSectionConfig[];
 }
 
 /**
@@ -712,6 +714,15 @@ export async function generateWordReport(params: ReportExportParams): Promise<vo
     mttrRepairsCount
   );
 
+  // Section configuration resolver helper
+  const getSecConfig = (secKey: string) => {
+    const configs = params.sectionsConfig || params.profile?.sections;
+    if (!configs) return { enabled: true, includeTables: true, includeCharts: true, customNotes: '' };
+    const found = configs.find(s => s.key === secKey);
+    if (!found) return { enabled: true, includeTables: true, includeCharts: true, customNotes: '' };
+    return found;
+  };
+
   // Helper to calculate total installed capacity for a central
   const getCentralCapacity = (central: Central): number => {
     if (!central || !central.installedTech) return 0;
@@ -757,11 +768,120 @@ export async function generateWordReport(params: ReportExportParams): Promise<vo
     { series1: '#0284C7', series2: '#F59E0B' }
   );
 
+  // --- SECCIÓN 4 DATA: EVOLUCIÓN POR GRUPOS DE TRABAJO ---
+  // isRepairForGroup is already defined above in helper functions scope
+
+  const groupTableData = params.workGroups.map(wg => {
+    const groupReports = reports.filter(r => r.workGroupId === wg.id && isDateInRange(r.date));
+    const totalReports = groupReports.reduce((sum, r) => sum + (r.reportCount || 0), 0);
+
+    const groupRepairs = loadedRepairRecords.filter(r => isRepairForGroup(r, wg) && isDateInRange(r.date));
+    const totalRepairs = groupRepairs.length;
+
+    const pending = Math.max(0, totalReports - totalRepairs);
+    const effPct = totalReports > 0 ? (totalRepairs / totalReports) * 100 : (totalRepairs > 0 ? 100 : 0);
+
+    return {
+      workGroup: wg,
+      totalReports,
+      totalRepairs,
+      pending,
+      effPctStr: `${effPct.toFixed(1)}%`
+    };
+  });
+
+  const chartGroupBytes = generateBarChartCanvasImage(
+    'Evolución Operativa por Grupos de Trabajo: Reportes vs Reparadas',
+    params.workGroups.map(wg => wg.code || wg.name),
+    'Reportes Asignados',
+    groupTableData.map(d => d.totalReports),
+    'Reparaciones Ejecutadas',
+    groupTableData.map(d => d.totalRepairs),
+    { series1: '#3B82F6', series2: '#10B981' }
+  );
+
+  // --- SECCIÓN 6 DATA: CLAVES DE FALLA POR CENTRAL Y GRUPO ---
+  const extractClave = (r: RepairRecord): string => {
+    if (r.claveCode && r.claveCode.trim()) return r.claveCode.trim().toUpperCase();
+    if (r.rawRowData) {
+      for (const k of Object.keys(r.rawRowData)) {
+        if (k.toLowerCase().includes('clave')) {
+          const val = String(r.rawRowData[k] || '').trim();
+          if (val) return val.toUpperCase();
+        }
+      }
+    }
+    return 'SIN_CLAVE';
+  };
+
+  const repairsInRange = loadedRepairRecords.filter(r => isDateInRange(r.date));
+
+  // Claves x Central Matrix
+  const claveCentralCounts: Record<string, Record<string, number>> = {};
+  const claveTotalCounts: Record<string, number> = {};
+
+  repairsInRange.forEach(r => {
+    const clave = extractClave(r);
+    if (!claveCentralCounts[clave]) {
+      claveCentralCounts[clave] = {};
+      claveTotalCounts[clave] = 0;
+    }
+    claveTotalCounts[clave] = (claveTotalCounts[clave] || 0) + 1;
+
+    // Find central
+    const matchedC = centrales.find(c => isRepairForCentral(r, c));
+    const cId = matchedC ? matchedC.id : 'OTRA';
+    claveCentralCounts[clave][cId] = (claveCentralCounts[clave][cId] || 0) + 1;
+  });
+
+  const sortedClaves = Object.keys(claveTotalCounts).sort((a, b) => claveTotalCounts[b] - claveTotalCounts[a]);
+  const totalClaveRepairs = repairsInRange.length || 1;
+
+  const topClaves = sortedClaves.slice(0, 10);
+  const chartClavesBytes = generateBarChartCanvasImage(
+    'Top Claves de Falla con Mayor Recurrencia en el Período',
+    topClaves,
+    'Cantidad de Incidencias',
+    topClaves.map(k => claveTotalCounts[k]),
+    '% del Total de Reparaciones',
+    topClaves.map(k => parseFloat(((claveTotalCounts[k] / totalClaveRepairs) * 100).toFixed(1))),
+    { series1: '#8B5CF6', series2: '#EC4899' }
+  );
+
+  // --- SECCIÓN 7 DATA: ANÁLISIS DE REPLICADOS / REPETIDOS ---
+  const serviceMap: Record<string, RepairRecord[]> = {};
+  repairsInRange.forEach(r => {
+    const s = (r.serviceNumber || '').trim().toUpperCase();
+    if (s && s !== 'S/N' && s !== 'N/A' && s !== '0') {
+      if (!serviceMap[s]) serviceMap[s] = [];
+      serviceMap[s].push(r);
+    }
+  });
+
+  const repeatedServices = Object.entries(serviceMap).filter(([_, recs]) => recs.length > 1);
+
+  // Separate into numeric vs alphanumeric
+  const numericRepeated: { service: string; records: RepairRecord[]; count: number }[] = [];
+  const alphanumericRepeated: { service: string; records: RepairRecord[]; count: number }[] = [];
+
+  repeatedServices.forEach(([service, records]) => {
+    const isPureDigits = /^\d+$/.test(service);
+    const item = { service, records, count: records.length };
+    if (isPureDigits) {
+      numericRepeated.push(item);
+    } else {
+      alphanumericRepeated.push(item);
+    }
+  });
+
+  numericRepeated.sort((a, b) => b.count - a.count);
+  alphanumericRepeated.sort((a, b) => b.count - a.count);
+
   // Document Content Elements
   const childrenElements: any[] = [
     // --- PORTADA / HEADER ---
     new Paragraph({
-      text: settings.documentTitle || 'INFORME TÉCNICO DE REPORTES Y REPARACIONES',
+      text: params.profile?.documentTitle || settings.documentTitle || 'INFORME TÉCNICO DE REPORTES Y REPARACIONES',
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
       spacing: { before: 240, after: 120 }
@@ -771,356 +891,454 @@ export async function generateWordReport(params: ReportExportParams): Promise<vo
       spacing: { after: 360 },
       children: [
         new TextRun({ text: `${settings.documentSubtitle || 'Estadística de las IP CTA SE'}\n`, italics: true, size: 22, color: '475569' }),
-        new TextRun({ text: `${settings.departmentName || 'Departamento de Telecomunicaciones'}\n`, size: 20, color: '64748B' }),
+        new TextRun({ text: `${params.profile?.departmentName || settings.departmentName || 'Departamento de Telecomunicaciones'}\n`, size: 20, color: '64748B' }),
         new TextRun({ text: `Fecha del Informe: `, bold: true, size: 20, color: '1E293B' }),
         new TextRun({ text: `${displayDate}    |    `, size: 20, color: '1E293B' }),
         new TextRun({ text: `Período Evaluado: `, bold: true, size: 20, color: '1E293B' }),
         new TextRun({ text: `${startDate} al ${endDate}\n`, size: 20, color: '475569' })
       ]
-    }),
+    })
+  ];
 
-    // --- TABLA 1: REPORTES Y % RESPECTO A TÉCNICA INSTALADA ---
-    new Paragraph({
-      text: '1. Cantidad de Reportes por Central Telefónica y Porcentaje respecto a la Técnica Instalada',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 240, after: 120 }
-    }),
-    new Paragraph({
-      spacing: { after: 180 },
-      children: [
-        new TextRun({
-          text: 'Esta tabla muestra la cantidad de averías reportadas en el período seleccionado en relación con la capacidad técnica instalada (líneas/puertos) de cada central telefónica, así como el porcentaje de incidencia que representa sobre la infraestructura desplegada.',
-          size: 20,
-          color: '334155'
-        })
-      ]
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        // Table 1 Header
-        new TableRow({
+  // Render sections dynamically in the exact order configured in the profile
+  const activeSections = params.sectionsConfig || params.profile?.sections || DEFAULT_WORD_SECTIONS;
+  const enabledSections = activeSections.filter(s => s.enabled);
+
+  enabledSections.forEach((sec, idx) => {
+    // Heading
+    childrenElements.push(
+      new Paragraph({
+        text: sec.title || `Sección ${idx + 1}`,
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 360, after: 120 }
+      })
+    );
+
+    // Custom notes
+    if (sec.customNotes) {
+      childrenElements.push(
+        new Paragraph({
+          spacing: { after: 180 },
           children: [
-            createCell('Central Telefónica', true, true, AlignmentType.LEFT, '0F172A'),
-            createCell('Técnica Instalada (Líneas)', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('Total Reportes (Averías)', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('% Impacto / Incidencia', true, true, AlignmentType.CENTER, '0284C7')
+            new TextRun({
+              text: sec.customNotes,
+              size: 20,
+              color: '334155'
+            })
           ]
-        }),
-        // Data Rows
-        ...techInstalledTableData.map(row => (
-          new TableRow({
-            children: [
-              createCell(`${row.central.name} (${row.central.code})`, true, false, AlignmentType.LEFT),
-              createCell(row.installed.toLocaleString(), false, false, AlignmentType.CENTER),
-              createCell(row.totalReports.toString(), false, false, AlignmentType.CENTER),
-              createCell(row.impactPctStr, true, false, AlignmentType.CENTER, row.impactPct > 3 ? 'FEF2F2' : 'F0FDF4')
+        })
+      );
+    }
+
+    // Render Table and/or Chart based on section key
+    if (sec.key === 'sec1_tech') {
+      if (sec.includeTables) {
+        childrenElements.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  createCell('Central Telefónica', true, true, AlignmentType.LEFT, '0F172A'),
+                  createCell('Técnica Instalada (Líneas)', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('Total Reportes (Averías)', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('% Impacto / Incidencia', true, true, AlignmentType.CENTER, '0284C7')
+                ]
+              }),
+              ...techInstalledTableData.map(row => (
+                new TableRow({
+                  children: [
+                    createCell(`${row.central.name} (${row.central.code})`, true, false, AlignmentType.LEFT),
+                    createCell(row.installed.toLocaleString(), false, false, AlignmentType.CENTER),
+                    createCell(row.totalReports.toString(), false, false, AlignmentType.CENTER),
+                    createCell(row.impactPctStr, true, false, AlignmentType.CENTER, row.impactPct > 3 ? 'FEF2F2' : 'F0FDF4')
+                  ]
+                })
+              )),
+              new TableRow({
+                children: [
+                  createCell('TOTAL GENERAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
+                  createCell(grandTotalTechInstalled.toLocaleString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
+                  createCell(grandTotalTechReports.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
+                  createCell(grandTotalImpactPct, true, false, AlignmentType.CENTER, 'CBD5E1')
+                ]
+              })
             ]
           })
-        )),
-        // Total Row
-        new TableRow({
-          children: [
-            createCell('TOTAL GENERAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
-            createCell(grandTotalTechInstalled.toLocaleString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalTechReports.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalImpactPct, true, false, AlignmentType.CENTER, 'CBD5E1')
-          ]
-        })
-      ]
-    }),
+        );
+      }
 
-    // Gráfico de Barras para la Tabla 1 (Técnica Instalada)
-    ...(chartTechBytes.length > 0
-      ? [
+      if (sec.includeCharts && chartTechBytes.length > 0) {
+        childrenElements.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 180, after: 300 },
             children: [
               new ImageRun({
                 data: chartTechBytes,
-                transformation: {
-                  width: 550,
-                  height: 265
-                },
+                transformation: { width: 550, height: 265 },
                 type: 'png'
               })
             ]
           })
-        ]
-      : []),
-
-    // --- TABLA 2: REPORTES VS REPARADAS EN EL MISMO MES ---
-    new Paragraph({
-      text: '2. Cantidad de Reportes vs Cantidad Reparadas (Mismo Período)',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 360, after: 120 }
-    }),
-    new Paragraph({
-      spacing: { after: 180 },
-      children: [
-        new TextRun({
-          text: 'Esta tabla muestra la relación entre las averías reportadas en el período seleccionado y la cantidad de esas mismas averías que fueron atendidas y reparadas dentro del mismo período.',
-          size: 20,
-          color: '334155'
-        })
-      ]
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        // Table 2 Header
-        new TableRow({
-          children: [
-            createCell('Central Telefónica', true, true, AlignmentType.LEFT, '0F172A'),
-            createCell('Total Reportes', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('Reparadas del Mismo Mes', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('Pendientes Período', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('% Cumplimiento', true, true, AlignmentType.CENTER, '0284C7')
-          ]
-        }),
-        // Data Rows
-        ...tableData.map(row => (
-          new TableRow({
-            children: [
-              createCell(`${row.central.name} (${row.central.code})`, true, false, AlignmentType.LEFT),
-              createCell(row.totalReports.toString(), false, false, AlignmentType.CENTER),
-              createCell(row.repairsSamePeriod.toString(), false, false, AlignmentType.CENTER),
-              createCell(row.pendingSamePeriod.toString(), false, false, AlignmentType.CENTER, row.pendingSamePeriod > 0 ? 'FEF2F2' : 'F0FDF4'),
-              createCell(row.effSamePeriod, true, false, AlignmentType.CENTER, 'F8FAFC')
+        );
+      }
+    } else if (sec.key === 'sec2_same_period') {
+      if (sec.includeTables) {
+        childrenElements.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  createCell('Central Telefónica', true, true, AlignmentType.LEFT, '0F172A'),
+                  createCell('Total Reportes', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('Reparadas Mismo Mes', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('Pendientes Período', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('% Cumplimiento', true, true, AlignmentType.CENTER, '0284C7')
+                ]
+              }),
+              ...tableData.map(row => (
+                new TableRow({
+                  children: [
+                    createCell(`${row.central.name} (${row.central.code})`, true, false, AlignmentType.LEFT),
+                    createCell(row.totalReports.toString(), false, false, AlignmentType.CENTER),
+                    createCell(row.repairsSamePeriod.toString(), false, false, AlignmentType.CENTER),
+                    createCell(row.pendingSamePeriod.toString(), false, false, AlignmentType.CENTER, row.pendingSamePeriod > 0 ? 'FEF2F2' : 'F0FDF4'),
+                    createCell(row.effSamePeriod, true, false, AlignmentType.CENTER, 'F8FAFC')
+                  ]
+                })
+              )),
+              new TableRow({
+                children: [
+                  createCell('TOTAL GENERAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
+                  createCell(grandTotalReports.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
+                  createCell(grandTotalRepairsSamePeriod.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
+                  createCell(grandTotalPendingSamePeriod.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
+                  createCell(grandTotalEffSamePeriod, true, false, AlignmentType.CENTER, 'CBD5E1')
+                ]
+              })
             ]
           })
-        )),
-        // Total Row
-        new TableRow({
-          children: [
-            createCell('TOTAL GENERAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
-            createCell(grandTotalReports.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalRepairsSamePeriod.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalPendingSamePeriod.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalEffSamePeriod, true, false, AlignmentType.CENTER, 'CBD5E1')
-          ]
-        })
-      ]
-    }),
+        );
+      }
 
-    // Gráfico de Barras para la Tabla 2
-    ...(chart1Bytes.length > 0
-      ? [
+      if (sec.includeCharts && chart1Bytes.length > 0) {
+        childrenElements.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 180, after: 300 },
             children: [
               new ImageRun({
                 data: chart1Bytes,
-                transformation: {
-                  width: 550,
-                  height: 265
-                },
+                transformation: { width: 550, height: 265 },
                 type: 'png'
               })
             ]
           })
-        ]
-      : []),
-
-    // --- TABLA 3: REPORTES VS TOTAL REPARADO ---
-    new Paragraph({
-      text: '3. Cantidad de Reportes vs Total Reparado',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 360, after: 120 }
-    }),
-    new Paragraph({
-      spacing: { after: 180 },
-      children: [
-        new TextRun({
-          text: 'Esta tabla compara el total de averías reportadas en el período seleccionado contra la totalidad de reparaciones ejecutadas en dicho rango de fechas, incluyendo la atención de pendientes acumulados de períodos anteriores.',
-          size: 20,
-          color: '334155'
-        })
-      ]
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        // Table 3 Header
-        new TableRow({
-          children: [
-            createCell('Central Telefónica', true, true, AlignmentType.LEFT, '0F172A'),
-            createCell('Total Reportes', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('Total Reparado', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('Diferencia / Balance', true, true, AlignmentType.CENTER, '0F172A'),
-            createCell('% Eficiencia Operativa', true, true, AlignmentType.CENTER, '0284C7')
-          ]
-        }),
-        // Data Rows
-        ...tableData.map(row => (
-          new TableRow({
-            children: [
-              createCell(`${row.central.name} (${row.central.code})`, true, false, AlignmentType.LEFT),
-              createCell(row.totalReports.toString(), false, false, AlignmentType.CENTER),
-              createCell(row.totalRepairedInPeriod.toString(), false, false, AlignmentType.CENTER),
-              createCell(row.balanceStr, true, false, AlignmentType.CENTER, row.balance >= 0 ? 'F0FDF4' : 'FEF2F2'),
-              createCell(row.effTotal, true, false, AlignmentType.CENTER, 'F8FAFC')
+        );
+      }
+    } else if (sec.key === 'sec3_daily_month') {
+      if (sec.includeCharts) {
+        monthlyCharts.forEach(chart => {
+          childrenElements.push(
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 180, after: 300 },
+              children: [
+                new ImageRun({
+                  data: chart.imageBytes,
+                  transformation: { width: 550, height: 265 },
+                  type: 'png'
+                })
+              ]
+            })
+          );
+        });
+      }
+    } else if (sec.key === 'sec4_daily_groups') {
+      if (sec.includeTables) {
+        childrenElements.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  createCell('Grupo de Trabajo / Brigada', true, true, AlignmentType.LEFT, '0F172A'),
+                  createCell('Reportes Asignados', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('Reparaciones Resueltas', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('Pendientes', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('% Atendido', true, true, AlignmentType.CENTER, '0284C7')
+                ]
+              }),
+              ...groupTableData.map(row => (
+                new TableRow({
+                  children: [
+                    createCell(`${row.workGroup.name} (${row.workGroup.code})`, true, false, AlignmentType.LEFT),
+                    createCell(row.totalReports.toString(), false, false, AlignmentType.CENTER),
+                    createCell(row.totalRepairs.toString(), false, false, AlignmentType.CENTER),
+                    createCell(row.pending.toString(), false, false, AlignmentType.CENTER, row.pending > 0 ? 'FEF2F2' : 'F0FDF4'),
+                    createCell(row.effPctStr, true, false, AlignmentType.CENTER, 'F8FAFC')
+                  ]
+                })
+              ))
             ]
           })
-        )),
-        // Total Row
-        new TableRow({
-          children: [
-            createCell('TOTAL GENERAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
-            createCell(grandTotalReports.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalRepairedInPeriod.toString(), true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalBalanceStr, true, false, AlignmentType.CENTER, 'E2E8F0'),
-            createCell(grandTotalEffTotal, true, false, AlignmentType.CENTER, 'CBD5E1')
-          ]
-        })
-      ]
-    }),
+        );
+      }
 
-    // Gráfico de Barras para la Tabla 3
-    ...(chart2Bytes.length > 0
-      ? [
+      if (sec.includeCharts && chartGroupBytes.length > 0) {
+        childrenElements.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 180, after: 300 },
             children: [
               new ImageRun({
-                data: chart2Bytes,
-                transformation: {
-                  width: 550,
-                  height: 265
-                },
+                data: chartGroupBytes,
+                transformation: { width: 550, height: 265 },
                 type: 'png'
               })
             ]
           })
-        ]
-      : []),
-
-    // --- SECCIÓN 4: EVOLUCIÓN DIARIA GRÁFICA (SIN TABLA) ---
-    new Paragraph({
-      text: '4. Evolución Diaria: Cantidad de Reportes vs Cantidad Reparadas',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 360, after: 120 }
-    }),
-    new Paragraph({
-      spacing: { after: 180 },
-      children: [
-        new TextRun({
-          text: 'Esta sección muestra la evolución gráfica diaria del servicio dentro del período seleccionado, comparando la cantidad de averías reportadas cada día frente a las reparaciones ejecutadas por fecha.',
-          size: 20,
-          color: '334155'
-        })
-      ]
-    }),
-
-    // Monthly Daily Charts
-    ...monthlyCharts.map(chart => (
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 180, after: 300 },
-        children: [
-          new ImageRun({
-            data: chart.imageBytes,
-            transformation: {
-              width: 550,
-              height: 265
-            },
-            type: 'png'
-          })
-        ]
-      })
-    )),
-
-    // --- SECCIÓN 5: TABLA DE MTTR Y CANTIDAD DE REPARACIONES POR CENTRAL Y GRUPO ---
-    new Paragraph({
-      text: '5. Tiempo Promedio de Respuesta (MTTR en Horas) y Cantidad de Reparaciones por Central y Grupo',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 360, after: 120 }
-    }),
-    new Paragraph({
-      spacing: { after: 180 },
-      children: [
-        new TextRun({
-          text: 'Esta tabla detalla el tiempo medio de reparación (MTTR expresado en horas) junto con la cantidad de reparaciones ejecutadas por cada central telefónica y grupo de trabajo en el período seleccionado. La última columna y fila muestran el promedio ponderado y el total general.',
-          size: 20,
-          color: '334155'
-        })
-      ]
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        // Table 5 Header
-        new TableRow({
-          children: [
-            createCell('Central / Unidad', true, true, AlignmentType.LEFT, '0F172A'),
-            ...params.workGroups.map(wg => createCell(wg.code || wg.name, true, true, AlignmentType.CENTER, '0F172A')),
-            createCell('PROMEDIO / TOTAL', true, true, AlignmentType.CENTER, '6D28D9')
-          ]
-        }),
-        // Data Rows per Central
-        ...mttrTableData.map(row => (
-          new TableRow({
-            children: [
-              createCell(row.centralName, true, false, AlignmentType.LEFT),
-              ...params.workGroups.map(wg => {
-                const cell = row.groups[wg.id];
-                const text = cell && cell.count > 0 ? `${cell.avgMttr.toFixed(1)}h (${cell.count})` : '-';
-                return createCell(text, false, false, AlignmentType.CENTER);
+        );
+      }
+    } else if (sec.key === 'sec5_mttr') {
+      if (sec.includeTables) {
+        childrenElements.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  createCell('Central / Unidad', true, true, AlignmentType.LEFT, '0F172A'),
+                  ...params.workGroups.map(wg => createCell(wg.code || wg.name, true, true, AlignmentType.CENTER, '0F172A')),
+                  createCell('PROMEDIO / TOTAL', true, true, AlignmentType.CENTER, '6D28D9')
+                ]
               }),
-              createCell(
-                row.totalCount > 0 ? `${row.avgMttr.toFixed(1)}h (${row.totalCount})` : '-',
-                true,
-                false,
-                AlignmentType.CENTER,
-                'F3E8FF'
-              )
+              ...mttrTableData.map(row => (
+                new TableRow({
+                  children: [
+                    createCell(row.centralName, true, false, AlignmentType.LEFT),
+                    ...params.workGroups.map(wg => {
+                      const cell = row.groups[wg.id];
+                      const text = cell && cell.count > 0 ? `${cell.avgMttr.toFixed(1)}h (${cell.count})` : '-';
+                      return createCell(text, false, false, AlignmentType.CENTER);
+                    }),
+                    createCell(
+                      row.totalCount > 0 ? `${row.avgMttr.toFixed(1)}h (${row.totalCount})` : '-',
+                      true,
+                      false,
+                      AlignmentType.CENTER,
+                      'F3E8FF'
+                    )
+                  ]
+                })
+              )),
+              new TableRow({
+                children: [
+                  createCell('PROMEDIO GENERAL / TOTAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
+                  ...params.workGroups.map(wg => {
+                    const gStat = groupTotals[wg.id];
+                    const text = gStat && gStat.count > 0 ? `${gStat.avgMttr.toFixed(1)}h (${gStat.count})` : '-';
+                    return createCell(text, true, false, AlignmentType.CENTER, 'E2E8F0');
+                  }),
+                  createCell(
+                    grandMttrTotalCount > 0 ? `${grandMttrAvg.toFixed(1)}h (${grandMttrTotalCount})` : '-',
+                    true,
+                    false,
+                    AlignmentType.CENTER,
+                    'DDD6FE'
+                  )
+                ]
+              })
             ]
           })
-        )),
-        // Summary Row
-        new TableRow({
-          children: [
-            createCell('PROMEDIO GENERAL / TOTAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
-            ...params.workGroups.map(wg => {
-              const gStat = groupTotals[wg.id];
-              const text = gStat && gStat.count > 0 ? `${gStat.avgMttr.toFixed(1)}h (${gStat.count})` : '-';
-              return createCell(text, true, false, AlignmentType.CENTER, 'E2E8F0');
-            }),
-            createCell(
-              grandMttrTotalCount > 0 ? `${grandMttrAvg.toFixed(1)}h (${grandMttrTotalCount})` : '-',
-              true,
-              false,
-              AlignmentType.CENTER,
-              'DDD6FE'
-            )
-          ]
-        })
-      ]
-    }),
+        );
+      }
 
-    // Gráfico de Barras Creativo y Profesional para la Tabla 5 (MTTR y Volumen de Reparaciones)
-    ...(chartMttrBytes.length > 0
-      ? [
+      if (sec.includeCharts && chartMttrBytes.length > 0) {
+        childrenElements.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 200, after: 300 },
             children: [
               new ImageRun({
                 data: chartMttrBytes,
-                transformation: {
-                  width: 550,
-                  height: 265
-                },
+                transformation: { width: 550, height: 265 },
                 type: 'png'
               })
             ]
           })
-        ]
-      : [])
-  ];
+        );
+      }
+    } else if (sec.key === 'sec6_claves') {
+      if (sec.includeTables) {
+        childrenElements.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  createCell('Clave de Falla', true, true, AlignmentType.LEFT, '0F172A'),
+                  createCell('Ocurrencias / Frecuencia', true, true, AlignmentType.CENTER, '0F172A'),
+                  createCell('% del Total', true, true, AlignmentType.CENTER, '0284C7')
+                ]
+              }),
+              ...sortedClaves.slice(0, 15).map(clave => {
+                const count = claveTotalCounts[clave];
+                const pct = ((count / totalClaveRepairs) * 100).toFixed(1);
+                return new TableRow({
+                  children: [
+                    createCell(clave, true, false, AlignmentType.LEFT),
+                    createCell(count.toString(), false, false, AlignmentType.CENTER),
+                    createCell(`${pct}%`, true, false, AlignmentType.CENTER, 'F8FAFC')
+                  ]
+                });
+              })
+            ]
+          })
+        );
+      }
+
+      if (sec.includeCharts && chartClavesBytes.length > 0) {
+        childrenElements.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 180, after: 300 },
+            children: [
+              new ImageRun({
+                data: chartClavesBytes,
+                transformation: { width: 550, height: 265 },
+                type: 'png'
+              })
+            ]
+          })
+        );
+      }
+    } else if (sec.key === 'sec7_repetidos') {
+      if (sec.includeTables) {
+        // 7A: Numéricos
+        childrenElements.push(
+          new Paragraph({
+            text: 'Servicios Numéricos Repetidos',
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 180, after: 120 }
+          })
+        );
+
+        if (numericRepeated.length === 0) {
+          childrenElements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: 'No se detectaron reincidencias de servicios numéricos en el período evaluado.',
+                  italics: true
+                })
+              ],
+              spacing: { after: 180 }
+            })
+          );
+        } else {
+          const rows7A: TableRow[] = [
+            new TableRow({
+              children: [
+                createCell('Servicio / Abonado', true, true, AlignmentType.LEFT, '0F172A'),
+                createCell('Folios / Tickets', true, true, AlignmentType.LEFT, '0F172A'),
+                createCell('Fecha Reporte', true, true, AlignmentType.CENTER, '0F172A'),
+                createCell('Fecha Cierre', true, true, AlignmentType.CENTER, '0F172A'),
+                createCell('Técnico / Grupo', true, true, AlignmentType.LEFT, '0F172A'),
+                createCell('Clave', true, true, AlignmentType.CENTER, '0284C7')
+              ]
+            })
+          ];
+
+          numericRepeated.slice(0, 20).forEach(item => {
+            item.records.forEach((r, idx) => {
+              rows7A.push(
+                new TableRow({
+                  children: [
+                    createCell(idx === 0 ? `${item.service} (${item.count}x)` : '', true, false, AlignmentType.LEFT, idx === 0 ? 'FEF2F2' : undefined),
+                    createCell(r.ticketCode || 'FOLIO_N/A', false, false, AlignmentType.LEFT),
+                    createCell(r.reportDate || r.date || '-', false, false, AlignmentType.CENTER),
+                    createCell(r.date || '-', false, false, AlignmentType.CENTER),
+                    createCell(`${r.technician || 'N/A'} / ${r.grupo || 'N/A'}`, false, false, AlignmentType.LEFT),
+                    createCell(extractClave(r), true, false, AlignmentType.CENTER, 'F8FAFC')
+                  ]
+                })
+              );
+            });
+          });
+
+          childrenElements.push(
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: rows7A
+            })
+          );
+        }
+
+        // 7B: Alfanuméricos
+        childrenElements.push(
+          new Paragraph({
+            text: 'Servicios Alfanuméricos / Especiales Repetidos',
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 240, after: 120 }
+          })
+        );
+
+        if (alphanumericRepeated.length === 0) {
+          childrenElements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: 'No se detectaron reincidencias de servicios alfanuméricos en el período evaluado.',
+                  italics: true
+                })
+              ],
+              spacing: { after: 180 }
+            })
+          );
+        } else {
+          const rows7B: TableRow[] = [
+            new TableRow({
+              children: [
+                createCell('Servicio Especial', true, true, AlignmentType.LEFT, '0F172A'),
+                createCell('Folios / Tickets', true, true, AlignmentType.LEFT, '0F172A'),
+                createCell('Fecha Reporte', true, true, AlignmentType.CENTER, '0F172A'),
+                createCell('Fecha Cierre', true, true, AlignmentType.CENTER, '0F172A'),
+                createCell('Técnico / Grupo', true, true, AlignmentType.LEFT, '0F172A'),
+                createCell('Clave', true, true, AlignmentType.CENTER, '0284C7')
+              ]
+            })
+          ];
+
+          alphanumericRepeated.slice(0, 20).forEach(item => {
+            item.records.forEach((r, idx) => {
+              rows7B.push(
+                new TableRow({
+                  children: [
+                    createCell(idx === 0 ? `${item.service} (${item.count}x)` : '', true, false, AlignmentType.LEFT, idx === 0 ? 'EFF6FF' : undefined),
+                    createCell(r.ticketCode || 'FOLIO_N/A', false, false, AlignmentType.LEFT),
+                    createCell(r.reportDate || r.date || '-', false, false, AlignmentType.CENTER),
+                    createCell(r.date || '-', false, false, AlignmentType.CENTER),
+                    createCell(`${r.technician || 'N/A'} / ${r.grupo || 'N/A'}`, false, false, AlignmentType.LEFT),
+                    createCell(extractClave(r), true, false, AlignmentType.CENTER, 'F8FAFC')
+                  ]
+                })
+              );
+            });
+          });
+
+          childrenElements.push(
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: rows7B
+            })
+          );
+        }
+      }
+    }
+  });
 
   // Build Word Document
   const doc = new Document({
