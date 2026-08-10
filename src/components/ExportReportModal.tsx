@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { FileText, FileSpreadsheet, Calendar, CheckCircle2, X, Download, AlertCircle, Sparkles, Settings } from 'lucide-react';
-import { Central, WorkGroup, DailyReport, ReportSettings } from '../types';
-import { getTodayStr, formatDateShort } from '../utils/dateUtils';
+import { Central, WorkGroup, DailyReport, RepairRecord, ReportSettings } from '../types';
+import { getTodayStr, getPastDateStr, formatDateShort } from '../utils/dateUtils';
 import { generateWordReport, generatePDFReport, buildReportFileName } from '../utils/reportExportGenerator';
 import { FullPrintableReport } from './FullPrintableReport';
 import { DEFAULT_REPORT_SETTINGS } from '../utils/settingsUtils';
@@ -12,6 +12,7 @@ interface ExportReportModalProps {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
+  repairRecords?: RepairRecord[];
   startDate: string;
   endDate: string;
   settings?: ReportSettings;
@@ -24,8 +25,9 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   centrales,
   workGroups,
   reports,
-  startDate,
-  endDate,
+  repairRecords,
+  startDate: initialStartDate,
+  endDate: initialEndDate,
   settings = DEFAULT_REPORT_SETTINGS,
   onOpenSettingsTab
 }) => {
@@ -39,6 +41,28 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const [manualDate, setManualDate] = useState<string>(todayFormatted);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
 
+  // Date Range Interval State
+  const [rangePreset, setRangePreset] = useState<'1day' | '1week' | '1month' | '1year' | 'custom'>('1month');
+  const [reportStartDate, setReportStartDate] = useState<string>(initialStartDate || getPastDateStr(29));
+  const [reportEndDate, setReportEndDate] = useState<string>(initialEndDate || todayFormatted);
+
+  const handlePresetChange = (preset: '1day' | '1week' | '1month' | '1year' | 'custom') => {
+    setRangePreset(preset);
+    if (preset === '1day') {
+      setReportStartDate(todayFormatted);
+      setReportEndDate(todayFormatted);
+    } else if (preset === '1week') {
+      setReportStartDate(getPastDateStr(6));
+      setReportEndDate(todayFormatted);
+    } else if (preset === '1month') {
+      setReportStartDate(getPastDateStr(29));
+      setReportEndDate(todayFormatted);
+    } else if (preset === '1year') {
+      setReportStartDate(getPastDateStr(364));
+      setReportEndDate(todayFormatted);
+    }
+  };
+
   const effectiveDisplayDate = dateOption === 'current' ? todayFormatted : (manualDate || todayFormatted);
   const previewFileName = buildReportFileName(effectiveDisplayDate, selectedFormat, settings.fileNamePrefix);
 
@@ -50,8 +74,9 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
           centrales,
           workGroups,
           reports,
-          startDate,
-          endDate,
+          repairRecords,
+          startDate: reportStartDate,
+          endDate: reportEndDate,
           displayDate: effectiveDisplayDate,
           format: 'word',
           settings
@@ -90,8 +115,8 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
             centrales={centrales}
             workGroups={workGroups}
             reports={reports}
-            startDate={startDate}
-            endDate={endDate}
+            startDate={reportStartDate}
+            endDate={reportEndDate}
             displayDate={effectiveDisplayDate}
             settings={settings}
           />
@@ -121,7 +146,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <div className="mt-5 space-y-5">
+        <div className="mt-5 space-y-4">
           
           {/* Format Selection */}
           <div>
@@ -132,7 +157,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedFormat('word')}
-                className={`flex items-center space-x-3 p-3.5 rounded-xl border-2 transition-all text-left ${
+                className={`flex items-center space-x-3 p-3 rounded-xl border-2 transition-all text-left ${
                   selectedFormat === 'word'
                     ? 'border-blue-600 bg-blue-50/70 text-blue-900 ring-2 ring-blue-500/20'
                     : 'border-slate-200 hover:border-slate-300 text-slate-700 bg-slate-50'
@@ -150,7 +175,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedFormat('pdf')}
-                className={`flex items-center space-x-3 p-3.5 rounded-xl border-2 transition-all text-left ${
+                className={`flex items-center space-x-3 p-3 rounded-xl border-2 transition-all text-left ${
                   selectedFormat === 'pdf'
                     ? 'border-emerald-600 bg-emerald-50/70 text-emerald-900 ring-2 ring-emerald-500/20'
                     : 'border-slate-200 hover:border-slate-300 text-slate-700 bg-slate-50'
@@ -167,10 +192,103 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
             </div>
           </div>
 
+          {/* Interval / Period Selection */}
+          <div>
+            <label className="text-xs font-bold text-slate-800 block mb-1.5 flex items-center justify-between">
+              <span>2. Intervalo de Evaluación (Tablas y Gráficas)</span>
+              <span className="text-[10px] font-normal text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 font-mono">
+                {formatDateShort(reportStartDate)} al {formatDateShort(reportEndDate)}
+              </span>
+            </label>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2.5">
+              <div className="grid grid-cols-5 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('1day')}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    rangePreset === '1day'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  1 Día
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('1week')}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    rangePreset === '1week'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  1 Semana
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('1month')}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    rangePreset === '1month'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  1 Mes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('1year')}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    rangePreset === '1year'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  1 Año
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('custom')}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    rangePreset === 'custom'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  Personalizado
+                </button>
+              </div>
+
+              {/* Range Inputs */}
+              <div className="flex items-center space-x-2 pt-1 border-t border-slate-200/60">
+                <div className="flex-1">
+                  <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">Desde:</span>
+                  <input
+                    type="date"
+                    disabled={rangePreset !== 'custom'}
+                    value={reportStartDate}
+                    onChange={(e) => setReportStartDate(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500"
+                  />
+                </div>
+                <div className="flex-1">
+                  <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">Hasta:</span>
+                  <input
+                    type="date"
+                    disabled={rangePreset !== 'custom'}
+                    value={reportEndDate}
+                    onChange={(e) => setReportEndDate(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Date Selection Options */}
           <div>
-            <label className="text-xs font-bold text-slate-800 block mb-2">
-              2. Selección de Fecha para el Nombre del Documento
+            <label className="text-xs font-bold text-slate-800 block mb-1.5">
+              3. Selección de Fecha para el Nombre del Documento
             </label>
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
               

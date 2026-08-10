@@ -648,6 +648,7 @@ export default function App() {
         centrales={centrales}
         workGroups={workGroups}
         reports={reports}
+        repairRecords={repairRecords}
         startDate={getPastDateStr(30)}
         endDate={getTodayStr()}
         settings={reportSettings}
