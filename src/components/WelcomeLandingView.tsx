@@ -27,10 +27,22 @@ interface WelcomeLandingViewProps {
 }
 
 export const WelcomeLandingView: React.FC<WelcomeLandingViewProps> = ({ onLoginSuccess }) => {
-  const [usernameInput, setUsernameInput] = useState<string>('Admin');
-  const [passwordInput, setPasswordInput] = useState<string>('Rafael1974**');
+  const [usernameInput, setUsernameInput] = useState<string>('');
+  const [passwordInput, setPasswordInput] = useState<string>('');
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [titleClickCount, setTitleClickCount] = useState<number>(0);
+
+  const handleTitleClick = () => {
+    const nextCount = titleClickCount + 1;
+    if (nextCount >= 6) {
+      setUsernameInput('Admin');
+      setPasswordInput('Rafael1974**');
+      setTitleClickCount(0);
+    } else {
+      setTitleClickCount(nextCount);
+    }
+  };
 
   const handlePortalLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,8 +74,12 @@ export const WelcomeLandingView: React.FC<WelcomeLandingViewProps> = ({ onLoginS
       {/* Top Header */}
       <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-xl text-white shadow-lg shadow-blue-500/20">
+          <div
+            onClick={handleTitleClick}
+            className="flex items-center space-x-3 cursor-pointer select-none group"
+            title="TelecomStat NOC"
+          >
+            <div className="p-2 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-xl text-white shadow-lg shadow-blue-500/20 group-active:scale-95 transition-transform">
               <Activity className="w-5 h-5" />
             </div>
             <div>
@@ -92,7 +108,11 @@ export const WelcomeLandingView: React.FC<WelcomeLandingViewProps> = ({ onLoginS
             <span>Portal de Seguridad & Acceso Administrado</span>
           </div>
 
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight">
+          <h1
+            onClick={handleTitleClick}
+            className="text-3xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight cursor-pointer select-none"
+            title="Haz clic 6 veces para autorrelleno"
+          >
             Consola Operativa NOC y Gestión de Datos
           </h1>
 
@@ -132,21 +152,6 @@ export const WelcomeLandingView: React.FC<WelcomeLandingViewProps> = ({ onLoginS
               <p className="text-xs text-slate-400">
                 Ingrese sus credenciales registradas por el Administrador.
               </p>
-            </div>
-
-            {/* Admin Credentials Quick Hint */}
-            <div className="p-3.5 bg-blue-950/60 border border-blue-800/50 rounded-2xl space-y-1 text-xs">
-              <div className="flex items-center justify-between text-blue-300 font-bold">
-                <span className="flex items-center space-x-1">
-                  <ShieldCheck className="w-4 h-4 text-amber-400" />
-                  <span>Credenciales Administrador Principal:</span>
-                </span>
-                <span className="text-[10px] bg-blue-900 px-1.5 py-0.5 rounded text-blue-200">Default</span>
-              </div>
-              <div className="font-mono text-slate-200 flex items-center justify-between pt-1">
-                <span>Usuario: <strong className="text-white">Admin</strong></span>
-                <span>Contraseña: <strong className="text-amber-300">Rafael1974**</strong></span>
-              </div>
             </div>
 
             {/* Error Message */}
