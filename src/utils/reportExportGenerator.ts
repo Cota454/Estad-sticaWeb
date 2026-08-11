@@ -768,6 +768,61 @@ export async function generateWordReport(params: ReportExportParams): Promise<vo
     { series1: '#0284C7', series2: '#F59E0B' }
   );
 
+  // --- SECCIÓN 1: TABLA 1B - DESGLOSE DE AFECTADOS Y % RESPECTO A TÉCNICA INSTALADA POR GRUPO Y CENTRAL ---
+  const techGroupBreakdownTableData = centrales.map(central => {
+    const installed = getCentralCapacity(central);
+    const centralReports = reports.filter(r => r.centralId === central.id && isDateInRange(r.date));
+
+    const groupStats: Record<string, { count: number; impactPct: number; impactPctStr: string }> = {};
+    let totalCentralAffected = 0;
+
+    params.workGroups.forEach(wg => {
+      const wgReports = centralReports.filter(r => r.workGroupId === wg.id);
+      const count = wgReports.reduce((sum, r) => sum + (r.reportCount || 0), 0);
+      totalCentralAffected += count;
+
+      const impactPct = installed > 0 ? (count / installed) * 100 : 0;
+      const impactPctStr = installed > 0 ? `${impactPct.toFixed(2)}%` : '0.00%';
+      groupStats[wg.id] = { count, impactPct, impactPctStr };
+    });
+
+    const totalCentralImpactPct = installed > 0 ? (totalCentralAffected / installed) * 100 : 0;
+    const totalCentralImpactPctStr = installed > 0 ? `${totalCentralImpactPct.toFixed(2)}%` : '0.00%';
+
+    return {
+      central,
+      installed,
+      groupStats,
+      totalCentralAffected,
+      totalCentralImpactPctStr
+    };
+  });
+
+  // Calculate totals per group across all centrales
+  const groupTechTotals: Record<string, { count: number; impactPctStr: string }> = {};
+  let grandTotalGroupTechAffected = 0;
+
+  params.workGroups.forEach(wg => {
+    let wgTotalCount = 0;
+    techGroupBreakdownTableData.forEach(row => {
+      const cell = row.groupStats[wg.id];
+      if (cell) {
+        wgTotalCount += cell.count;
+      }
+    });
+    grandTotalGroupTechAffected += wgTotalCount;
+
+    const wgImpactPct = grandTotalTechInstalled > 0 ? (wgTotalCount / grandTotalTechInstalled) * 100 : 0;
+    groupTechTotals[wg.id] = {
+      count: wgTotalCount,
+      impactPctStr: grandTotalTechInstalled > 0 ? `${wgImpactPct.toFixed(2)}%` : '0.00%'
+    };
+  });
+
+  const grandTotalTechGroupImpactPctStr = grandTotalTechInstalled > 0
+    ? `${((grandTotalGroupTechAffected / grandTotalTechInstalled) * 100).toFixed(2)}%`
+    : '0.00%';
+
   // --- SECCIÓN 4 DATA: EVOLUCIÓN POR GRUPOS DE TRABAJO ---
   // isRepairForGroup is already defined above in helper functions scope
 
@@ -978,6 +1033,62 @@ export async function generateWordReport(params: ReportExportParams): Promise<vo
                 data: chartTechBytes,
                 transformation: { width: 550, height: 265 },
                 type: 'png'
+              })
+            ]
+          })
+        );
+      }
+
+      if (sec.includeTables) {
+        childrenElements.push(
+          new Paragraph({
+            text: 'Afectados por Grupo de Trabajo y % respecto a la Técnica Instalada por Central',
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 240, after: 120 }
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  createCell('Central Telefónica', true, true, AlignmentType.LEFT, '0F172A'),
+                  ...params.workGroups.flatMap(wg => [
+                    createCell(`${wg.code || wg.name}`, true, true, AlignmentType.CENTER, '0F172A'),
+                    createCell('% Téc.', true, true, AlignmentType.CENTER, '0284C7')
+                  ]),
+                  createCell('TOTAL AFECTADOS', true, true, AlignmentType.CENTER, '1E293B'),
+                  createCell('% TÉC. TOTAL', true, true, AlignmentType.CENTER, '0369A1')
+                ]
+              }),
+              ...techGroupBreakdownTableData.map(row => (
+                new TableRow({
+                  children: [
+                    createCell(`${row.central.name} (${row.central.code})`, true, false, AlignmentType.LEFT),
+                    ...params.workGroups.flatMap(wg => {
+                      const st = row.groupStats[wg.id];
+                      return [
+                        createCell(st ? st.count.toString() : '0', false, false, AlignmentType.CENTER),
+                        createCell(st ? st.impactPctStr : '0.00%', true, false, AlignmentType.CENTER, 'F8FAFC')
+                      ];
+                    }),
+                    createCell(row.totalCentralAffected.toString(), true, false, AlignmentType.CENTER, 'F1F5F9'),
+                    createCell(row.totalCentralImpactPctStr, true, false, AlignmentType.CENTER, 'E0F2FE')
+                  ]
+                })
+              )),
+              new TableRow({
+                children: [
+                  createCell('TOTAL GENERAL', true, false, AlignmentType.LEFT, 'E2E8F0'),
+                  ...params.workGroups.flatMap(wg => {
+                    const tot = groupTechTotals[wg.id];
+                    return [
+                      createCell(tot ? tot.count.toString() : '0', true, false, AlignmentType.CENTER, 'E2E8F0'),
+                      createCell(tot ? tot.impactPctStr : '0.00%', true, false, AlignmentType.CENTER, 'CBD5E1')
+                    ];
+                  }),
+                  createCell(grandTotalGroupTechAffected.toString(), true, false, AlignmentType.CENTER, 'CBD5E1'),
+                  createCell(grandTotalTechGroupImpactPctStr, true, false, AlignmentType.CENTER, 'BAE6FD')
+                ]
               })
             ]
           })

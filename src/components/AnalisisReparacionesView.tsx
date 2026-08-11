@@ -19,6 +19,7 @@ import {
 import { downloadJSONBackup } from '../utils/exportUtils';
 import { CopyTableButton } from './CopyButton';
 import { GoogleDriveBackupView } from './GoogleDriveBackupView';
+import { ComparativeTrendsDashboard } from './ComparativeTrendsDashboard';
 
 interface AnalisisReparacionesViewProps {
   centrales: Central[];
@@ -364,7 +365,14 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       mttrSum: number;
     }> = {};
 
-    centrales.forEach(c => {
+    // Filter out temporary fallback centrales containing cnt_temp_
+    const validCentralesList = centrales.filter(c =>
+      !c.id.toLowerCase().includes('cnt_temp_') &&
+      !c.code.toLowerCase().includes('cnt_temp_') &&
+      !c.name.toLowerCase().includes('cnt_temp_')
+    );
+
+    validCentralesList.forEach(c => {
       map[c.id] = {
         centralId: c.id,
         centralName: c.name,
@@ -381,46 +389,60 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     });
 
     filteredInitialReports.forEach(r => {
+      if (r.centralId && r.centralId.toLowerCase().includes('cnt_temp_')) return;
       if (map[r.centralId]) {
         map[r.centralId].initialReportsCount += (r.reportCount || 0);
       } else {
-        const found = centrales.find(c => c.id === r.centralId);
-        map[r.centralId] = {
-          centralId: r.centralId,
-          centralName: found ? found.name : r.centralId,
-          initialReportsCount: r.reportCount || 0,
-          repairsCount: 0,
-          repairsPreviousMonths: 0,
-          repairsSameMonth: 0,
-          resolvedCount: 0,
-          inProgressCount: 0,
-          pendingCount: 0,
-          avgMttr: 0,
-          mttrSum: 0
-        };
+        const found = validCentralesList.find(c => c.id === r.centralId);
+        if (found) {
+          map[r.centralId] = {
+            centralId: r.centralId,
+            centralName: found.name,
+            initialReportsCount: r.reportCount || 0,
+            repairsCount: 0,
+            repairsPreviousMonths: 0,
+            repairsSameMonth: 0,
+            resolvedCount: 0,
+            inProgressCount: 0,
+            pendingCount: 0,
+            avgMttr: 0,
+            mttrSum: 0
+          };
+        }
       }
     });
 
     filteredRepairs.forEach(r => {
+      if (r.centralId && r.centralId.toLowerCase().includes('cnt_temp_')) return;
+      if (r.centralName && r.centralName.toLowerCase().includes('cnt_temp_')) return;
+
       let key = r.centralId;
       if (!key) {
-        const found = centrales.find(c => c.name.toLowerCase() === r.centralName.toLowerCase() || c.code.toLowerCase() === r.centralName.toLowerCase());
+        const found = validCentralesList.find(c => c.name.toLowerCase() === r.centralName.toLowerCase() || c.code.toLowerCase() === r.centralName.toLowerCase());
         key = found ? found.id : r.centralName;
       }
+      if (key && key.toLowerCase().includes('cnt_temp_')) return;
+
       if (!map[key]) {
-        map[key] = {
-          centralId: key,
-          centralName: r.centralName,
-          initialReportsCount: 0,
-          repairsCount: 0,
-          repairsPreviousMonths: 0,
-          repairsSameMonth: 0,
-          resolvedCount: 0,
-          inProgressCount: 0,
-          pendingCount: 0,
-          avgMttr: 0,
-          mttrSum: 0
-        };
+        const found = validCentralesList.find(c => c.id === key || c.name.toLowerCase() === r.centralName.toLowerCase());
+        if (found) {
+          map[found.id] = {
+            centralId: found.id,
+            centralName: found.name,
+            initialReportsCount: 0,
+            repairsCount: 0,
+            repairsPreviousMonths: 0,
+            repairsSameMonth: 0,
+            resolvedCount: 0,
+            inProgressCount: 0,
+            pendingCount: 0,
+            avgMttr: 0,
+            mttrSum: 0
+          };
+          key = found.id;
+        } else {
+          return; // Skip temporary central entries not in validCentralesList
+        }
       }
       map[key].repairsCount += 1;
       map[key].mttrSum += (r.mttrHours || 0);
@@ -1246,6 +1268,18 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           >
             <Save className="w-4 h-4 text-blue-400" />
             <span>9. Copia de Seguridad (Drive)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('temporal_compare')}
+            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'temporal_compare'
+                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 font-extrabold ring-2 ring-emerald-400/30'
+                : 'bg-slate-800/80 text-emerald-300 hover:bg-slate-800'
+            }`}
+          >
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            <span>10. Comparativa Temporal (Días / Semanas / Meses)</span>
           </button>
 
           {/* Dynamic Custom Tables Tabs */}
@@ -2610,6 +2644,17 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           onImportBackup={onImportBackup}
           currentUser={currentUser}
           onUpdateCurrentUser={onUpdateCurrentUser}
+        />
+      )}
+
+      {/* TAB 10: COMPARATIVA TEMPORAL DE REPORTES Y REPARACIONES */}
+      {activeTab === 'temporal_compare' && (
+        <ComparativeTrendsDashboard
+          reports={reports}
+          repairRecords={repairRecords}
+          centrales={centrales}
+          workGroups={workGroups}
+          isDarkMode={true}
         />
       )}
 

@@ -15,8 +15,8 @@ export const WEB_CATALOG_TABLES: CatalogTableOption[] = [
     key: 'sec1_tech',
     title: 'Reportes por Central y % respecto a la Técnica Instalada',
     moduleName: 'Módulo 1: Análisis de Reporte',
-    description: 'Tabla de averías por central en relación con las líneas/puertos instalados.',
-    defaultNotes: 'Esta sección analiza el número total de averías reportadas por central telefónica en relación con la capacidad técnica de líneas y puertos instalados.',
+    description: 'Tabla de averías por central en relación con la técnica instalada, gráfica y desglose de afectados por grupo de trabajo y % respecto a la técnica instalada.',
+    defaultNotes: 'Esta sección analiza el número total de averías reportadas por central telefónica en relación con la capacidad técnica de líneas y puertos instalados, así como el desglose de afectados por grupo de trabajo y su porcentaje de incidencia.',
     hasTable: true,
     hasChart: true
   },
