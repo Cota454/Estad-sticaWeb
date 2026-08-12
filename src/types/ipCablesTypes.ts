@@ -20,7 +20,11 @@ export interface IpCableRow {
   servicio: string;           // Key for consolidation
   central: string;            // Central Telefónica
   grupo: string;              // Grupo de Trabajo
-  cable: string;              // Cable
+  cable: string;              // Combined Cable
+  cableP?: string;            // Cable Primario (Cable P)
+  parP?: string;              // Par Primario (Par P)
+  cableS?: string;            // Cable Secundario (Cable S)
+  parS?: string;              // Par Secundario (Par S)
   fechaReporte: string;       // Fecha Reporte (YYYY-MM-DD or formatted)
   rawRowData: Record<string, any>;
   networkType: 'rigida' | 'flexible' | 'outdoor' | 'other';

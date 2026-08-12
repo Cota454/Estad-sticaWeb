@@ -59,7 +59,8 @@ import {
 import {
   parseIpCablesExcelFile,
   generateSampleIpCablesData,
-  classifyNetworkType
+  classifyNetworkType,
+  matchCableInItem
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -209,7 +210,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setCableRules(newRules);
     if (excelData) {
       const updatedRows = excelData.consolidatedRows.map(row => {
-        const classification = classifyNetworkType(row.cable, row.central, newRules);
+        const classification = classifyNetworkType(row.cableP || row.cable, row.cableS || '', row.central, newRules);
         return {
           ...row,
           networkType: classification.networkType,
@@ -344,51 +345,71 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const colTotals: Record<string, number> = {};
     let grandTotal = 0;
 
+    // Initialize map for configured zones
     zones.forEach(z => {
       cellMap[z.name] = {};
       rowTotals[z.name] = 0;
       colsList.forEach(c => { cellMap[z.name][c] = 0; });
     });
 
+    // Initialize map for "Sin Zonificar"
+    const UNZONED_KEY = 'Sin Zonificar';
+    cellMap[UNZONED_KEY] = {};
+    rowTotals[UNZONED_KEY] = 0;
+    colsList.forEach(c => { cellMap[UNZONED_KEY][c] = 0; });
+
     colsList.forEach(c => { colTotals[c] = 0; });
 
     matrixFilteredConsolidatedRows.forEach(item => {
       const itemCentral = (item.central || '').trim().toUpperCase();
-      const itemCable = (item.cable || '').trim().toUpperCase();
       const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim()).filter(Boolean);
       const uniqueGroupsInItem = Array.from(new Set(rawGroups));
 
-      zones.forEach(z => {
-        // Check if item belongs to Zone by Central or Cable
+      // Find all matching configured zones
+      const matchedZones = zones.filter(z => {
         const matchesCentral = z.centralNames.some(cn => {
           const trimmed = cn.trim().toUpperCase();
           return trimmed.length > 0 && itemCentral.includes(trimmed);
         });
         const matchesCable = z.cableNames.some(cb => {
-          const trimmed = cb.trim().toUpperCase();
-          return trimmed.length > 0 && itemCable === trimmed;
+          return matchCableInItem(item, cb);
         });
+        return matchesCentral || matchesCable;
+      });
 
-        if (matchesCentral || matchesCable) {
-          uniqueGroupsInItem.forEach(g => {
-            if (cellMap[z.name][g] === undefined) {
-              cellMap[z.name][g] = 0;
-            }
-            if (colTotals[g] === undefined) {
-              colTotals[g] = 0;
-            }
-            // Each consolidated item counts as 1 service
+      if (matchedZones.length > 0) {
+        matchedZones.forEach(z => {
+          uniqueGroupsInItem.forEach((g: string) => {
+            if (cellMap[z.name][g] === undefined) cellMap[z.name][g] = 0;
+            if (colTotals[g] === undefined) colTotals[g] = 0;
+
             cellMap[z.name][g] = (cellMap[z.name][g] || 0) + 1;
             rowTotals[z.name] = (rowTotals[z.name] || 0) + 1;
             colTotals[g] = (colTotals[g] || 0) + 1;
             grandTotal += 1;
           });
-        }
-      });
+        });
+      } else {
+        // Service does not match any configured zone
+        uniqueGroupsInItem.forEach((g: string) => {
+          if (cellMap[UNZONED_KEY][g] === undefined) cellMap[UNZONED_KEY][g] = 0;
+          if (colTotals[g] === undefined) colTotals[g] = 0;
+
+          cellMap[UNZONED_KEY][g] = (cellMap[UNZONED_KEY][g] || 0) + 1;
+          rowTotals[UNZONED_KEY] = (rowTotals[UNZONED_KEY] || 0) + 1;
+          colTotals[g] = (colTotals[g] || 0) + 1;
+          grandTotal += 1;
+        });
+      }
     });
 
+    const rows = [...zones.map(z => z.name)];
+    if ((rowTotals[UNZONED_KEY] || 0) > 0) {
+      rows.push(UNZONED_KEY);
+    }
+
     return {
-      rows: zones.map(z => z.name),
+      rows,
       columns: colsList,
       cellMap,
       rowTotals,
@@ -415,7 +436,6 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     return matrixFilteredConsolidatedRows.filter(item => {
       const itemCentral = (item.central || '').trim().toUpperCase();
-      const itemCable = (item.cable || '').trim().toUpperCase();
       const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim().toUpperCase()).filter(Boolean);
 
       // Filter by group if colName is specified
@@ -430,19 +450,32 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           const matchCentral = itemCentral.includes(rowName.trim().toUpperCase());
           if (!matchCentral) return false;
         } else if (matrixType === 'zonas') {
-          const z = zones.find(zone => zone.name === rowName);
-          if (!z) return false;
+          if (rowName === 'Sin Zonificar') {
+            const matchesAnyZone = zones.some(z => {
+              const matchesCentral = z.centralNames.some(cn => {
+                const trimmed = cn.trim().toUpperCase();
+                return trimmed.length > 0 && itemCentral.includes(trimmed);
+              });
+              const matchesCable = z.cableNames.some(cb => {
+                return matchCableInItem(item, cb);
+              });
+              return matchesCentral || matchesCable;
+            });
+            if (matchesAnyZone) return false;
+          } else {
+            const z = zones.find(zone => zone.name === rowName);
+            if (!z) return false;
 
-          const matchesCentral = z.centralNames.some(cn => {
-            const trimmed = cn.trim().toUpperCase();
-            return trimmed.length > 0 && itemCentral.includes(trimmed);
-          });
-          const matchesCable = z.cableNames.some(cb => {
-            const trimmed = cb.trim().toUpperCase();
-            return trimmed.length > 0 && itemCable === trimmed;
-          });
+            const matchesCentral = z.centralNames.some(cn => {
+              const trimmed = cn.trim().toUpperCase();
+              return trimmed.length > 0 && itemCentral.includes(trimmed);
+            });
+            const matchesCable = z.cableNames.some(cb => {
+              return matchCableInItem(item, cb);
+            });
 
-          if (!matchesCentral && !matchesCable) return false;
+            if (!matchesCentral && !matchesCable) return false;
+          }
         }
       } else if (matrixType === 'zonas') {
         // If no rowName specified for Zonas (e.g. Column Total or Grand Total for Zonas), check if item belongs to ANY zone
@@ -452,8 +485,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             return trimmed.length > 0 && itemCentral.includes(trimmed);
           });
           const matchesCable = z.cableNames.some(cb => {
-            const trimmed = cb.trim().toUpperCase();
-            return trimmed.length > 0 && itemCable === trimmed;
+            return matchCableInItem(item, cb);
           });
           return matchesCentral || matchesCable;
         });
@@ -471,8 +503,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       s.servicio.toLowerCase().includes(q) ||
       s.central.toLowerCase().includes(q) ||
       s.cable.toLowerCase().includes(q) ||
+      (s.cableP && s.cableP.toLowerCase().includes(q)) ||
+      (s.cableS && s.cableS.toLowerCase().includes(q)) ||
+      (s.parP && s.parP.toLowerCase().includes(q)) ||
+      (s.parS && s.parS.toLowerCase().includes(q)) ||
       s.grupo.toLowerCase().includes(q) ||
-      (s.tipoRed && s.tipoRed.toLowerCase().includes(q))
+      (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes(q))
     );
   }, [cellServicesList, cellModalSearch]);
 
@@ -506,12 +542,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
-      // 4. Cable Search
+      // 4. Cable Search (Supports Cable P, Cable S, Par P, Par S)
       if (cableSearchTerm.trim()) {
-        const query = cableSearchTerm.trim().toLowerCase();
-        const cableVal = (item.cable || '').toLowerCase();
+        const query = cableSearchTerm.trim();
+        const matchCable = matchCableInItem(item, query);
         const srvVal = (item.servicio || '').toLowerCase();
-        if (!cableVal.includes(query) && !srvVal.includes(query)) {
+        const matchSrv = srvVal.includes(query.toLowerCase());
+        if (!matchCable && !matchSrv) {
           return false;
         }
       }
@@ -619,11 +656,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   }, [matrixZonasData.columns]);
 
   const copyZonasRows = useMemo(() => {
-    return matrixZonasData.rows.map(r => [
-      r,
-      ...matrixZonasData.columns.map(c => matrixZonasData.cellMap[r]?.[c] || 0),
-      matrixZonasData.rowTotals[r] || 0
-    ]);
+    return matrixZonasData.rows.map(r => {
+      const rowTot = matrixZonasData.rowTotals[r] || 0;
+      const pct = matrixZonasData.grandTotal > 0 ? (rowTot / matrixZonasData.grandTotal) * 100 : 0;
+      return [
+        r,
+        ...matrixZonasData.columns.map(c => matrixZonasData.cellMap[r]?.[c] || 0),
+        `${rowTot} (${pct.toFixed(1)}%)`
+      ];
+    });
   }, [matrixZonasData]);
 
   // Copy Headers & Rows for Matrix Cables x Grupos
@@ -1113,15 +1154,91 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   {matrixZonasData.rows.map(rowName => {
                     const rowTotal = matrixZonasData.rowTotals[rowName] || 0;
                     const zoneObj = zones.find(z => z.name === rowName);
+                    const isUnzoned = rowName === 'Sin Zonificar';
+                    const percentage = matrixZonasData.grandTotal > 0 ? ((rowTotal / matrixZonasData.grandTotal) * 100).toFixed(1) : '0.0';
+
                     return (
-                      <tr key={rowName} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="py-3.5 px-4 font-bold text-white flex items-center space-x-2">
-                          <span
-                            className="w-3 h-3 rounded-full shrink-0"
-                            style={{ backgroundColor: zoneObj?.color || '#3B82F6' }}
-                          />
-                          <span>{rowName}</span>
-                        </td>
+                      <tr key={rowName} className={`transition-colors ${isUnzoned ? 'bg-amber-950/10 hover:bg-amber-950/20' : 'hover:bg-slate-800/50'}`}>
+                        {/* Option 1 & 3: Zone Label with Hover Popover Tooltip */}
+                        {isUnzoned ? (
+                          <td className="py-3.5 px-4 font-bold text-amber-300 relative group">
+                            <div className="flex items-center space-x-2 cursor-help">
+                              <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span className="underline decoration-amber-500/40 decoration-dashed underline-offset-4">
+                                Sin Zonificar / Sin Asignar
+                              </span>
+                            </div>
+
+                            {/* Hover Tooltip Popover */}
+                            <div className="absolute left-4 top-full mt-1 w-72 p-3 bg-slate-900/95 backdrop-blur-md border border-amber-500/40 rounded-xl shadow-2xl z-50 text-xs hidden group-hover:block transition-all space-y-1 pointer-events-none">
+                              <div className="flex items-center space-x-1.5 text-amber-300 font-black">
+                                <Info className="w-4 h-4 text-amber-400" />
+                                <span>Auditoría de Cobertura</span>
+                              </div>
+                              <p className="text-[11px] text-slate-300 font-normal leading-relaxed">
+                                Agrupa {rowTotal} servicios cuyos cables o centrales no coinciden con ninguna de las zonas registradas.
+                              </p>
+                            </div>
+                          </td>
+                        ) : (
+                          <td className="py-3.5 px-4 font-bold text-white relative group">
+                            <div className="flex items-center space-x-2 cursor-help">
+                              <span
+                                className="w-3 h-3 rounded-full shrink-0 shadow-sm"
+                                style={{ backgroundColor: zoneObj?.color || '#3B82F6' }}
+                              />
+                              <span className="underline decoration-slate-600 decoration-dashed underline-offset-4 hover:text-blue-300 transition-colors">
+                                {rowName}
+                              </span>
+                              <Info className="w-3 h-3 text-slate-500 group-hover:text-blue-400 transition-colors shrink-0" />
+                            </div>
+
+                            {/* Option 3: Hover Tooltip Popover */}
+                            {zoneObj && (
+                              <div className="absolute left-4 top-full mt-1 w-80 p-3.5 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl z-50 text-xs hidden group-hover:block transition-all space-y-2 pointer-events-none">
+                                <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                                  <div className="flex items-center space-x-2">
+                                    <span
+                                      className="w-3 h-3 rounded-full"
+                                      style={{ backgroundColor: zoneObj.color || '#3B82F6' }}
+                                    />
+                                    <span className="font-extrabold text-white text-sm">{zoneObj.name}</span>
+                                  </div>
+                                  {zoneObj.contactPerson && (
+                                    <span className="text-[10px] text-slate-400 font-normal">
+                                      Resp: {zoneObj.contactPerson}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="space-y-1.5 font-normal">
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-blue-400 block">
+                                      Centrales Asignadas ({zoneObj.centralNames.filter(Boolean).length}):
+                                    </span>
+                                    <p className="text-slate-300 text-[11px] font-mono break-words">
+                                      {zoneObj.centralNames.filter(Boolean).length > 0
+                                        ? zoneObj.centralNames.filter(Boolean).join(', ')
+                                        : 'Ninguna central configurada'}
+                                    </p>
+                                  </div>
+
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-emerald-400 block">
+                                      Cables Asignados ({zoneObj.cableNames.filter(Boolean).length}):
+                                    </span>
+                                    <p className="text-slate-300 text-[11px] font-mono break-words max-h-24 overflow-y-auto">
+                                      {zoneObj.cableNames.filter(Boolean).length > 0
+                                        ? zoneObj.cableNames.filter(Boolean).join(', ')
+                                        : 'Ningún cable configurado'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        )}
+
                         {matrixZonasData.columns.map(colName => {
                           const val = matrixZonasData.cellMap[rowName]?.[colName] || 0;
                           return (
@@ -1135,8 +1252,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                     title: `Servicios: ${rowName} / ${colName}`,
                                     subtitle: `Servicios consolidados mapeados a ${rowName} en ${colName}`
                                   })}
-                                  className="font-black text-emerald-400 px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-600 hover:text-white border border-emerald-800/40 hover:border-emerald-400 transition-all cursor-pointer shadow-sm active:scale-95"
-                                  title="Ver servicios consolidados de esta zona"
+                                  className={`font-black px-2.5 py-1 rounded-lg transition-all cursor-pointer shadow-sm active:scale-95 ${
+                                    isUnzoned
+                                      ? 'text-amber-300 bg-amber-950/60 hover:bg-amber-600 hover:text-white border border-amber-800/40 hover:border-amber-400'
+                                      : 'text-emerald-400 bg-emerald-950/60 hover:bg-emerald-600 hover:text-white border border-emerald-800/40 hover:border-emerald-400'
+                                  }`}
+                                  title="Ver servicios consolidados"
                                 >
                                   {val}
                                 </button>
@@ -1146,22 +1267,34 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             </td>
                           );
                         })}
-                        <td className="py-3.5 px-4 text-center font-mono font-black text-amber-400 text-sm bg-slate-900/40">
+
+                        {/* Option 2: Total General with Percentage (%) */}
+                        <td className="py-3.5 px-4 text-center font-mono font-black bg-slate-900/40">
                           {rowTotal > 0 ? (
-                            <button
-                              onClick={() => setSelectedCellFilter({
-                                matrixType: 'zonas',
-                                rowName,
-                                title: `Servicios: Total ${rowName}`,
-                                subtitle: `Todos los servicios consolidados mapeados a ${rowName}`
-                              })}
-                              className="font-black text-amber-400 hover:text-white hover:underline cursor-pointer transition-all"
-                              title="Ver todos los servicios de esta zona"
-                            >
-                              {rowTotal}
-                            </button>
+                            <div className="flex flex-col items-center">
+                              <button
+                                onClick={() => setSelectedCellFilter({
+                                  matrixType: 'zonas',
+                                  rowName,
+                                  title: isUnzoned ? 'Servicios: Sin Zonificar' : `Servicios: Total ${rowName}`,
+                                  subtitle: isUnzoned
+                                    ? 'Servicios consolidados que no coinciden con ninguna zona'
+                                    : `Todos los servicios consolidados mapeados a ${rowName}`
+                                })}
+                                className="font-black text-amber-400 hover:text-white hover:underline cursor-pointer transition-all text-xs"
+                                title="Ver todos los servicios de esta fila"
+                              >
+                                {rowTotal}
+                              </button>
+                              <span className="text-[10px] text-amber-300/80 font-bold font-sans mt-0.5">
+                                ({percentage}%)
+                              </span>
+                            </div>
                           ) : (
-                            <span>0</span>
+                            <div className="flex flex-col items-center">
+                              <span className="text-slate-600">0</span>
+                              <span className="text-[10px] text-slate-600 font-sans mt-0.5">(0.0%)</span>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1504,12 +1637,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 />
               </div>
               <CopyTableButton
-                headers={['N°', 'SERVICIO', 'CENTRAL', 'CABLE', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA']}
+                headers={['N°', 'SERVICIO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA']}
                 rows={displayModalServices.map((s, idx) => [
                   (idx + 1).toString(),
                   s.servicio,
                   s.central,
-                  s.cable,
+                  s.cableP || '-',
+                  s.parP || '-',
+                  s.cableS || '-',
+                  s.parS || '-',
                   s.grupo,
                   s.networkTypeLabel || '-',
                   `${getDemoraDays(s)} días`,
@@ -1527,7 +1663,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <th className="py-3 px-3 text-center text-slate-500 w-12">#</th>
                     <th className="py-3 px-4 text-white font-black">Servicio / abonado</th>
                     <th className="py-3 px-4">Central</th>
-                    <th className="py-3 px-4">Cable</th>
+                    <th className="py-3 px-4 text-cyan-400">Cable P / Par P</th>
+                    <th className="py-3 px-4 text-indigo-400">Cable S / Par S</th>
                     <th className="py-3 px-4">Grupo de Trabajo</th>
                     <th className="py-3 px-4">Clasificación Red</th>
                     <th className="py-3 px-4 text-center">Demora (Días)</th>
@@ -1537,7 +1674,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {displayModalServices.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-500 font-bold">
+                      <td colSpan={9} className="py-8 text-center text-slate-500 font-bold">
                         No se encontraron servicios consolidados para este filtro.
                       </td>
                     </tr>
@@ -1547,7 +1684,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                         <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
                         <td className="py-3 px-4 font-bold text-amber-300 font-mono">{item.servicio}</td>
                         <td className="py-3 px-4 font-semibold text-white">{item.central}</td>
-                        <td className="py-3 px-4 text-slate-300 font-mono">{item.cable || '-'}</td>
+                        <td className="py-3 px-4 text-cyan-300 font-mono">
+                          {item.cableP || '-'}{item.parP ? <span className="text-slate-400 font-sans text-[10px] ml-1">({item.parP})</span> : ''}
+                        </td>
+                        <td className="py-3 px-4 text-indigo-300 font-mono">
+                          {item.cableS || '-'}{item.parS ? <span className="text-slate-400 font-sans text-[10px] ml-1">({item.parS})</span> : ''}
+                        </td>
                         <td className="py-3 px-4 text-indigo-300 font-bold">{item.grupo || 'GENERAL'}</td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${

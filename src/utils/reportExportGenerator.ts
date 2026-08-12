@@ -956,7 +956,7 @@ export async function generateWordReport(params: ReportExportParams): Promise<vo
   ];
 
   // Render sections dynamically in the exact order configured in the profile
-  const activeSections = params.sectionsConfig || params.profile?.sections || DEFAULT_WORD_SECTIONS;
+  const activeSections = params.sectionsConfig || params.profile?.sections || [];
   const enabledSections = activeSections.filter(s => s.enabled);
 
   enabledSections.forEach((sec, idx) => {
