@@ -23,20 +23,26 @@ export function classifyNetworkType(
   const normCable = (cableVal || '').toString().trim().toUpperCase();
   const normCentral = (centralVal || '').toString().trim().toUpperCase();
 
-  // 1. Check Red Rígida (Exact or match in rules.rigidaCables)
+  // 1. Check Red Rígida (Exact or match in rules.rigidaCables, supporting comma-separated values)
   const isRigida = rules.rigidaCables.some(r => {
-    const target = r.toString().trim().toUpperCase();
-    return target && (normCable === target || normCable.includes(target) || target.includes(normCable));
+    const rawPatterns = r.toString().split(',');
+    return rawPatterns.some(p => {
+      const target = p.trim().toUpperCase();
+      return target && (normCable === target || normCable.includes(target) || target.includes(normCable));
+    });
   });
 
   if (isRigida) {
     return { networkType: 'rigida', networkTypeLabel: 'Red Rígida' };
   }
 
-  // 2. Check Red Flexible (Pattern match in CABLE column)
+  // 2. Check Red Flexible (Pattern match in CABLE column, supporting comma-separated patterns e.g. VA61, VA62, VA63)
   const flexibleRuleMatch = rules.flexibleRules.find(rule => {
-    const pat = rule.pattern.toString().trim().toUpperCase();
-    return pat && normCable.includes(pat);
+    const rawPatterns = (rule.pattern || '').toString().split(',');
+    return rawPatterns.some(p => {
+      const pat = p.trim().toUpperCase();
+      return pat && normCable.includes(pat);
+    });
   });
 
   if (flexibleRuleMatch) {
@@ -46,10 +52,13 @@ export function classifyNetworkType(
     };
   }
 
-  // 3. Check Outdoor (Pattern match in CENTRAL TELEFONICA column)
+  // 3. Check Outdoor (Pattern match in CENTRAL TELEFONICA column, supporting comma-separated patterns)
   const outdoorRuleMatch = rules.outdoorRules.find(rule => {
-    const pat = rule.centralPattern.toString().trim().toUpperCase();
-    return pat && normCentral.includes(pat);
+    const rawPatterns = (rule.centralPattern || '').toString().split(',');
+    return rawPatterns.some(p => {
+      const pat = p.trim().toUpperCase();
+      return pat && normCentral.includes(pat);
+    });
   });
 
   if (outdoorRuleMatch) {

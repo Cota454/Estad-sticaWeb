@@ -81,11 +81,19 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
   };
 
   const handleAddCable = () => {
-    const trimmed = newCableInput.trim().toUpperCase();
-    if (trimmed && !formCables.includes(trimmed)) {
-      setFormCables([...formCables, trimmed]);
-      setNewCableInput('');
-    }
+    if (!newCableInput.trim()) return;
+    const rawParts = newCableInput.split(',');
+    const updated = [...formCables];
+
+    rawParts.forEach(part => {
+      const trimmed = part.trim().toUpperCase();
+      if (trimmed && !updated.includes(trimmed)) {
+        updated.push(trimmed);
+      }
+    });
+
+    setFormCables(updated);
+    setNewCableInput('');
   };
 
   const handleRemoveCable = (cableName: string) => {
@@ -311,7 +319,7 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
                 <div className="flex items-center space-x-2">
                   <input
                     type="text"
-                    placeholder="Escriba el nombre del cable (ej: CABLE-01, CR-101) o seleccione abajo"
+                    placeholder="Escriba uno o varios cables separados por coma (ej: VA61, VA62, VA63) o seleccione abajo"
                     value={newCableInput}
                     onChange={(e) => setNewCableInput(e.target.value)}
                     onKeyDown={(e) => {

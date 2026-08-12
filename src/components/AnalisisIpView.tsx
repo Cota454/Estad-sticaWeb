@@ -54,7 +54,8 @@ import {
 
 import {
   parseIpCablesExcelFile,
-  generateSampleIpCablesData
+  generateSampleIpCablesData,
+  classifyNetworkType
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -109,6 +110,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [selectedNetworkTypeFilter, setSelectedNetworkTypeFilter] = useState<NetworkTypeCategory>('all');
   const [selectedMonthYearFilter, setSelectedMonthYearFilter] = useState<string>('all'); // e.g. "2026-8"
   const [cableSearchTerm, setCableSearchTerm] = useState<string>('');
+  const [cableSortOrder, setCableSortOrder] = useState<'desc' | 'asc' | 'alpha'>('desc');
 
   // Handle Excel Upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -149,51 +151,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const handleRulesUpdated = (newRules: CableClassificationRules) => {
     setCableRules(newRules);
     if (excelData) {
-      // Re-parse or update existing rows
       const updatedRows = excelData.consolidatedRows.map(row => {
-        const normCable = (row.cable || '').toString().trim().toUpperCase();
-        const normCentral = (row.central || '').toString().trim().toUpperCase();
-
-        let networkType: 'rigida' | 'flexible' | 'outdoor' | 'other' = 'other';
-        let networkTypeLabel = 'Otra Red / General';
-
-        // Check Rigida
-        const isRigida = newRules.rigidaCables.some(r => {
-          const target = r.toString().trim().toUpperCase();
-          return target && (normCable === target || normCable.includes(target) || target.includes(normCable));
-        });
-
-        if (isRigida) {
-          networkType = 'rigida';
-          networkTypeLabel = 'Red Rígida';
-        } else {
-          // Check Flexible
-          const flexMatch = newRules.flexibleRules.find(rule => {
-            const pat = rule.pattern.toString().trim().toUpperCase();
-            return pat && normCable.includes(pat);
-          });
-
-          if (flexMatch) {
-            networkType = 'flexible';
-            networkTypeLabel = `Red Flexible (${flexMatch.assignedName || flexMatch.pattern})`;
-          } else {
-            // Check Outdoor
-            const outdoorMatch = newRules.outdoorRules.find(rule => {
-              const pat = rule.centralPattern.toString().trim().toUpperCase();
-              return pat && normCentral.includes(pat);
-            });
-
-            if (outdoorMatch) {
-              networkType = 'outdoor';
-              networkTypeLabel = `Outdoor (${outdoorMatch.assignedName || outdoorMatch.centralPattern})`;
-            }
-          }
-        }
-
+        const classification = classifyNetworkType(row.cable, row.central, newRules);
         return {
           ...row,
-          networkType,
-          networkTypeLabel
+          networkType: classification.networkType,
+          networkTypeLabel: classification.networkTypeLabel
         };
       });
 
@@ -209,7 +172,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // --- COMPUTED DATA FOR MATRICES (PESTAÑA 1) ---
 
-  // 1. Matrix 1: Centrales Telefónicas vs GRUPO
+  // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
     if (!excelData) return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
 
@@ -247,10 +210,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           colTotals[g] = 0;
         }
 
-        cellMap[cnt][g] = (cellMap[cnt][g] || 0) + item.count;
-        rowTotals[cnt] = (rowTotals[cnt] || 0) + item.count;
-        colTotals[g] = (colTotals[g] || 0) + item.count;
-        grandTotal += item.count;
+        // Each consolidated item counts as 1 service
+        cellMap[cnt][g] = (cellMap[cnt][g] || 0) + 1;
+        rowTotals[cnt] = (rowTotals[cnt] || 0) + 1;
+        colTotals[g] = (colTotals[g] || 0) + 1;
+        grandTotal += 1;
       });
     });
 
@@ -264,7 +228,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     };
   }, [excelData]);
 
-  // 2. Matrix 2: Zonificación vs GRUPO
+  // 2. Matrix 2: Zonificación vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixZonasData = useMemo(() => {
     if (!excelData) return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
 
@@ -294,10 +258,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
         if (matchesCentral || matchesCable) {
           groupsInItem.forEach(g => {
-            cellMap[z.name][g] = (cellMap[z.name][g] || 0) + item.count;
-            rowTotals[z.name] = (rowTotals[z.name] || 0) + item.count;
-            colTotals[g] = (colTotals[g] || 0) + item.count;
-            grandTotal += item.count;
+            // Each consolidated item counts as 1 service
+            cellMap[z.name][g] = (cellMap[z.name][g] || 0) + 1;
+            rowTotals[z.name] = (rowTotals[z.name] || 0) + 1;
+            colTotals[g] = (colTotals[g] || 0) + 1;
+            grandTotal += 1;
           });
         }
       });
@@ -357,7 +322,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     });
   }, [excelData, selectedCentralFilter, selectedNetworkTypeFilter, selectedMonthYearFilter, cableSearchTerm]);
 
-  // Matrix Cables vs GRUPO (filtered)
+  // Matrix Cables vs GRUPO (filtered, Contabiliza SERVICIOS CONSOLIDADOS y ordena de Mayor a Menor/Viceversa)
   const matrixCablesData = useMemo(() => {
     if (!filteredIpCablesRows.length) {
       return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
@@ -375,7 +340,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       }
     });
 
-    const rowsList = Array.from(cablesSet).sort();
+    const rowsList = Array.from(cablesSet);
     const colsList = Array.from(groupsSet).sort();
 
     const cellMap: Record<string, Record<string, number>> = {};
@@ -407,23 +372,35 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             colTotals[g] = 0;
           }
 
-          cellMap[c][g] = (cellMap[c][g] || 0) + item.count;
-          rowTotals[c] = (rowTotals[c] || 0) + item.count;
-          colTotals[g] = (colTotals[g] || 0) + item.count;
-          grandTotal += item.count;
+          // Each consolidated service counts as 1
+          cellMap[c][g] = (cellMap[c][g] || 0) + 1;
+          rowTotals[c] = (rowTotals[c] || 0) + 1;
+          colTotals[g] = (colTotals[g] || 0) + 1;
+          grandTotal += 1;
         });
       });
     });
 
+    // Sort rows according to cableSortOrder
+    const sortedRowsList = [...rowsList].sort((a, b) => {
+      if (cableSortOrder === 'desc') {
+        return (rowTotals[b] || 0) - (rowTotals[a] || 0) || a.localeCompare(b);
+      } else if (cableSortOrder === 'asc') {
+        return (rowTotals[a] || 0) - (rowTotals[b] || 0) || a.localeCompare(b);
+      } else {
+        return a.localeCompare(b);
+      }
+    });
+
     return {
-      rows: rowsList,
+      rows: sortedRowsList,
       columns: colsList,
       cellMap,
       rowTotals,
       colTotals,
       grandTotal
     };
-  }, [filteredIpCablesRows]);
+  }, [filteredIpCablesRows, cableSortOrder]);
 
   // Copy Headers & Rows for Matrix Centrales x Grupos
   const copyCentralesHeaders = useMemo(() => {
@@ -831,7 +808,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             </div>
 
             {/* Filter Controls Matrix */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
 
               {/* 1. Central Filter */}
               <div className="space-y-1.5">
@@ -901,6 +878,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     className="w-full pl-8 pr-3 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
                   />
                 </div>
+              </div>
+
+              {/* 5. Sort Order Filter */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                  5. Ordenar Totales
+                </label>
+                <select
+                  value={cableSortOrder}
+                  onChange={(e) => setCableSortOrder(e.target.value as 'desc' | 'asc' | 'alpha')}
+                  className="w-full bg-slate-950 border border-slate-800 text-white text-xs rounded-xl p-2.5 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value="desc">De Mayor a Menor (↓)</option>
+                  <option value="asc">De Menor a Mayor (↑)</option>
+                  <option value="alpha">Nombre de Cable (A - Z)</option>
+                </select>
               </div>
 
             </div>
