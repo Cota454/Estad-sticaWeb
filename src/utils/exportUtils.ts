@@ -3,6 +3,7 @@ import html2canvas from 'html2canvas';
 import { getSafeHtml2CanvasOptions } from './html2canvasFix';
 import { Central, WorkGroup, DailyReport, RepairRecord, CustomTableSchema, RepairColumnMapping, SystemDataBackup } from '../types';
 import { getTodayStr, formatDateLong } from './dateUtils';
+import { loadZones, loadCableRules, loadParsedIpData, loadPrintedServices } from './ipCablesStorage';
 
 export function downloadJSONBackup(
   centrales: Central[],
@@ -20,7 +21,11 @@ export function downloadJSONBackup(
     reports,
     repairRecords,
     customTables,
-    repairColumnMapping
+    repairColumnMapping,
+    ipZones: loadZones(),
+    ipCableRules: loadCableRules(),
+    ipParsedData: loadParsedIpData() || undefined,
+    ipPrintedServices: loadPrintedServices()
   };
 
   const now = new Date();

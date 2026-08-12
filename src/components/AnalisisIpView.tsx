@@ -20,7 +20,9 @@ import {
   Trash2,
   Calendar,
   SlidersHorizontal,
-  Info
+  Info,
+  ListFilter,
+  X
 } from 'lucide-react';
 
 import {
@@ -263,7 +265,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         });
         const matchesCable = z.cableNames.some(cb => {
           const trimmed = cb.trim().toUpperCase();
-          return trimmed.length > 0 && itemCable.includes(trimmed);
+          return trimmed.length > 0 && itemCable === trimmed;
         });
 
         if (matchesCentral || matchesCable) {
@@ -293,6 +295,85 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       grandTotal
     };
   }, [excelData, zones, matrixCentralesData.columns]);
+
+  // Cell Click Modal State (Pestaña 1 Matrices)
+  const [selectedCellFilter, setSelectedCellFilter] = useState<{
+    title: string;
+    subtitle: string;
+    matrixType: 'centrales' | 'zonas';
+    rowName?: string;
+    colName?: string;
+  } | null>(null);
+  const [cellModalSearch, setCellModalSearch] = useState<string>('');
+
+  // Filtered services list for Cell Click Modal
+  const cellServicesList = useMemo(() => {
+    if (!selectedCellFilter || !excelData) return [];
+
+    const { matrixType, rowName, colName } = selectedCellFilter;
+
+    return excelData.consolidatedRows.filter(item => {
+      const itemCentral = (item.central || '').trim().toUpperCase();
+      const itemCable = (item.cable || '').trim().toUpperCase();
+      const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim().toUpperCase()).filter(Boolean);
+
+      // Filter by group if colName is specified
+      if (colName) {
+        const matchGroup = rawGroups.includes(colName.trim().toUpperCase());
+        if (!matchGroup) return false;
+      }
+
+      // Filter by row (Central or Zone) if rowName is specified
+      if (rowName) {
+        if (matrixType === 'centrales') {
+          const matchCentral = itemCentral.includes(rowName.trim().toUpperCase());
+          if (!matchCentral) return false;
+        } else if (matrixType === 'zonas') {
+          const z = zones.find(zone => zone.name === rowName);
+          if (!z) return false;
+
+          const matchesCentral = z.centralNames.some(cn => {
+            const trimmed = cn.trim().toUpperCase();
+            return trimmed.length > 0 && itemCentral.includes(trimmed);
+          });
+          const matchesCable = z.cableNames.some(cb => {
+            const trimmed = cb.trim().toUpperCase();
+            return trimmed.length > 0 && itemCable === trimmed;
+          });
+
+          if (!matchesCentral && !matchesCable) return false;
+        }
+      } else if (matrixType === 'zonas') {
+        // If no rowName specified for Zonas (e.g. Column Total or Grand Total for Zonas), check if item belongs to ANY zone
+        const matchesAnyZone = zones.some(z => {
+          const matchesCentral = z.centralNames.some(cn => {
+            const trimmed = cn.trim().toUpperCase();
+            return trimmed.length > 0 && itemCentral.includes(trimmed);
+          });
+          const matchesCable = z.cableNames.some(cb => {
+            const trimmed = cb.trim().toUpperCase();
+            return trimmed.length > 0 && itemCable === trimmed;
+          });
+          return matchesCentral || matchesCable;
+        });
+        if (!matchesAnyZone) return false;
+      }
+
+      return true;
+    });
+  }, [selectedCellFilter, excelData, zones]);
+
+  const displayModalServices = useMemo(() => {
+    if (!cellModalSearch.trim()) return cellServicesList;
+    const q = cellModalSearch.trim().toLowerCase();
+    return cellServicesList.filter(s =>
+      s.servicio.toLowerCase().includes(q) ||
+      s.central.toLowerCase().includes(q) ||
+      s.cable.toLowerCase().includes(q) ||
+      s.grupo.toLowerCase().includes(q) ||
+      (s.tipoRed && s.tipoRed.toLowerCase().includes(q))
+    );
+  }, [cellServicesList, cellModalSearch]);
 
   // --- COMPUTED DATA FOR IP CABLES TAB (PESTAÑA 2) ---
   const filteredIpCablesRows = useMemo(() => {
@@ -690,9 +771,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           return (
                             <td key={colName} className="py-3.5 px-4 text-center font-mono">
                               {val > 0 ? (
-                                <span className="font-black text-white px-2 py-0.5 rounded bg-slate-800">
+                                <button
+                                  onClick={() => setSelectedCellFilter({
+                                    matrixType: 'centrales',
+                                    rowName,
+                                    colName,
+                                    title: `Servicios: ${rowName} / ${colName}`,
+                                    subtitle: `Lista de servicios consolidados de ${rowName} en ${colName}`
+                                  })}
+                                  className="font-black text-white px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 hover:border-blue-400 transition-all cursor-pointer shadow-sm active:scale-95"
+                                  title="Ver servicios consolidados"
+                                >
                                   {val}
-                                </span>
+                                </button>
                               ) : (
                                 <span className="text-slate-600">-</span>
                               )}
@@ -700,7 +791,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           );
                         })}
                         <td className="py-3.5 px-4 text-center font-mono font-black text-amber-400 text-sm bg-slate-900/40">
-                          {rowTotal}
+                          {rowTotal > 0 ? (
+                            <button
+                              onClick={() => setSelectedCellFilter({
+                                matrixType: 'centrales',
+                                rowName,
+                                title: `Servicios: Total Central ${rowName}`,
+                                subtitle: `Todos los servicios consolidados de ${rowName}`
+                              })}
+                              className="font-black text-amber-400 hover:text-white hover:underline cursor-pointer transition-all"
+                              title="Ver todos los servicios de esta central"
+                            >
+                              {rowTotal}
+                            </button>
+                          ) : (
+                            <span>0</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -709,13 +815,45 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <tfoot className="bg-slate-900 font-black text-white border-t-2 border-slate-700">
                   <tr>
                     <td className="py-3.5 px-4 uppercase text-[11px] text-slate-300 font-mono">TOTAL GENERAL</td>
-                    {matrixCentralesData.columns.map(colName => (
-                      <td key={colName} className="py-3.5 px-4 text-center font-mono text-blue-400 text-sm">
-                        {matrixCentralesData.colTotals[colName] || 0}
-                      </td>
-                    ))}
+                    {matrixCentralesData.columns.map(colName => {
+                      const colTot = matrixCentralesData.colTotals[colName] || 0;
+                      return (
+                        <td key={colName} className="py-3.5 px-4 text-center font-mono text-blue-400 text-sm">
+                          {colTot > 0 ? (
+                            <button
+                              onClick={() => setSelectedCellFilter({
+                                matrixType: 'centrales',
+                                colName,
+                                title: `Servicios: Total ${colName}`,
+                                subtitle: `Todos los servicios consolidados pertenecientes a ${colName}`
+                              })}
+                              className="font-black text-blue-400 hover:text-white hover:underline cursor-pointer transition-all"
+                              title="Ver todos los servicios de este grupo"
+                            >
+                              {colTot}
+                            </button>
+                          ) : (
+                            <span>0</span>
+                          )}
+                        </td>
+                      );
+                    })}
                     <td className="py-3.5 px-4 text-center font-mono text-amber-400 text-base font-black bg-slate-950">
-                      {matrixCentralesData.grandTotal}
+                      {matrixCentralesData.grandTotal > 0 ? (
+                        <button
+                          onClick={() => setSelectedCellFilter({
+                            matrixType: 'centrales',
+                            title: `Servicios: Total General Centrales`,
+                            subtitle: `Todos los servicios consolidados del reporte`
+                          })}
+                          className="font-black text-amber-400 hover:text-white hover:underline cursor-pointer transition-all"
+                          title="Ver todos los servicios del reporte"
+                        >
+                          {matrixCentralesData.grandTotal}
+                        </button>
+                      ) : (
+                        <span>0</span>
+                      )}
                     </td>
                   </tr>
                 </tfoot>
@@ -777,9 +915,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           return (
                             <td key={colName} className="py-3.5 px-4 text-center font-mono">
                               {val > 0 ? (
-                                <span className="font-black text-emerald-400 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40">
+                                <button
+                                  onClick={() => setSelectedCellFilter({
+                                    matrixType: 'zonas',
+                                    rowName,
+                                    colName,
+                                    title: `Servicios: ${rowName} / ${colName}`,
+                                    subtitle: `Servicios consolidados mapeados a ${rowName} en ${colName}`
+                                  })}
+                                  className="font-black text-emerald-400 px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-600 hover:text-white border border-emerald-800/40 hover:border-emerald-400 transition-all cursor-pointer shadow-sm active:scale-95"
+                                  title="Ver servicios consolidados de esta zona"
+                                >
                                   {val}
-                                </span>
+                                </button>
                               ) : (
                                 <span className="text-slate-600">-</span>
                               )}
@@ -787,7 +935,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           );
                         })}
                         <td className="py-3.5 px-4 text-center font-mono font-black text-amber-400 text-sm bg-slate-900/40">
-                          {rowTotal}
+                          {rowTotal > 0 ? (
+                            <button
+                              onClick={() => setSelectedCellFilter({
+                                matrixType: 'zonas',
+                                rowName,
+                                title: `Servicios: Total ${rowName}`,
+                                subtitle: `Todos los servicios consolidados mapeados a ${rowName}`
+                              })}
+                              className="font-black text-amber-400 hover:text-white hover:underline cursor-pointer transition-all"
+                              title="Ver todos los servicios de esta zona"
+                            >
+                              {rowTotal}
+                            </button>
+                          ) : (
+                            <span>0</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -796,13 +959,45 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <tfoot className="bg-slate-900 font-black text-white border-t-2 border-slate-700">
                   <tr>
                     <td className="py-3.5 px-4 uppercase text-[11px] text-slate-300 font-mono">TOTAL GENERAL ZONAS</td>
-                    {matrixZonasData.columns.map(colName => (
-                      <td key={colName} className="py-3.5 px-4 text-center font-mono text-emerald-400 text-sm">
-                        {matrixZonasData.colTotals[colName] || 0}
-                      </td>
-                    ))}
+                    {matrixZonasData.columns.map(colName => {
+                      const colTot = matrixZonasData.colTotals[colName] || 0;
+                      return (
+                        <td key={colName} className="py-3.5 px-4 text-center font-mono text-emerald-400 text-sm">
+                          {colTot > 0 ? (
+                            <button
+                              onClick={() => setSelectedCellFilter({
+                                matrixType: 'zonas',
+                                colName,
+                                title: `Servicios: Total Zonas - ${colName}`,
+                                subtitle: `Servicios consolidados en Zonas pertenecientes a ${colName}`
+                              })}
+                              className="font-black text-emerald-400 hover:text-white hover:underline cursor-pointer transition-all"
+                              title="Ver servicios de esta columna en Zonas"
+                            >
+                              {colTot}
+                            </button>
+                          ) : (
+                            <span>0</span>
+                          )}
+                        </td>
+                      );
+                    })}
                     <td className="py-3.5 px-4 text-center font-mono text-amber-400 text-base font-black bg-slate-950">
-                      {matrixZonasData.grandTotal}
+                      {matrixZonasData.grandTotal > 0 ? (
+                        <button
+                          onClick={() => setSelectedCellFilter({
+                            matrixType: 'zonas',
+                            title: `Servicios: Total General Zonas`,
+                            subtitle: `Todos los servicios consolidados clasificados en Zonas`
+                          })}
+                          className="font-black text-amber-400 hover:text-white hover:underline cursor-pointer transition-all"
+                          title="Ver todos los servicios clasificados en Zonas"
+                        >
+                          {matrixZonasData.grandTotal}
+                        </button>
+                      ) : (
+                        <span>0</span>
+                      )}
                     </td>
                   </tr>
                 </tfoot>
@@ -1054,6 +1249,129 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         availableCables={excelData?.uniqueCables || []}
         onZonesUpdated={(updated) => setZones(updated)}
       />
+
+      {/* CELL CLICK DRILL-DOWN MODAL */}
+      {selectedCellFilter && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white max-w-5xl w-full space-y-4 shadow-2xl max-h-[88vh] flex flex-col animate-in zoom-in-95 duration-200">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-2xl">
+                  <ListFilter className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-white">{selectedCellFilter.title}</h3>
+                  <p className="text-xs text-slate-400">{selectedCellFilter.subtitle}</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3">
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-xl text-xs font-bold font-mono">
+                  {cellServicesList.length} Servicios
+                </span>
+                <button
+                  onClick={() => setSelectedCellFilter(null)}
+                  className="p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Search Filter input inside Modal */}
+            <div className="flex items-center justify-between gap-3 bg-slate-950 p-2.5 rounded-2xl border border-slate-800">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Buscar por servicio, central, cable, grupo o red..."
+                  value={cellModalSearch}
+                  onChange={(e) => setCellModalSearch(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-medium"
+                />
+              </div>
+              <CopyTableButton
+                headers={['N°', 'SERVICIO', 'CENTRAL', 'CABLE', 'GRUPO', 'TIPO RED', 'FECHA']}
+                rows={displayModalServices.map((s, idx) => [
+                  (idx + 1).toString(),
+                  s.servicio,
+                  s.central,
+                  s.cable,
+                  s.grupo,
+                  s.tipoRed || '-',
+                  s.fechaReporte || '-'
+                ])}
+                label="Copiar Servicios"
+              />
+            </div>
+
+            {/* Table Container */}
+            <div className="flex-1 overflow-y-auto bg-slate-950 rounded-2xl border border-slate-800">
+              <table className="w-full text-xs text-left text-slate-300">
+                <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800 sticky top-0 z-10">
+                  <tr>
+                    <th className="py-3 px-3 text-center text-slate-500 w-12">#</th>
+                    <th className="py-3 px-4 text-white font-black">Servicio / abonado</th>
+                    <th className="py-3 px-4">Central</th>
+                    <th className="py-3 px-4">Cable</th>
+                    <th className="py-3 px-4">Grupo de Trabajo</th>
+                    <th className="py-3 px-4">Clasificación Red</th>
+                    <th className="py-3 px-4 text-center">Fecha Reporte</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/80 font-medium">
+                  {displayModalServices.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-500 font-bold">
+                        No se encontraron servicios consolidados para este filtro.
+                      </td>
+                    </tr>
+                  ) : (
+                    displayModalServices.map((item, idx) => (
+                      <tr key={`${item.id}_${idx}`} className="hover:bg-slate-800/50 transition-colors">
+                        <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
+                        <td className="py-3 px-4 font-bold text-amber-300 font-mono">{item.servicio}</td>
+                        <td className="py-3 px-4 font-semibold text-white">{item.central}</td>
+                        <td className="py-3 px-4 text-slate-300 font-mono">{item.cable || '-'}</td>
+                        <td className="py-3 px-4 text-indigo-300 font-bold">{item.grupo || 'GENERAL'}</td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            item.tipoRed === 'Red Rígida'
+                              ? 'bg-amber-950/60 border-amber-800/60 text-amber-300'
+                              : item.tipoRed === 'Red Flexible'
+                              ? 'bg-blue-950/60 border-blue-800/60 text-blue-300'
+                              : item.tipoRed === 'Gabinete Outdoor'
+                              ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300'
+                              : 'bg-slate-800 border-slate-700 text-slate-400'
+                          }`}>
+                            {item.tipoRed || 'Sin clasificar'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center text-slate-400 text-[11px] font-mono">
+                          {item.fechaReporte || '-'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-slate-800 pt-3 text-xs text-slate-400">
+              <span>Mostrando {displayModalServices.length} de {cellServicesList.length} registros</span>
+              <button
+                onClick={() => setSelectedCellFilter(null)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all"
+              >
+                Cerrar
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

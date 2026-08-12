@@ -28,6 +28,7 @@ import { GoogleDriveBackupView } from './components/GoogleDriveBackupView';
 import { AjustesView } from './components/AjustesView';
 import { ExportReportModal } from './components/ExportReportModal';
 import { getTodayStr, getPastDateStr } from './utils/dateUtils';
+import { saveZones, saveCableRules, saveParsedIpData, savePrintedServices } from './utils/ipCablesStorage';
 import { loadReportSettings } from './utils/settingsUtils';
 import { ReportSettings } from './types';
 import {
@@ -218,6 +219,11 @@ export default function App() {
     if (backup.repairRecords) saveRepairRecords(backup.repairRecords, currentUser?.email);
     if (backup.customTables) saveCustomTables(backup.customTables, currentUser?.email);
     if (backup.repairColumnMapping) saveRepairColumnMapping(backup.repairColumnMapping, currentUser?.email);
+
+    if (backup.ipZones) saveZones(backup.ipZones);
+    if (backup.ipCableRules) saveCableRules(backup.ipCableRules);
+    if (backup.ipParsedData) saveParsedIpData(backup.ipParsedData);
+    if (backup.ipPrintedServices) savePrintedServices(backup.ipPrintedServices);
 
     triggerAutoDriveBackup(
       backup.centrales || [],

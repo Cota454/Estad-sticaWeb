@@ -39,6 +39,7 @@ import {
   deleteDriveBackup
 } from '../utils/googleDriveService';
 import { parseJSONBackupFile, downloadJSONBackup } from '../utils/exportUtils';
+import { loadZones, loadCableRules, loadParsedIpData, loadPrintedServices } from '../utils/ipCablesStorage';
 
 // Memory cache for mock backups in preview mode
 const mockBackupStore = new Map<string, SystemDataBackup>();
@@ -266,7 +267,11 @@ export const GoogleDriveBackupView: React.FC<GoogleDriveBackupViewProps> = ({
       reports,
       repairRecords,
       customTables,
-      repairColumnMapping
+      repairColumnMapping,
+      ipZones: loadZones(),
+      ipCableRules: loadCableRules(),
+      ipParsedData: loadParsedIpData() || undefined,
+      ipPrintedServices: loadPrintedServices()
     };
 
     try {

@@ -892,7 +892,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
             >
               {/* Ticket Header */}
               <div className="text-center border-b-2 border-black pb-2 space-y-1">
-                <h2 className="text-base font-black uppercase">FICHA DE SERVICIO / ORDEN DE TRABAJO</h2>
+                <h2 className="text-base font-black uppercase">ORDEN DE TRABAJO</h2>
                 <div className="text-xs font-bold">SERVICIO: {row.servicio}</div>
                 <div className="text-[10px] text-gray-700">Impreso: {new Date().toLocaleString()}</div>
               </div>
@@ -1185,7 +1185,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                       }`}
                     >
                       <div className="text-center border-b border-black pb-1">
-                        <div className="font-black text-xs uppercase">ORDEN TÉCNICA - TICKET #{idx + 1}</div>
+                        <div className="font-black text-xs uppercase">ORDEN DE TRABAJO - TICKET #{idx + 1}</div>
                         <div className="font-bold text-sm text-blue-900">SERVICIO: {row.servicio}</div>
                       </div>
                       <div className="space-y-1 text-[11px]">

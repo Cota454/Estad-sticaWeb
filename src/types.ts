@@ -132,6 +132,9 @@ export interface CustomTableSchema {
   data: Record<string, any>[]; // Processed rows
 }
 
+import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult } from './types/ipCablesTypes';
+import { PrintedRecord } from './utils/ipCablesStorage';
+
 export interface SystemDataBackup {
   version: string;
   exportedAt: string;
@@ -141,6 +144,10 @@ export interface SystemDataBackup {
   repairRecords?: RepairRecord[];
   customTables?: CustomTableSchema[];
   repairColumnMapping?: RepairColumnMapping;
+  ipZones?: ZoneConfig[];
+  ipCableRules?: CableClassificationRules;
+  ipParsedData?: IpCableExcelParseResult;
+  ipPrintedServices?: Record<string, PrintedRecord>;
 }
 
 export type PortalModuleId = 'report_analysis' | 'ip_analysis' | 'repairs_analysis' | 'word_reports';
