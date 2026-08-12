@@ -64,7 +64,8 @@ import {
   parseIpCablesExcelFile,
   generateSampleIpCablesData,
   classifyNetworkType,
-  matchCableInItem
+  matchCableInItem,
+  matchCableInItemExact
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -367,19 +368,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // Helper function for exclusive, prioritized zone matching:
   // Step 1: If item's central belongs to a zone's centralNames, assign AUTOMATICALLY to that zone.
-  // Step 2: If item's central is NOT in any zone, analyze by Cable against zone cableNames.
+  // Step 2: If item's central is NOT in any zone, analyze strictly by Cable against zone cableNames (exact match).
   // Step 3: Returns null if no zone matched (Sin Zonificar).
   const findMatchingZoneForItem = (item: IpCableRow, zoneList: ZoneConfig[]): ZoneConfig | null => {
     const itemCentral = (item.central || '').trim().toUpperCase();
 
-    // STEP 1: Priority by Central Telefónica
+    // STEP 1: Priority by Central Telefónica (EXACT match)
     if (itemCentral) {
       const centralParts = itemCentral.split('/').map(p => p.trim()).filter(Boolean);
       for (const z of zoneList) {
         const validCentralNames = (z.centralNames || []).map(cn => cn.trim().toUpperCase()).filter(Boolean);
         if (validCentralNames.length > 0) {
           const matchesCentral = validCentralNames.some(cn => {
-            return centralParts.some(part => part === cn || part.includes(cn) || cn.includes(part)) || itemCentral.includes(cn);
+            return centralParts.some(part => part === cn) || itemCentral === cn;
           });
           if (matchesCentral) {
             return z; // Automatically assigned to this zone by Central!
@@ -388,11 +389,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       }
     }
 
-    // STEP 2: Priority by Cable (only for services whose Central is not assigned to any zone)
+    // STEP 2: Priority by Cable (only for services whose Central is not assigned to any zone - EXACT match)
     for (const z of zoneList) {
       const validCableNames = (z.cableNames || []).map(cb => cb.trim().toUpperCase()).filter(Boolean);
       if (validCableNames.length > 0) {
-        const matchesCable = validCableNames.some(cb => matchCableInItem(item, cb));
+        const matchesCable = validCableNames.some(cb => matchCableInItemExact(item, cb));
         if (matchesCable) {
           return z; // Assigned to this zone by Cable!
         }
@@ -491,7 +492,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       // Filter by row (Central or Zone) if rowName is specified
       if (rowName) {
         if (matrixType === 'centrales') {
-          const matchCentral = itemCentral.includes(rowName.trim().toUpperCase());
+          const centralParts = itemCentral.split('/').map(p => p.trim()).filter(Boolean);
+          const rowNameClean = rowName.trim().toUpperCase();
+          const matchCentral = centralParts.includes(rowNameClean) || itemCentral === rowNameClean;
           if (!matchCentral) return false;
         } else if (matrixType === 'zonas') {
           const matchedZone = findMatchingZoneForItem(item, zones);

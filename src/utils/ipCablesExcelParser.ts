@@ -70,6 +70,47 @@ export function matchCableInItem(item: IpCableRow, targetPattern: string): boole
 }
 
 /**
+ * Checks if a cable pattern matches an item's Cable P, Cable S, or Cable strictly/exactly.
+ */
+export function matchCableInItemExact(item: IpCableRow, targetPattern: string): boolean {
+  const targetClean = cleanCableName(targetPattern).toUpperCase();
+  if (!targetClean) return false;
+
+  const cableValues = [
+    item.cableP,
+    item.cableS,
+    item.cable
+  ].filter(Boolean) as string[];
+
+  for (const rawVal of cableValues) {
+    if (!rawVal) continue;
+
+    // Check each sub-cable if split by '/'
+    const subCables = rawVal.split('/').map(c => cleanCableName(c).toUpperCase());
+
+    for (const c of subCables) {
+      if (!c) continue;
+
+      // 1. Direct exact equality
+      if (c === targetClean) return true;
+
+      // 2. Extract contents inside parentheses, e.g. "CABLE A (C12)" -> inside = "C12"
+      const parenMatches = c.match(/\(([^)]+)\)/g);
+      if (parenMatches) {
+        for (const pm of parenMatches) {
+          const inside = cleanCableName(pm.replace(/[()]/g, '')).toUpperCase();
+          if (inside === targetClean) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Classifies a row into Red Rígida, Red Flexible, Outdoor, or Other
  * Evaluates both Cable P and Cable S
  */
