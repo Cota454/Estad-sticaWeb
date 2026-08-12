@@ -235,7 +235,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const matrixZonasData = useMemo(() => {
     if (!excelData) return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
 
-    const colsList = matrixCentralesData.columns;
+    const colsList = [...matrixCentralesData.columns];
     const cellMap: Record<string, Record<string, number>> = {};
     const rowTotals: Record<string, number> = {};
     const colTotals: Record<string, number> = {};
@@ -252,15 +252,28 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     excelData.consolidatedRows.forEach(item => {
       const itemCentral = (item.central || '').trim().toUpperCase();
       const itemCable = (item.cable || '').trim().toUpperCase();
-      const groupsInItem = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim());
+      const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim()).filter(Boolean);
+      const uniqueGroupsInItem = Array.from(new Set(rawGroups));
 
       zones.forEach(z => {
         // Check if item belongs to Zone by Central or Cable
-        const matchesCentral = z.centralNames.some(cn => itemCentral.includes(cn.trim().toUpperCase()));
-        const matchesCable = z.cableNames.some(cb => itemCable.includes(cb.trim().toUpperCase()));
+        const matchesCentral = z.centralNames.some(cn => {
+          const trimmed = cn.trim().toUpperCase();
+          return trimmed.length > 0 && itemCentral.includes(trimmed);
+        });
+        const matchesCable = z.cableNames.some(cb => {
+          const trimmed = cb.trim().toUpperCase();
+          return trimmed.length > 0 && itemCable.includes(trimmed);
+        });
 
         if (matchesCentral || matchesCable) {
-          groupsInItem.forEach(g => {
+          uniqueGroupsInItem.forEach(g => {
+            if (cellMap[z.name][g] === undefined) {
+              cellMap[z.name][g] = 0;
+            }
+            if (colTotals[g] === undefined) {
+              colTotals[g] = 0;
+            }
             // Each consolidated item counts as 1 service
             cellMap[z.name][g] = (cellMap[z.name][g] || 0) + 1;
             rowTotals[z.name] = (rowTotals[z.name] || 0) + 1;
