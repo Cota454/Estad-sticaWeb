@@ -115,3 +115,60 @@ export function clearParsedIpData(): void {
     console.error('Error clearing parsed IP data from localStorage', e);
   }
 }
+
+const PRINTED_SERVICES_STORAGE_KEY = 'telecomstat_printed_services_v1';
+
+export interface PrintedRecord {
+  printedAt: string;
+  count: number;
+}
+
+export function loadPrintedServices(): Record<string, PrintedRecord> {
+  try {
+    const raw = localStorage.getItem(PRINTED_SERVICES_STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('Error loading printed services from localStorage', e);
+  }
+  return {};
+}
+
+export function savePrintedServices(records: Record<string, PrintedRecord>): void {
+  try {
+    localStorage.setItem(PRINTED_SERVICES_STORAGE_KEY, JSON.stringify(records));
+  } catch (e) {
+    console.error('Error saving printed services to localStorage', e);
+  }
+}
+
+export function markServicesAsPrinted(servicios: string[]): Record<string, PrintedRecord> {
+  const current = loadPrintedServices();
+  const nowStr = new Date().toLocaleString();
+
+  servicios.forEach(s => {
+    const key = (s || '').toString().trim().toUpperCase();
+    if (key) {
+      const prevCount = current[key]?.count || 0;
+      current[key] = {
+        printedAt: nowStr,
+        count: prevCount + 1
+      };
+    }
+  });
+
+  savePrintedServices(current);
+  return current;
+}
+
+export function markServiceAsUnprinted(servicio: string): Record<string, PrintedRecord> {
+  const current = loadPrintedServices();
+  const key = (servicio || '').toString().trim().toUpperCase();
+  if (key && current[key]) {
+    delete current[key];
+    savePrintedServices(current);
+  }
+  return current;
+}
+

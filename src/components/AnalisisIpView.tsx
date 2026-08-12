@@ -61,9 +61,11 @@ import {
 import { ZoneManagementModal } from './ZoneManagementModal';
 import { CableClassificationView } from './CableClassificationView';
 import { GoogleDriveBackupView } from './GoogleDriveBackupView';
+import { PrintReportsView } from './PrintReportsView';
 import { CopyTableButton } from './CopyButton';
 
 interface AnalisisIpViewProps {
+
   onBackToHub: () => void;
   centrales?: Central[];
   workGroups?: WorkGroup[];
@@ -89,7 +91,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   onUpdateCurrentUser
 }) => {
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'matrices' | 'ip_cables' | 'cable_settings' | 'backup'>('matrices');
+  const [activeTab, setActiveTab] = useState<'matrices' | 'ip_cables' | 'print_reports' | 'cable_settings' | 'backup'>('matrices');
+
 
   // Loaded Excel State & Cable Rules & Zones State
   const [cableRules, setCableRules] = useState<CableClassificationRules>(loadCableRules);
@@ -504,6 +507,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             </button>
 
             <button
+              onClick={() => setActiveTab('print_reports')}
+              className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'print_reports'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-2 ring-blue-400/30'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" />
+              <span>3. Impresión y Reportes</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('cable_settings')}
               className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
                 activeTab === 'cable_settings'
@@ -512,7 +527,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               }`}
             >
               <Sliders className="w-3.5 h-3.5 text-indigo-400" />
-              <span>3. Ajustes de Cables</span>
+              <span>4. Ajustes de Cables</span>
             </button>
 
             <button
@@ -524,7 +539,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               }`}
             >
               <Cloud className="w-3.5 h-3.5 text-purple-400" />
-              <span>4. Respaldos Drive</span>
+              <span>5. Respaldos Drive</span>
             </button>
           </div>
         </div>
@@ -976,7 +991,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         </div>
       )}
 
-      {/* PESTAÑA 3: AJUSTES DE CABLES */}
+      {/* PESTAÑA 3: IMPRESIÓN Y REPORTES */}
+      {activeTab === 'print_reports' && (
+        <PrintReportsView
+          excelData={excelData}
+          onUpdateExcelData={setExcelData}
+        />
+      )}
+
+      {/* PESTAÑA 4: AJUSTES DE CABLES */}
       {activeTab === 'cable_settings' && (
         <CableClassificationView
           rules={cableRules}
