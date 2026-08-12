@@ -24,8 +24,12 @@ import {
   ListFilter,
   X,
   Clock,
-  RotateCcw
+  RotateCcw,
+  Mail
 } from 'lucide-react';
+
+import { EmailReportModal, SelectedSectionData } from './EmailReportModal';
+import { FloatingNavEmailFAB, SectionNavItem } from './FloatingNavEmailFAB';
 
 import {
   Central,
@@ -162,6 +166,32 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // Modals & UI Controls
   const [isZoneModalOpen, setIsZoneModalOpen] = useState<boolean>(false);
+  const [selectedEmailSectionIds, setSelectedEmailSectionIds] = useState<Set<string>>(new Set(['section-summary', 'section-centrales', 'section-zonas']));
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState<boolean>(false);
+
+  const toggleEmailSection = (id: string) => {
+    setSelectedEmailSectionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleClearAllEmailSections = () => {
+    setSelectedEmailSectionIds(new Set());
+  };
+
+  const handleSelectAllEmailSections = () => {
+    setSelectedEmailSectionIds(new Set(['section-summary', 'section-centrales', 'section-zonas', 'section-cables']));
+  };
+
+  const handleSelectSummaryOnlyEmailSections = () => {
+    setSelectedEmailSectionIds(new Set(['section-summary']));
+  };
 
   // Filters for Pestaña 2 (IP Cables)
   const [selectedCentralFilter, setSelectedCentralFilter] = useState<string>('all');
@@ -335,6 +365,45 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     };
   }, [excelData, matrixFilteredConsolidatedRows]);
 
+  // Helper functions for strict and smart zone matching
+  const checkItemBelongsToZone = (item: IpCableRow, z: ZoneConfig): boolean => {
+    const itemCentral = (item.central || '').trim().toUpperCase();
+    const validCentralNames = (z.centralNames || []).map(cn => cn.trim().toUpperCase()).filter(Boolean);
+    const validCableNames = (z.cableNames || []).map(cb => cb.trim().toUpperCase()).filter(Boolean);
+
+    if (validCentralNames.length === 0 && validCableNames.length === 0) {
+      return false;
+    }
+
+    const matchesCentral = validCentralNames.length > 0 && validCentralNames.some(cn => {
+      if (!itemCentral) return false;
+      const parts = itemCentral.split('/').map(p => p.trim());
+      return parts.some(p => p.includes(cn) || cn.includes(p)) || itemCentral.includes(cn);
+    });
+
+    const matchesCable = validCableNames.length > 0 && validCableNames.some(cb => {
+      return matchCableInItem(item, cb);
+    });
+
+    // If both Centrales and Cables are defined for the zone, item MUST match BOTH
+    if (validCentralNames.length > 0 && validCableNames.length > 0) {
+      return matchesCentral && matchesCable;
+    } else if (validCentralNames.length > 0) {
+      return matchesCentral;
+    } else {
+      return matchesCable;
+    }
+  };
+
+  const findMatchingZoneForItem = (item: IpCableRow, zoneList: ZoneConfig[]): ZoneConfig | null => {
+    for (const z of zoneList) {
+      if (checkItemBelongsToZone(item, z)) {
+        return z;
+      }
+    }
+    return null;
+  };
+
   // 2. Matrix 2: Zonificación vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixZonasData = useMemo(() => {
     if (!excelData) return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
@@ -361,46 +430,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     colsList.forEach(c => { colTotals[c] = 0; });
 
     matrixFilteredConsolidatedRows.forEach(item => {
-      const itemCentral = (item.central || '').trim().toUpperCase();
       const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim()).filter(Boolean);
       const uniqueGroupsInItem = Array.from(new Set(rawGroups));
 
-      // Find all matching configured zones
-      const matchedZones = zones.filter(z => {
-        const matchesCentral = z.centralNames.some(cn => {
-          const trimmed = cn.trim().toUpperCase();
-          return trimmed.length > 0 && itemCentral.includes(trimmed);
-        });
-        const matchesCable = z.cableNames.some(cb => {
-          return matchCableInItem(item, cb);
-        });
-        return matchesCentral || matchesCable;
+      // Find exclusive single matching zone to avoid duplicate counting
+      const matchedZone = findMatchingZoneForItem(item, zones);
+      const targetZoneKey = matchedZone ? matchedZone.name : UNZONED_KEY;
+
+      uniqueGroupsInItem.forEach((g: string) => {
+        if (cellMap[targetZoneKey][g] === undefined) cellMap[targetZoneKey][g] = 0;
+        if (colTotals[g] === undefined) colTotals[g] = 0;
+
+        cellMap[targetZoneKey][g] = (cellMap[targetZoneKey][g] || 0) + 1;
+        rowTotals[targetZoneKey] = (rowTotals[targetZoneKey] || 0) + 1;
+        colTotals[g] = (colTotals[g] || 0) + 1;
+        grandTotal += 1;
       });
-
-      if (matchedZones.length > 0) {
-        matchedZones.forEach(z => {
-          uniqueGroupsInItem.forEach((g: string) => {
-            if (cellMap[z.name][g] === undefined) cellMap[z.name][g] = 0;
-            if (colTotals[g] === undefined) colTotals[g] = 0;
-
-            cellMap[z.name][g] = (cellMap[z.name][g] || 0) + 1;
-            rowTotals[z.name] = (rowTotals[z.name] || 0) + 1;
-            colTotals[g] = (colTotals[g] || 0) + 1;
-            grandTotal += 1;
-          });
-        });
-      } else {
-        // Service does not match any configured zone
-        uniqueGroupsInItem.forEach((g: string) => {
-          if (cellMap[UNZONED_KEY][g] === undefined) cellMap[UNZONED_KEY][g] = 0;
-          if (colTotals[g] === undefined) colTotals[g] = 0;
-
-          cellMap[UNZONED_KEY][g] = (cellMap[UNZONED_KEY][g] || 0) + 1;
-          rowTotals[UNZONED_KEY] = (rowTotals[UNZONED_KEY] || 0) + 1;
-          colTotals[g] = (colTotals[g] || 0) + 1;
-          grandTotal += 1;
-        });
-      }
     });
 
     const rows = [...zones.map(z => z.name)];
@@ -450,46 +495,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           const matchCentral = itemCentral.includes(rowName.trim().toUpperCase());
           if (!matchCentral) return false;
         } else if (matrixType === 'zonas') {
+          const matchedZone = findMatchingZoneForItem(item, zones);
           if (rowName === 'Sin Zonificar') {
-            const matchesAnyZone = zones.some(z => {
-              const matchesCentral = z.centralNames.some(cn => {
-                const trimmed = cn.trim().toUpperCase();
-                return trimmed.length > 0 && itemCentral.includes(trimmed);
-              });
-              const matchesCable = z.cableNames.some(cb => {
-                return matchCableInItem(item, cb);
-              });
-              return matchesCentral || matchesCable;
-            });
-            if (matchesAnyZone) return false;
+            if (matchedZone !== null) return false;
           } else {
-            const z = zones.find(zone => zone.name === rowName);
-            if (!z) return false;
-
-            const matchesCentral = z.centralNames.some(cn => {
-              const trimmed = cn.trim().toUpperCase();
-              return trimmed.length > 0 && itemCentral.includes(trimmed);
-            });
-            const matchesCable = z.cableNames.some(cb => {
-              return matchCableInItem(item, cb);
-            });
-
-            if (!matchesCentral && !matchesCable) return false;
+            if (!matchedZone || matchedZone.name !== rowName) return false;
           }
         }
-      } else if (matrixType === 'zonas') {
-        // If no rowName specified for Zonas (e.g. Column Total or Grand Total for Zonas), check if item belongs to ANY zone
-        const matchesAnyZone = zones.some(z => {
-          const matchesCentral = z.centralNames.some(cn => {
-            const trimmed = cn.trim().toUpperCase();
-            return trimmed.length > 0 && itemCentral.includes(trimmed);
-          });
-          const matchesCable = z.cableNames.some(cb => {
-            return matchCableInItem(item, cb);
-          });
-          return matchesCentral || matchesCable;
-        });
-        if (!matchesAnyZone) return false;
       }
 
       return true;
@@ -680,6 +692,156 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     ]);
   }, [matrixCablesData]);
 
+  const filteredCableGroups = useMemo(() => {
+    return matrixCablesData.rows.map(rowName => {
+      const rowTotal = matrixCablesData.rowTotals[rowName] || 0;
+      const sampleItem = filteredIpCablesRows.find(item => item.cable && item.cable.includes(rowName));
+      return {
+        central: sampleItem?.central || 'CENTRAL GENERAL',
+        cableName: rowName,
+        networkTypeLabel: sampleItem?.networkTypeLabel || 'Flexible',
+        itemsCount: rowTotal
+      };
+    });
+  }, [matrixCablesData, filteredIpCablesRows]);
+
+  // Floating FAB navigation items list
+  const availableSectionsList: SectionNavItem[] = [
+    { id: 'section-summary', title: '1. Resumen General KPI', category: 'summary', order: 1, isSelected: selectedEmailSectionIds.has('section-summary') },
+    { id: 'section-centrales', title: '2. Matriz: Centrales vs GRUPO', category: 'matrices', order: 2, isSelected: selectedEmailSectionIds.has('section-centrales') },
+    { id: 'section-zonas', title: '3. Matriz: Zonificación vs GRUPO', category: 'matrices', order: 3, isSelected: selectedEmailSectionIds.has('section-zonas') },
+    { id: 'section-cables', title: '4. Monitoreo IP Cables', category: 'network', order: 4, isSelected: selectedEmailSectionIds.has('section-cables') },
+  ];
+
+  const getEmailSectionData = (id: string): SelectedSectionData => {
+    if (id === 'section-summary') {
+      return {
+        id: 'section-summary',
+        title: 'Resumen General KPI y Carga de Archivo',
+        category: 'summary',
+        order: 1,
+        htmlContent: `
+          <div class="kpi-grid">
+            <div class="kpi-box"><div class="kpi-val">${excelData?.totalRowsRead || 0}</div><div class="kpi-lbl">Filas Leídas</div></div>
+            <div class="kpi-box"><div class="kpi-val">${excelData?.uniqueServicesCount || 0}</div><div class="kpi-lbl">Servicios Consolidados</div></div>
+            <div class="kpi-box"><div class="kpi-val">${excelData?.uniqueCentrales.length || 0}</div><div class="kpi-lbl">Centrales Únicas</div></div>
+            <div class="kpi-box"><div class="kpi-val">${excelData?.uniqueCables.length || 0}</div><div class="kpi-lbl">Cables Identificados</div></div>
+          </div>
+          <p style="font-size: 12px; color: #475569;">Archivo Excel Origen: <strong>${excelData?.fileName || 'Muestra procesada'}</strong></p>
+        `,
+        textContent: `Filas Leídas: ${excelData?.totalRowsRead || 0}\nServicios Consolidados: ${excelData?.uniqueServicesCount || 0}\nCentrales Únicas: ${excelData?.uniqueCentrales.length || 0}\nCables Identificados: ${excelData?.uniqueCables.length || 0}\nArchivo: ${excelData?.fileName || 'N/A'}`
+      };
+    }
+
+    if (id === 'section-centrales') {
+      const headers = ['Central Telefónica', ...matrixCentralesData.columns, 'Total General'];
+      const rowsHtml = matrixCentralesData.rows.map(r => `
+        <tr>
+          <td><strong>${r}</strong></td>
+          ${matrixCentralesData.columns.map(c => `<td>${matrixCentralesData.cellMap[r]?.[c] || 0}</td>`).join('')}
+          <td><strong>${matrixCentralesData.rowTotals[r] || 0}</strong></td>
+        </tr>
+      `).join('');
+      
+      return {
+        id: 'section-centrales',
+        title: 'Matriz: Centrales Telefónicas vs GRUPO',
+        category: 'matrices',
+        order: 2,
+        htmlContent: `
+          <table>
+            <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+            <tfoot>
+              <tr>
+                <td><strong>TOTAL GENERAL</strong></td>
+                ${matrixCentralesData.columns.map(c => `<td><strong>${matrixCentralesData.colTotals[c] || 0}</strong></td>`).join('')}
+                <td><strong>${matrixCentralesData.grandTotal}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        `,
+        textContent: [headers.join('\t'), ...copyCentralesRows.map(row => row.join('\t'))].join('\n')
+      };
+    }
+
+    if (id === 'section-zonas') {
+      const headers = ['Zona Configurada', ...matrixZonasData.columns, 'Total General (%)'];
+      const rowsHtml = matrixZonasData.rows.map(r => {
+        const tot = matrixZonasData.rowTotals[r] || 0;
+        const pct = matrixZonasData.grandTotal > 0 ? ((tot / matrixZonasData.grandTotal) * 100).toFixed(1) : '0.0';
+        return `
+          <tr>
+            <td><strong>${r}</strong></td>
+            ${matrixZonasData.columns.map(c => `<td>${matrixZonasData.cellMap[r]?.[c] || 0}</td>`).join('')}
+            <td><strong>${tot} (${pct}%)</strong></td>
+          </tr>
+        `;
+      }).join('');
+
+      return {
+        id: 'section-zonas',
+        title: 'Matriz: Zonificación vs GRUPO',
+        category: 'matrices',
+        order: 3,
+        htmlContent: `
+          <table>
+            <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+            <tfoot>
+              <tr>
+                <td><strong>TOTAL GENERAL ZONAS</strong></td>
+                ${matrixZonasData.columns.map(c => `<td><strong>${matrixZonasData.colTotals[c] || 0}</strong></td>`).join('')}
+                <td><strong>${matrixZonasData.grandTotal} (100%)</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        `,
+        textContent: [headers.join('\t'), ...copyZonasRows.map(row => row.join('\t'))].join('\n')
+      };
+    }
+
+    if (id === 'section-cables') {
+      const headers = ['Central', 'Cable', 'Categoría Red', 'Servicios Consolidados'];
+      const rowsHtml = filteredCableGroups.slice(0, 30).map(g => `
+        <tr>
+          <td>${g.central}</td>
+          <td><strong>${g.cableName}</strong></td>
+          <td>${g.networkTypeLabel}</td>
+          <td><strong>${g.itemsCount}</strong></td>
+        </tr>
+      `).join('');
+
+      return {
+        id: 'section-cables',
+        title: 'Monitoreo e Inventario de IP Cables',
+        category: 'network',
+        order: 4,
+        htmlContent: `
+          <p style="font-size: 12px; color: #475569; margin-bottom: 8px;">Listado de cables con incidencias registradas (${filteredCableGroups.length} cables):</p>
+          <table>
+            <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        `,
+        textContent: [headers.join('\t'), ...filteredCableGroups.slice(0, 30).map(g => [g.central, g.cableName, g.networkTypeLabel, g.itemsCount].join('\t'))].join('\n')
+      };
+    }
+
+    return {
+      id,
+      title: id,
+      category: 'summary',
+      order: 99,
+      htmlContent: '',
+      textContent: ''
+    };
+  };
+
+  const selectedSectionsForEmailModal = useMemo(() => {
+    return Array.from(selectedEmailSectionIds).map((id: string) => getEmailSectionData(id));
+  }, [selectedEmailSectionIds, excelData, matrixCentralesData, matrixZonasData, filteredCableGroups]);
+
   return (
     <div className="space-y-6 font-sans animate-in fade-in duration-300">
 
@@ -782,7 +944,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       </div>
 
       {/* Excel File Upload Banner Card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white shadow-xl space-y-4">
+      <div id="section-summary" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white shadow-xl space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           
           <div className="flex items-center space-x-3">
@@ -805,6 +967,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           </div>
 
           <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={() => toggleEmailSection('section-summary')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
+                selectedEmailSectionIds.has('section-summary')
+                  ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30'
+                  : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700 hover:bg-slate-700'
+              }`}
+              title={selectedEmailSectionIds.has('section-summary') ? 'Quitar del reporte por correo' : 'Añadir al reporte por correo'}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>{selectedEmailSectionIds.has('section-summary') ? 'En Correo' : '+ Correo'}</span>
+            </button>
+
             <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-emerald-600/20 border border-emerald-400/30 flex items-center space-x-2">
               {isParsing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               <span>{isParsing ? 'Procesando Excel...' : 'Subir Excel (.xlsx)'}</span>
@@ -982,7 +1157,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           </div>
 
           {/* Table 1: Centrales Telefónicas vs GRUPO */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
+          <div id="section-centrales" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
               <div>
                 <h3 className="text-lg font-black text-white flex items-center space-x-2">
@@ -995,6 +1170,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => toggleEmailSection('section-centrales')}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
+                    selectedEmailSectionIds.has('section-centrales')
+                      ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30'
+                      : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700 hover:bg-slate-700'
+                  }`}
+                  title={selectedEmailSectionIds.has('section-centrales') ? 'Quitar del reporte por correo' : 'Añadir al reporte por correo'}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{selectedEmailSectionIds.has('section-centrales') ? 'En Correo' : '+ Correo'}</span>
+                </button>
                 <CopyTableButton headers={copyCentralesHeaders} rows={copyCentralesRows} label="Copiar Tabla Centrales" />
               </div>
             </div>
@@ -1115,7 +1302,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           </div>
 
           {/* Table 2: Zonificación vs GRUPO */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
+          <div id="section-zonas" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
               <div>
                 <h3 className="text-lg font-black text-white flex items-center space-x-2">
@@ -1128,6 +1315,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => toggleEmailSection('section-zonas')}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
+                    selectedEmailSectionIds.has('section-zonas')
+                      ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30'
+                      : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700 hover:bg-slate-700'
+                  }`}
+                  title={selectedEmailSectionIds.has('section-zonas') ? 'Quitar del reporte por correo' : 'Añadir al reporte por correo'}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{selectedEmailSectionIds.has('section-zonas') ? 'En Correo' : '+ Correo'}</span>
+                </button>
                 <button
                   onClick={() => setIsZoneModalOpen(true)}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition-all flex items-center space-x-1.5"
@@ -1358,7 +1557,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         <div className="space-y-6">
 
           {/* Control Bar & Filters */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white shadow-xl space-y-4">
+          <div id="section-cables" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white shadow-xl space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-lg font-black text-white flex items-center space-x-2">
@@ -1371,6 +1570,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => toggleEmailSection('section-cables')}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
+                    selectedEmailSectionIds.has('section-cables')
+                      ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30'
+                      : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700 hover:bg-slate-700'
+                  }`}
+                  title={selectedEmailSectionIds.has('section-cables') ? 'Quitar del reporte por correo' : 'Añadir al reporte por correo'}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{selectedEmailSectionIds.has('section-cables') ? 'En Correo' : '+ Correo'}</span>
+                </button>
                 <CopyTableButton headers={copyCablesHeaders} rows={copyCablesRows} label="Copiar Tabla Cables" />
               </div>
             </div>
@@ -1731,6 +1942,29 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Floating Action Button for Navigation & Email Reporting */}
+      <FloatingNavEmailFAB
+        sections={availableSectionsList}
+        selectedCount={selectedEmailSectionIds.size}
+        onToggleSection={toggleEmailSection}
+        onClearAll={handleClearAllEmailSections}
+        onOpenEmailModal={() => setIsEmailModalOpen(true)}
+        onSelectAll={handleSelectAllEmailSections}
+        onSelectSummaryOnly={handleSelectSummaryOnlyEmailSections}
+      />
+
+      {/* Modal for Email Report Preparation */}
+      <EmailReportModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        selectedSections={selectedSectionsForEmailModal}
+        onRemoveSection={toggleEmailSection}
+        onClearAll={handleClearAllEmailSections}
+        onSelectAll={handleSelectAllEmailSections}
+        onSelectSummaryOnly={handleSelectSummaryOnlyEmailSections}
+        totalAvailableCount={availableSectionsList.length}
+      />
 
     </div>
   );
