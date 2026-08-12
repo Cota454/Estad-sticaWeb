@@ -22,7 +22,9 @@ import {
   SlidersHorizontal,
   Info,
   ListFilter,
-  X
+  X,
+  Clock,
+  RotateCcw
 } from 'lucide-react';
 
 import {
@@ -65,6 +67,56 @@ import { CableClassificationView } from './CableClassificationView';
 import { GoogleDriveBackupView } from './GoogleDriveBackupView';
 import { PrintReportsView } from './PrintReportsView';
 import { CopyTableButton } from './CopyButton';
+
+/**
+ * Calculates delay in days from item raw data or fechaReporte
+ */
+export function getDemoraDays(item: IpCableRow): number {
+  if (item.rawRowData) {
+    for (const key of Object.keys(item.rawRowData)) {
+      const k = key.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+      if (k.includes('demora') || k.includes('dias')) {
+        const val = item.rawRowData[key];
+        if (val !== undefined && val !== null && val !== '') {
+          const num = parseInt(String(val).trim(), 10);
+          if (!isNaN(num)) return Math.max(0, num);
+        }
+      }
+    }
+  }
+
+  // Fallback to fechaReporte
+  if (item.fechaReporte) {
+    const reportDate = new Date(item.fechaReporte);
+    if (!isNaN(reportDate.getTime())) {
+      const now = new Date();
+      const d1 = new Date(reportDate.getFullYear(), reportDate.getMonth(), reportDate.getDate());
+      const d2 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const diffMs = d2.getTime() - d1.getTime();
+      return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Matches delay in days against selected range filter
+ */
+export function matchDemoraFilter(days: number, filter: string): boolean {
+  if (filter === 'all' || !filter) return true;
+  if (filter === '0') return days === 0;
+  if (filter === '1') return days === 1;
+  if (filter === '2') return days === 2;
+  if (filter === '3') return days === 3;
+  if (filter === '4-30') return days >= 4 && days <= 30;
+  if (filter === '31-60') return days >= 31 && days <= 60;
+  if (filter === '61-90') return days >= 61 && days <= 90;
+  if (filter === '91-180') return days >= 91 && days <= 180;
+  if (filter === '181-365') return days >= 181 && days <= 365;
+  if (filter === '>365') return days > 365;
+  return true;
+}
 
 interface AnalisisIpViewProps {
 
@@ -177,12 +229,61 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // --- COMPUTED DATA FOR MATRICES (PESTAÑA 1) ---
 
+  // Matrix Filter States
+  const [matrixDemoraFilter, setMatrixDemoraFilter] = useState<string>('all');
+  const [matrixMonthFilter, setMatrixMonthFilter] = useState<string>('all');
+  const [matrixYearFilter, setMatrixYearFilter] = useState<string>('all');
+
+  // Available Years dynamically from dataset
+  const availableMatrixYears = useMemo(() => {
+    if (!excelData) return [];
+    const yrSet = new Set<number>();
+    excelData.consolidatedRows.forEach(item => {
+      if (item.fechaReporte && item.fechaReporte.length >= 4) {
+        const y = parseInt(item.fechaReporte.split('-')[0], 10);
+        if (!isNaN(y)) yrSet.add(y);
+      }
+    });
+    return Array.from(yrSet).sort((a, b) => b - a);
+  }, [excelData]);
+
+  // Rows filtered by Demora en Días, Mes, and Año for Tab 1 Matrices
+  const matrixFilteredConsolidatedRows = useMemo(() => {
+    if (!excelData) return [];
+
+    return excelData.consolidatedRows.filter(item => {
+      // 1. Demora Filter
+      const days = getDemoraDays(item);
+      if (!matchDemoraFilter(days, matrixDemoraFilter)) return false;
+
+      // 2. Month and Year Filter
+      if (item.fechaReporte && item.fechaReporte.length >= 7) {
+        const parts = item.fechaReporte.split('-');
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+
+        if (matrixYearFilter !== 'all' && y !== parseInt(matrixYearFilter, 10)) {
+          return false;
+        }
+        if (matrixMonthFilter !== 'all' && m !== parseInt(matrixMonthFilter, 10)) {
+          return false;
+        }
+      } else {
+        if (matrixYearFilter !== 'all' || matrixMonthFilter !== 'all') {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [excelData, matrixDemoraFilter, matrixMonthFilter, matrixYearFilter]);
+
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
     if (!excelData) return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
 
-    const rowsList = excelData.uniqueCentrales.length > 0 ? excelData.uniqueCentrales : ['CENTRAL GENERAL'];
-    const colsList = excelData.uniqueGroups.length > 0 ? excelData.uniqueGroups : ['GRUPO GENERAL'];
+    const rowsList = excelData.uniqueCentrales.length > 0 ? [...excelData.uniqueCentrales] : ['CENTRAL GENERAL'];
+    const colsList = excelData.uniqueGroups.length > 0 ? [...excelData.uniqueGroups] : ['GRUPO GENERAL'];
 
     const cellMap: Record<string, Record<string, number>> = {};
     const rowTotals: Record<string, number> = {};
@@ -197,7 +298,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     colsList.forEach(c => { colTotals[c] = 0; });
 
-    excelData.consolidatedRows.forEach(item => {
+    matrixFilteredConsolidatedRows.forEach(item => {
       const cnt = item.central || 'CENTRAL GENERAL';
       const grp = item.grupo || 'GRUPO GENERAL';
 
@@ -231,7 +332,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       colTotals,
       grandTotal
     };
-  }, [excelData]);
+  }, [excelData, matrixFilteredConsolidatedRows]);
 
   // 2. Matrix 2: Zonificación vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixZonasData = useMemo(() => {
@@ -251,7 +352,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     colsList.forEach(c => { colTotals[c] = 0; });
 
-    excelData.consolidatedRows.forEach(item => {
+    matrixFilteredConsolidatedRows.forEach(item => {
       const itemCentral = (item.central || '').trim().toUpperCase();
       const itemCable = (item.cable || '').trim().toUpperCase();
       const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim()).filter(Boolean);
@@ -294,7 +395,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       colTotals,
       grandTotal
     };
-  }, [excelData, zones, matrixCentralesData.columns]);
+  }, [excelData, zones, matrixCentralesData.columns, matrixFilteredConsolidatedRows]);
 
   // Cell Click Modal State (Pestaña 1 Matrices)
   const [selectedCellFilter, setSelectedCellFilter] = useState<{
@@ -312,7 +413,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const { matrixType, rowName, colName } = selectedCellFilter;
 
-    return excelData.consolidatedRows.filter(item => {
+    return matrixFilteredConsolidatedRows.filter(item => {
       const itemCentral = (item.central || '').trim().toUpperCase();
       const itemCable = (item.cable || '').trim().toUpperCase();
       const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim().toUpperCase()).filter(Boolean);
@@ -361,7 +462,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
       return true;
     });
-  }, [selectedCellFilter, excelData, zones]);
+  }, [selectedCellFilter, excelData, zones, matrixFilteredConsolidatedRows]);
 
   const displayModalServices = useMemo(() => {
     if (!cellModalSearch.trim()) return cellServicesList;
@@ -727,6 +828,117 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       {/* PESTAÑA 1: MATRICES (CENTRALES Y ZONAS VS GRUPOS) */}
       {activeTab === 'matrices' && (
         <div className="space-y-6">
+
+          {/* Filter Bar for Tab 1 Matrices */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white shadow-xl space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="flex items-center space-x-2">
+                <div className="p-2 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-xl">
+                  <Filter className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
+                    <span>Filtros de Análisis para Matrices</span>
+                    {(matrixDemoraFilter !== 'all' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
+                      <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
+                        {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Filtra simultáneamente las matrices por Demora en Días, Mes y Año.
+                  </p>
+                </div>
+              </div>
+
+              {(matrixDemoraFilter !== 'all' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
+                <button
+                  onClick={() => {
+                    setMatrixDemoraFilter('all');
+                    setMatrixMonthFilter('all');
+                    setMatrixYearFilter('all');
+                  }}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer w-fit"
+                  title="Restablecer todos los filtros"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Restablecer Filtros</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* 1. Demora en Días Filter */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Demora en Días</span>
+                </label>
+                <select
+                  value={matrixDemoraFilter}
+                  onChange={(e) => setMatrixDemoraFilter(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+                >
+                  <option value="all">Todas las demoras (sin filtro)</option>
+                  <option value="0">0 días</option>
+                  <option value="1">1 día</option>
+                  <option value="2">2 días</option>
+                  <option value="3">3 días</option>
+                  <option value="4-30">4 - 30 días</option>
+                  <option value="31-60">31 - 60 días</option>
+                  <option value="61-90">61 - 90 días</option>
+                  <option value="91-180">91 - 180 días</option>
+                  <option value="181-365">181 - 365 días</option>
+                  <option value=">365">Más de 1 año (&gt; 365 días)</option>
+                </select>
+              </div>
+
+              {/* 2. Month Filter */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Mes</span>
+                </label>
+                <select
+                  value={matrixMonthFilter}
+                  onChange={(e) => setMatrixMonthFilter(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+                >
+                  <option value="all">Todos los meses (sin filtro)</option>
+                  <option value="1">Enero</option>
+                  <option value="2">Febrero</option>
+                  <option value="3">Marzo</option>
+                  <option value="4">Abril</option>
+                  <option value="5">Mayo</option>
+                  <option value="6">Junio</option>
+                  <option value="7">Julio</option>
+                  <option value="8">Agosto</option>
+                  <option value="9">Septiembre</option>
+                  <option value="10">Octubre</option>
+                  <option value="11">Noviembre</option>
+                  <option value="12">Diciembre</option>
+                </select>
+              </div>
+
+              {/* 3. Year Filter */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Año</span>
+                </label>
+                <select
+                  value={matrixYearFilter}
+                  onChange={(e) => setMatrixYearFilter(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+                >
+                  <option value="all">Todos los años (sin filtro)</option>
+                  {availableMatrixYears.map(yr => (
+                    <option key={yr} value={yr.toString()}>{yr}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
 
           {/* Table 1: Centrales Telefónicas vs GRUPO */}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
@@ -1292,14 +1504,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 />
               </div>
               <CopyTableButton
-                headers={['N°', 'SERVICIO', 'CENTRAL', 'CABLE', 'GRUPO', 'TIPO RED', 'FECHA']}
+                headers={['N°', 'SERVICIO', 'CENTRAL', 'CABLE', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA']}
                 rows={displayModalServices.map((s, idx) => [
                   (idx + 1).toString(),
                   s.servicio,
                   s.central,
                   s.cable,
                   s.grupo,
-                  s.tipoRed || '-',
+                  s.networkTypeLabel || '-',
+                  `${getDemoraDays(s)} días`,
                   s.fechaReporte || '-'
                 ])}
                 label="Copiar Servicios"
@@ -1317,13 +1530,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <th className="py-3 px-4">Cable</th>
                     <th className="py-3 px-4">Grupo de Trabajo</th>
                     <th className="py-3 px-4">Clasificación Red</th>
+                    <th className="py-3 px-4 text-center">Demora (Días)</th>
                     <th className="py-3 px-4 text-center">Fecha Reporte</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {displayModalServices.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-500 font-bold">
+                      <td colSpan={8} className="py-8 text-center text-slate-500 font-bold">
                         No se encontraron servicios consolidados para este filtro.
                       </td>
                     </tr>
@@ -1337,16 +1551,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                         <td className="py-3 px-4 text-indigo-300 font-bold">{item.grupo || 'GENERAL'}</td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                            item.tipoRed === 'Red Rígida'
+                            item.networkType === 'rigida'
                               ? 'bg-amber-950/60 border-amber-800/60 text-amber-300'
-                              : item.tipoRed === 'Red Flexible'
+                              : item.networkType === 'flexible'
                               ? 'bg-blue-950/60 border-blue-800/60 text-blue-300'
-                              : item.tipoRed === 'Gabinete Outdoor'
+                              : item.networkType === 'outdoor'
                               ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300'
                               : 'bg-slate-800 border-slate-700 text-slate-400'
                           }`}>
-                            {item.tipoRed || 'Sin clasificar'}
+                            {item.networkTypeLabel || 'Sin clasificar'}
                           </span>
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
+                          {getDemoraDays(item)} d
                         </td>
                         <td className="py-3 px-4 text-center text-slate-400 text-[11px] font-mono">
                           {item.fechaReporte || '-'}
