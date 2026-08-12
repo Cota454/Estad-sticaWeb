@@ -420,7 +420,12 @@ export async function parseIpCablesExcelFile(
   const monthYearSet = new Map<string, { year: number; month: number; label: string }>();
 
   consolidatedRows.forEach(r => {
-    if (r.central) uniqueCentralesSet.add(r.central);
+    if (r.central) {
+      r.central.split('/').forEach(c => {
+        const trimmed = c.trim();
+        if (trimmed) uniqueCentralesSet.add(trimmed);
+      });
+    }
     if (r.grupo) {
       r.grupo.split('/').forEach(g => uniqueGroupsSet.add(g.trim()));
     }
