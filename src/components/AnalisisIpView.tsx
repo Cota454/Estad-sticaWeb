@@ -25,7 +25,8 @@ import {
   X,
   Clock,
   RotateCcw,
-  Mail
+  Mail,
+  EyeOff
 } from 'lucide-react';
 
 import { EmailReportModal, SelectedSectionData } from './EmailReportModal';
@@ -265,6 +266,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [matrixDemoraFilter, setMatrixDemoraFilter] = useState<string>('all');
   const [matrixMonthFilter, setMatrixMonthFilter] = useState<string>('all');
   const [matrixYearFilter, setMatrixYearFilter] = useState<string>('all');
+  const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
 
   // Available Years dynamically from dataset
   const availableMatrixYears = useMemo(() => {
@@ -1085,7 +1087,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* 1. Demora en Días Filter */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
@@ -1155,6 +1157,23 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   ))}
                 </select>
               </div>
+
+              {/* 4. Ocultar Ceros Option */}
+              <div className="space-y-1.5 flex flex-col justify-end">
+                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                  <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Visualización</span>
+                </label>
+                <label className="flex items-center space-x-2.5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-medium cursor-pointer transition-all h-[38px] select-none">
+                  <input
+                    type="checkbox"
+                    checked={hideZeroValues}
+                    onChange={(e) => setHideZeroValues(e.target.checked)}
+                    className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer accent-blue-600"
+                  />
+                  <span className="font-bold text-slate-200">Ocultar ceros (0)</span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -1172,6 +1191,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
+                <label className="flex items-center space-x-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer select-none bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={hideZeroValues}
+                    onChange={(e) => setHideZeroValues(e.target.checked)}
+                    className="rounded border-slate-600 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                  />
+                  <EyeOff className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Ocultar Ceros</span>
+                </label>
                 <button
                   onClick={() => toggleEmailSection('section-centrales')}
                   className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
@@ -1226,7 +1255,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 >
                                   {val}
                                 </button>
-                              ) : (
+                              ) : hideZeroValues ? null : (
                                 <span className="text-slate-600">-</span>
                               )}
                             </td>
@@ -1246,7 +1275,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             >
                               {rowTotal}
                             </button>
-                          ) : (
+                          ) : hideZeroValues ? null : (
                             <span>0</span>
                           )}
                         </td>
@@ -1274,7 +1303,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             >
                               {colTot}
                             </button>
-                          ) : (
+                          ) : hideZeroValues ? null : (
                             <span>0</span>
                           )}
                         </td>
@@ -1293,7 +1322,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                         >
                           {matrixCentralesData.grandTotal}
                         </button>
-                      ) : (
+                      ) : hideZeroValues ? null : (
                         <span>0</span>
                       )}
                     </td>
@@ -1317,6 +1346,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
+                <label className="flex items-center space-x-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer select-none bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={hideZeroValues}
+                    onChange={(e) => setHideZeroValues(e.target.checked)}
+                    className="rounded border-slate-600 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                  />
+                  <EyeOff className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Ocultar Ceros</span>
+                </label>
                 <button
                   onClick={() => toggleEmailSection('section-zonas')}
                   className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
@@ -1462,7 +1501,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 >
                                   {val}
                                 </button>
-                              ) : (
+                              ) : hideZeroValues ? null : (
                                 <span className="text-slate-600">-</span>
                               )}
                             </td>
@@ -1491,7 +1530,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 ({percentage}%)
                               </span>
                             </div>
-                          ) : (
+                          ) : hideZeroValues ? null : (
                             <div className="flex flex-col items-center">
                               <span className="text-slate-600">0</span>
                               <span className="text-[10px] text-slate-600 font-sans mt-0.5">(0.0%)</span>
@@ -1522,7 +1561,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             >
                               {colTot}
                             </button>
-                          ) : (
+                          ) : hideZeroValues ? null : (
                             <span>0</span>
                           )}
                         </td>
@@ -1541,7 +1580,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                         >
                           {matrixZonasData.grandTotal}
                         </button>
-                      ) : (
+                      ) : hideZeroValues ? null : (
                         <span>0</span>
                       )}
                     </td>
@@ -1723,7 +1762,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                   <span className="font-black text-emerald-300 px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/50">
                                     {val}
                                   </span>
-                                ) : (
+                                ) : hideZeroValues ? null : (
                                   <span className="text-slate-600">-</span>
                                 )}
                               </td>
