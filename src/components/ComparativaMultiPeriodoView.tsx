@@ -265,7 +265,7 @@ export const ComparativaMultiPeriodoView: React.FC<ComparativaMultiPeriodoViewPr
   }, [groupingType, activePeriods]);
 
   const copyRows = useMemo(() => {
-    return comparisonData.map(row => {
+    const base = comparisonData.map(row => {
       const pVals = activePeriods.map(p => row.periodValues[p.key] || 0);
       const sign = row.diffP1PN > 0 ? '+' : '';
       return [
@@ -277,7 +277,20 @@ export const ComparativaMultiPeriodoView: React.FC<ComparativaMultiPeriodoViewPr
         `${row.pctChange}%`
       ];
     });
-  }, [comparisonData, activePeriods]);
+
+    const periodTotalsVals = activePeriods.map(p => totalSummary.periodTotals[p.key] || 0);
+    const signTot = totalSummary.netDiff > 0 ? '+' : '';
+    const totalRow = [
+      'TOTAL GENERAL',
+      'RED',
+      ...periodTotalsVals,
+      totalSummary.grandTotal,
+      `${signTot}${totalSummary.netDiff}`,
+      `${totalSummary.netPct}%`
+    ];
+
+    return [...base, totalRow];
+  }, [comparisonData, activePeriods, totalSummary]);
 
   return (
     <div className="space-y-6 font-sans">

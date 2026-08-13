@@ -10,7 +10,8 @@ import {
   ListOrdered,
   Sparkles,
   FileText,
-  AlertCircle
+  AlertCircle,
+  FileDown
 } from 'lucide-react';
 
 export interface SelectedSectionData {
@@ -126,6 +127,57 @@ export const EmailReportModal: React.FC<EmailReportModalProps> = ({
     const encodedBody = encodeURIComponent(`Hola,\n\nAdjunto el resumen ejecutivo de las secciones seleccionadas:\n\n${fullTextReport}\n\nSaludos.`);
     const mailtoUrl = `mailto:${recipient}?subject=${encodedSubject}&body=${encodedBody}`;
     window.open(mailtoUrl, '_blank');
+  };
+
+  const handleExportWord = () => {
+    const htmlDoc = `
+      <html xmlns:o='urn:schemas-microsoft-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset="utf-8">
+        <title>${subject}</title>
+        <style>
+          @page { size: 8.5in 11in; margin: 1in; }
+          body { font-family: Arial, sans-serif; background-color: #ffffff; color: #1e293b; margin: 0; padding: 20px; }
+          .header { border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 20px; }
+          .header h2 { color: #0f172a; margin: 0 0 6px 0; font-size: 18pt; }
+          .header p { color: #64748b; margin: 0; font-size: 10pt; }
+          .section-card { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 16px; margin-bottom: 20px; page-break-inside: avoid; }
+          .section-title { font-size: 13pt; font-weight: bold; color: #1e293b; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10pt; }
+          th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+          th { background-color: #0f172a; color: #ffffff; font-weight: bold; }
+          tr:nth-child(even) { background-color: #f8fafc; }
+          .footer { margin-top: 24px; text-align: center; font-size: 9pt; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h2>📊 ${subject}</h2>
+          <p>Generado automáticamente desde la Plataforma de Gestión de Incidencias Telecom - ${new Date().toLocaleDateString()}</p>
+        </div>
+        ${sortedSections.map(s => `
+          <div class="section-card">
+            <div class="section-title">📌 ${s.title}</div>
+            ${s.htmlContent}
+          </div>
+        `).join('')}
+        <div class="footer">
+          Documento oficial generado desde la Plataforma de Gestión de Incidencias Telecom.
+        </div>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff', htmlDoc], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const cleanFileName = subject.replace(/[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚñÑ]/g, '_');
+    link.download = `${cleanFileName}.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -290,17 +342,29 @@ export const EmailReportModal: React.FC<EmailReportModalProps> = ({
           </div>
         </div>
 
-        {/* Footer Actions (Improvement #2: Copy Formatted HTML for Outlook/Teams) */}
+        {/* Footer Actions */}
         <div className="p-4 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <button
-            onClick={handleCopy}
-            disabled={selectedSections.length === 0}
-            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center gap-2 border border-slate-700 transition-all cursor-pointer"
-            title="Copia el reporte en formato HTML enriquecido para pegarlo directo en Outlook, Gmail, Teams o WhatsApp"
-          >
-            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-blue-400" />}
-            <span>{copied ? '¡Copiado al Portapapeles!' : 'Copiar Reporte Formateado'}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleCopy}
+              disabled={selectedSections.length === 0}
+              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center gap-2 border border-slate-700 transition-all cursor-pointer"
+              title="Copia el reporte en formato HTML enriquecido para pegarlo directo en Outlook, Gmail, Teams o WhatsApp"
+            >
+              {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-blue-400" />}
+              <span>{copied ? '¡Copiado al Portapapeles!' : 'Copiar Reporte Formateado'}</span>
+            </button>
+
+            <button
+              onClick={handleExportWord}
+              disabled={selectedSections.length === 0}
+              className="px-4 py-2.5 bg-indigo-900/80 hover:bg-indigo-700 disabled:opacity-50 text-indigo-100 rounded-xl font-bold text-xs flex items-center gap-2 border border-indigo-700/60 transition-all cursor-pointer shadow-sm"
+              title="Exporta y descarga el informe completo como un documento de Word (.doc) compatible con Microsoft Word"
+            >
+              <FileDown className="w-4 h-4 text-indigo-300" />
+              <span>Exportar Word (.doc)</span>
+            </button>
+          </div>
 
           <div className="flex items-center space-x-2">
             <button

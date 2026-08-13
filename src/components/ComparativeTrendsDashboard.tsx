@@ -314,7 +314,7 @@ export const ComparativeTrendsDashboard: React.FC<ComparativeTrendsDashboardProp
   ];
 
   const copyRows = useMemo(() => {
-    return periodComparisonWithTrend.map(row => [
+    const base = periodComparisonWithTrend.map(row => [
       row.period.shortLabel,
       `${formatDateShort(row.period.start)} al ${formatDateShort(row.period.end)}`,
       row.totalReports,
@@ -325,7 +325,25 @@ export const ComparativeTrendsDashboard: React.FC<ComparativeTrendsDashboardProp
       `${row.pctChange}%`,
       row.statusText
     ]);
-  }, [periodComparisonWithTrend]);
+
+    const totNet = globalSummary.grandRepairs - globalSummary.grandReports;
+    const totNetStr = totNet > 0 ? `+${totNet}` : `${totNet}`;
+    const signOverall = globalSummary.overallDiff > 0 ? '+' : '';
+
+    const totalRow = [
+      'TOTAL GENERAL',
+      'Acumulado Red',
+      globalSummary.grandReports,
+      globalSummary.grandRepairs,
+      totNetStr,
+      `${globalSummary.grandEfficiency}%`,
+      `${signOverall}${globalSummary.overallDiff}`,
+      '-',
+      globalSummary.globalStatus === 'better' ? 'Tendencia Positiva 🟢' : (globalSummary.globalStatus === 'worse' ? 'Requiere Atención 🔴' : 'Estable 🟡')
+    ];
+
+    return [...base, totalRow];
+  }, [periodComparisonWithTrend, globalSummary]);
 
   return (
     <div className="space-y-6 font-sans">

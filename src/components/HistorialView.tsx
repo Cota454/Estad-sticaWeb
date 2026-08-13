@@ -214,7 +214,7 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
   ], [matrixData]);
 
   const matrizCopyRows = useMemo(() => {
-    return matrixData.activeCentrales.map(c => {
+    const base = matrixData.activeCentrales.map(c => {
       let totalC = 0;
       const groupVals = matrixData.activeGroups.map(g => {
         const val = matrixData.grid[c.id]?.[g.id] || 0;
@@ -223,12 +223,18 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
       });
       return [c.name, c.code, ...groupVals, totalC];
     });
+
+    const groupTotals = matrixData.activeGroups.map(g => matrixData.groupTotals[g.id] || 0);
+    const grandTotal = matrixData.grandTotal || 0;
+    const totalRow = ['TOTAL GENERAL', 'RED', ...groupTotals, grandTotal];
+
+    return [...base, totalRow];
   }, [matrixData]);
 
   // Data formatted for Copy Table Button on Detallado
   const detalladoCopyHeaders = ['Fecha', 'Día', 'Central', 'Código Central', 'Grupo de Trabajo', 'Reportes'];
   const detalladoCopyRows = useMemo(() => {
-    return filteredReports.map(r => {
+    const base = filteredReports.map(r => {
       const c = centrales.find(item => item.id === r.centralId);
       const g = workGroups.find(item => item.id === r.workGroupId);
       return [
@@ -240,12 +246,17 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
         r.reportCount
       ];
     });
+
+    const totalReportCount = filteredReports.reduce((acc, r) => acc + (r.reportCount || 0), 0);
+    const totalRow = ['TOTAL GENERAL', `${filteredReports.length} Registros`, '-', '-', '-', totalReportCount];
+
+    return [...base, totalRow];
   }, [filteredReports, centrales, workGroups]);
 
   // Data formatted for Copy Table Button on Técnica
   const tecnicaCopyHeaders = ['Central Telefónica', 'Código', 'Capacidad Instalada Total', 'Reportes en Periodo', '% Afectación de Red', 'Estado Operativo'];
   const tecnicaCopyRows = useMemo(() => {
-    return centrales.map(c => {
+    const base = centrales.map(c => {
       const totalCap = getCentralTotalCapacity(c);
       const cReports = filteredReports
         .filter(r => r.centralId === c.id)
@@ -254,6 +265,15 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
       const status = pct > 2 ? 'Atención Requerida' : 'Normal';
       return [c.name, c.code, totalCap, cReports, `${pct.toFixed(2)}%`, status];
     });
+
+    const grandTotalCap = centrales.reduce((acc, c) => acc + getCentralTotalCapacity(c), 0);
+    const grandReports = filteredReports.reduce((acc, r) => acc + (r.reportCount || 0), 0);
+    const grandPct = grandTotalCap > 0 ? (grandReports / grandTotalCap) * 100 : 0;
+    const grandStatus = grandPct > 2 ? 'Atención Requerida' : 'Normal';
+
+    const totalRow = ['TOTAL GENERAL', 'RED', grandTotalCap, grandReports, `${grandPct.toFixed(2)}%`, grandStatus];
+
+    return [...base, totalRow];
   }, [centrales, filteredReports]);
 
   // Handle Clear All Reports Confirm

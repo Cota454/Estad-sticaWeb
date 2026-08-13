@@ -99,7 +99,15 @@ export const AnalisisSemanalHistorico: React.FC<AnalisisSemanalHistoricoProps> =
   // Day of Week Copy Headers & Rows
   const dayOfWeekCopyHeaders = ['Día de la Semana', 'Total Histórico', 'Días Registrados', 'Promedio Diario'];
   const dayOfWeekCopyRows = useMemo(() => {
-    return dayOfWeekStats.map(d => [d.dayName, d.totalReports, d.dayCount, d.averageReports]);
+    const base = dayOfWeekStats.map(d => [d.dayName, d.totalReports, d.dayCount, d.averageReports]);
+    const totalHist = dayOfWeekStats.reduce((acc, d) => acc + d.totalReports, 0);
+    const totalDays = dayOfWeekStats.reduce((acc, d) => acc + d.dayCount, 0);
+    const avgOverall = totalDays > 0 ? parseFloat((totalHist / totalDays).toFixed(1)) : 0;
+
+    return [
+      ...base,
+      ['TOTAL GENERAL', totalHist, totalDays, avgOverall]
+    ];
   }, [dayOfWeekStats]);
 
   // Function to call AI Operations Analyst Endpoint

@@ -37,21 +37,30 @@ export const CentralesGruposView: React.FC<CentralesGruposViewProps> = ({
   // Headers and Rows for Copy Buttons
   const centralesCopyHeaders = ['Código Central', 'Nombre Central', 'Ubicación / Dirección', 'Capacidad Técnica Instalada'];
   const centralesCopyRows = useMemo(() => {
-    return centrales.map(c => [
+    const base = centrales.map(c => [
       c.code,
       c.name,
       c.location || 'Ubicación General',
       getCentralTotalCapacity(c)
     ]);
+    const totalCap = centrales.reduce((acc, c) => acc + getCentralTotalCapacity(c), 0);
+    return [
+      ...base,
+      ['TOTAL GENERAL', `${centrales.length} Centrales`, 'Total Red', totalCap]
+    ];
   }, [centrales]);
 
   const gruposCopyHeaders = ['Código Grupo', 'Nombre Grupo', 'Descripción / Funciones'];
   const gruposCopyRows = useMemo(() => {
-    return workGroups.map(g => [
+    const base = workGroups.map(g => [
       g.code,
       g.name,
       g.description || ''
     ]);
+    return [
+      ...base,
+      ['TOTAL GENERAL', `${workGroups.length} Grupos de Trabajo`, '-']
+    ];
   }, [workGroups]);
 
   // Export Tab Data as CSV

@@ -165,7 +165,7 @@ export const TecnicaInstaladaView: React.FC<TecnicaInstaladaViewProps> = ({
   }, [workGroups]);
 
   const techCopyRows = useMemo(() => {
-    return matrixData.map(row => {
+    const base = matrixData.map(row => {
       const grpVals = workGroups.map(g => {
         const stat = row.groupStats[g.id] || { reports: 0, percentage: 0 };
         return `${stat.reports} (${stat.percentage}%)`;
@@ -178,7 +178,27 @@ export const TecnicaInstaladaView: React.FC<TecnicaInstaladaViewProps> = ({
         `${row.totalPercentage}%`
       ];
     });
-  }, [matrixData, workGroups]);
+
+    const groupTotals = workGroups.map(g => {
+      let gRep = 0;
+      matrixData.forEach(r => {
+        const stat = r.groupStats[g.id];
+        if (stat) gRep += stat.reports;
+      });
+      const gPct = networkTotals.totalCapacity > 0 ? parseFloat(((gRep / networkTotals.totalCapacity) * 100).toFixed(2)) : 0;
+      return `${gRep} (${gPct}%)`;
+    });
+
+    const totalRow = [
+      'TOTAL GENERAL RED',
+      networkTotals.totalCapacity,
+      ...groupTotals,
+      networkTotals.totalReports,
+      `${networkTotals.percentage}%`
+    ];
+
+    return [...base, totalRow];
+  }, [matrixData, workGroups, networkTotals]);
 
   return (
     <div className="space-y-6">

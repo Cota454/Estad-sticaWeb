@@ -110,7 +110,7 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
   }, [workGroups]);
 
   const matrixCopyRows = useMemo(() => {
-    return matrixRows.map(r => {
+    const base = matrixRows.map(r => {
       const cObj = centrales.find(c => c.id === r.centralId);
       const grpVals = workGroups.map(grp => {
         const cell = r.groupDiffs[grp.id] || { valInitial: 0, valFinal: 0, diff: 0 };
@@ -125,7 +125,32 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
         `${r.totalInitial} → ${r.totalFinal} (${totSign}${r.totalDiff})`
       ];
     });
-  }, [matrixRows, workGroups, centrales]);
+
+    const groupTotals = workGroups.map(grp => {
+      let init = 0;
+      let fin = 0;
+      matrixRows.forEach(r => {
+        const cell = r.groupDiffs[grp.id];
+        if (cell) {
+          init += cell.valInitial;
+          fin += cell.valFinal;
+        }
+      });
+      const diff = fin - init;
+      const sign = diff > 0 ? '+' : '';
+      return `${init} → ${fin} (${sign}${diff})`;
+    });
+
+    const netSign = networkSummary.netDiff > 0 ? '+' : '';
+    const totalRow = [
+      'SUMA TOTAL RED',
+      'RED',
+      ...groupTotals,
+      `${networkSummary.totalInitial} → ${networkSummary.totalFinal} (${netSign}${networkSummary.netDiff})`
+    ];
+
+    return [...base, totalRow];
+  }, [matrixRows, workGroups, centrales, networkSummary]);
 
   return (
     <div className="space-y-6">

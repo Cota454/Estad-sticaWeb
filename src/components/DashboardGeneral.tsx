@@ -179,20 +179,28 @@ export const DashboardGeneral: React.FC<DashboardGeneralProps> = ({
   }, [groupBy]);
 
   const mainChartCopyRows = useMemo(() => {
-    return chartDataset.map((item: any) => [
+    const base = chartDataset.map((item: any) => [
       groupBy === 'daily' ? item.displayDate : item.name,
       groupBy === 'daily' ? item.total : item.reports
     ]);
+    const totalReportsSum = chartDataset.reduce((acc: number, item: any) => acc + (groupBy === 'daily' ? item.total : item.reports), 0);
+    return [...base, ['TOTAL GENERAL', totalReportsSum]];
   }, [chartDataset, groupBy]);
 
   const centralChartCopyHeaders = ['Grupo de Trabajo', 'Código', 'Reportes', '% Técnica Instalada'];
   const centralChartCopyRows = useMemo(() => {
-    return centralChartData.map(d => [d.name, d.code, d.reports, `${d.pctOfCentral}%`]);
+    const base = centralChartData.map(d => [d.name, d.code, d.reports, `${d.pctOfCentral}%`]);
+    const totalRep = centralChartData.reduce((acc, d) => acc + d.reports, 0);
+    const totalPctSum = centralChartData.reduce((acc, d) => acc + d.pctOfCentral, 0);
+    return [...base, ['TOTAL GENERAL', 'RED', totalRep, `${totalPctSum.toFixed(2)}%`]];
   }, [centralChartData]);
 
   const groupChartCopyHeaders = ['Central Telefónica', 'Código', 'Reportes', '% Técnica Instalada'];
   const groupChartCopyRows = useMemo(() => {
-    return groupChartData.map(d => [d.name, d.code, d.reports, `${d.pctOfCentral}%`]);
+    const base = groupChartData.map(d => [d.name, d.code, d.reports, `${d.pctOfCentral}%`]);
+    const totalRep = groupChartData.reduce((acc, d) => acc + d.reports, 0);
+    const totalPctSum = groupChartData.reduce((acc, d) => acc + d.pctOfCentral, 0);
+    return [...base, ['TOTAL GENERAL', 'RED', totalRep, `${totalPctSum.toFixed(2)}%`]];
   }, [groupChartData]);
 
   return (

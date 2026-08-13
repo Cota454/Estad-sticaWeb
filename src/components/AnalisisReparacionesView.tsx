@@ -845,7 +845,52 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
   // Copy Headers & Rows for Tables
   const copyHeadersCentralTable = ['Central CTA', 'Reportes Iniciales', 'Reparaciones Realizadas', 'Pendientes', 'Tasa Eficiencia %', 'MTTR Prom.'];
-  const copyRowsCentralTable = useMemo(() => centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsCount, r.pendingDiff, `${r.resolutionRate}%`, `${r.avgMttr}h`]), [centralComparisonData]);
+  const copyRowsCentralTable = useMemo(() => {
+    const base = centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsCount, r.pendingDiff, `${r.resolutionRate}%`, `${r.avgMttr}h`]);
+    const totInitial = centralComparisonData.reduce((acc, r) => acc + r.initialReportsCount, 0);
+    const totRepairs = centralComparisonData.reduce((acc, r) => acc + r.repairsCount, 0);
+    const totPending = totRepairs - totInitial;
+    const avgRate = totInitial > 0 ? parseFloat(((totRepairs / totInitial) * 100).toFixed(1)) : 0;
+    const mttrSumTot = centralComparisonData.reduce((acc, r) => acc + (r.mttrSum || 0), 0);
+    const avgMttrTot = totRepairs > 0 ? parseFloat((mttrSumTot / totRepairs).toFixed(1)) : 0;
+
+    const totalRow = ['TOTAL GENERAL', totInitial, totRepairs, totPending > 0 ? `+${totPending}` : `${totPending}`, `${avgRate}%`, `${avgMttrTot}h`];
+    return [...base, totalRow];
+  }, [centralComparisonData]);
+
+  const cumplimientoCopyRows = useMemo(() => {
+    const base = centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsPreviousMonths, r.repairsSameMonth, r.repairsCount, r.diferenciaFormatted, `${r.resolutionRate}%`, `${r.avgMttr}h`]);
+    const totInitial = centralComparisonData.reduce((acc, r) => acc + r.initialReportsCount, 0);
+    const totPrev = centralComparisonData.reduce((acc, r) => acc + r.repairsPreviousMonths, 0);
+    const totSame = centralComparisonData.reduce((acc, r) => acc + r.repairsSameMonth, 0);
+    const totRepairs = centralComparisonData.reduce((acc, r) => acc + r.repairsCount, 0);
+    const totDiff = totRepairs - totInitial;
+    const totDiffFmt = totDiff > 0 ? `+${totDiff}` : `${totDiff}`;
+    const avgRate = totInitial > 0 ? parseFloat(((totRepairs / totInitial) * 100).toFixed(1)) : 0;
+    const mttrSumTot = centralComparisonData.reduce((acc, r) => acc + (r.mttrSum || 0), 0);
+    const avgMttrTot = totRepairs > 0 ? parseFloat((mttrSumTot / totRepairs).toFixed(1)) : 0;
+
+    return [...base, ['TOTAL GENERAL', totInitial, totPrev, totSame, totRepairs, totDiffFmt, `${avgRate}%`, `${avgMttrTot}h`]];
+  }, [centralComparisonData]);
+
+  const multiMonthCopyRows = useMemo(() => {
+    const base = multiMonthComparisonData.map(m => [m.label, m['Reportes Iniciales'], m['Total Reparadas'], m['Mismo Mes'], m['Meses Anteriores'], `${m['Tasa Eficiencia %']}%`, `${m.avgMttr}h`]);
+    const totInit = multiMonthComparisonData.reduce((acc, m) => acc + m['Reportes Iniciales'], 0);
+    const totRep = multiMonthComparisonData.reduce((acc, m) => acc + m['Total Reparadas'], 0);
+    const totSame = multiMonthComparisonData.reduce((acc, m) => acc + m['Mismo Mes'], 0);
+    const totPrev = multiMonthComparisonData.reduce((acc, m) => acc + m['Meses Anteriores'], 0);
+    const avgEff = totInit > 0 ? parseFloat(((totRep / totInit) * 100).toFixed(1)) : 0;
+    const mttrSumTot = multiMonthComparisonData.reduce((acc, m) => acc + (m.mttrSum || 0), 0);
+    const avgMttrTot = totRep > 0 ? parseFloat((mttrSumTot / totRep).toFixed(1)) : 0;
+
+    return [...base, ['TOTAL GENERAL', totInit, totRep, totSame, totPrev, `${avgEff}%`, `${avgMttrTot}h`]];
+  }, [multiMonthComparisonData]);
+
+  const repeatedCopyRows = useMemo(() => {
+    const base = repeatedServicesData.map(r => [r.serviceNumber, `${r.count} veces`, Array.from(r.centralNames).join(', '), r.repairs.map(x => x.date).join(' | '), r.latestCable, r.latestTech]);
+    const totalCases = repeatedServicesData.reduce((acc, r) => acc + r.count, 0);
+    return [...base, ['TOTAL REINCIDENTES', `${repeatedServicesData.length} Servicios (${totalCases} Eventos)`, '-', '-', '-', '-']];
+  }, [repeatedServicesData]);
 
   // List of available headers from uploaded Excel or common defaults
   const excelHeaderOptions = useMemo(() => {
@@ -1059,6 +1104,11 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       return true;
     });
   }, [repairRecords, historyCentralFilter, historyStatusFilter, historySearchQuery, centrales]);
+
+  const historyCopyRows = useMemo(() => {
+    const base = filteredHistoryRecords.map((r, idx) => [idx + 1, r.ticketCode, r.date, r.reportDate || r.date, r.centralName, r.serviceNumber, r.technician, r.cable || r.issueType, r.grupo || '', r.claveCode || '', r.status === 'resolved' ? 'Resuelto' : (r.status === 'in_progress' ? 'En Proceso' : 'Pendiente'), r.mttrHours]);
+    return [...base, ['TOTAL REGISTROS', `${filteredHistoryRecords.length} Registros`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']];
+  }, [filteredHistoryRecords]);
 
   const totalHistoryPages = Math.max(1, Math.ceil(filteredHistoryRecords.length / historyPageSize));
   const paginatedHistoryRecords = useMemo(() => {
@@ -1500,7 +1550,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
               <CopyTableButton
                 headers={['Central', 'Reportes Iniciales', 'Reparaciones IP Viejas', `Reparaciones ${selectedMonth >= 0 ? MONTH_NAMES_ES[selectedMonth] : 'Mismo Mes'}`, 'Reparaciones Totales', 'Diferencia', 'Eficiencia %', 'MTTR Prom.']}
-                rows={centralComparisonData.map(r => [r.centralName, r.initialReportsCount, r.repairsPreviousMonths, r.repairsSameMonth, r.repairsCount, r.diferenciaFormatted, `${r.resolutionRate}%`, `${r.avgMttr}h`])}
+                rows={cumplimientoCopyRows}
                 label="Copiar Matriz Cumplimiento"
               />
             </div>
@@ -1618,7 +1668,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
               <CopyTableButton
                 headers={['Mes/Año', 'Reportes Iniciales', 'Total Reparadas', 'Mismo Mes', 'Meses Anteriores', 'Eficiencia %', 'MTTR Prom.']}
-                rows={multiMonthComparisonData.map(m => [m.label, m['Reportes Iniciales'], m['Total Reparadas'], m['Mismo Mes'], m['Meses Anteriores'], `${m['Tasa Eficiencia %']}%`, `${m.avgMttr}h`])}
+                rows={multiMonthCopyRows}
                 label="Copiar Matriz Mensual"
               />
             </div>
@@ -1990,7 +2040,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
               <CopyTableButton
                 headers={['Servicio', 'Reincidencias', 'Centrales', 'Fechas', 'Último Cable', 'Último Técnico']}
-                rows={repeatedServicesData.map(r => [r.serviceNumber, `${r.count} veces`, Array.from(r.centralNames).join(', '), r.repairs.map(x => x.date).join(' | '), r.latestCable, r.latestTech])}
+                rows={repeatedCopyRows}
                 label="Copiar Reincidentes"
               />
             </div>
@@ -2398,7 +2448,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
               </div>
 
               <div className="flex items-center space-x-3">
-                <CopyTableButton headers={['#', 'Folio/Ticket', 'Fecha Atención', 'Fecha Reporte', 'Central', 'Abonado/Servicio', 'Técnico', 'Cable/Falla', 'Grupo', 'Clave', 'Estado', 'MTTR (hs)']} rows={filteredHistoryRecords.map((r, idx) => [idx + 1, r.ticketCode, r.date, r.reportDate || r.date, r.centralName, r.serviceNumber, r.technician, r.cable || r.issueType, r.grupo || '', r.claveCode || '', r.status === 'resolved' ? 'Resuelto' : (r.status === 'in_progress' ? 'En Proceso' : 'Pendiente'), r.mttrHours])} label="Copiar Historial" />
+                <CopyTableButton headers={['#', 'Folio/Ticket', 'Fecha Atención', 'Fecha Reporte', 'Central', 'Abonado/Servicio', 'Técnico', 'Cable/Falla', 'Grupo', 'Clave', 'Estado', 'MTTR (hs)']} rows={historyCopyRows} label="Copiar Historial" />
                 
                 <button
                   onClick={() => setShowDeleteHistoryModal(true)}

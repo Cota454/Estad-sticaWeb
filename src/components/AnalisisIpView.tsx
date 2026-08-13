@@ -659,11 +659,17 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   }, [matrixCentralesData.columns]);
 
   const copyCentralesRows = useMemo(() => {
-    return matrixCentralesData.rows.map(r => [
+    const baseRows = matrixCentralesData.rows.map(r => [
       r,
       ...matrixCentralesData.columns.map(c => matrixCentralesData.cellMap[r]?.[c] || 0),
       matrixCentralesData.rowTotals[r] || 0
     ]);
+    const totalRow = [
+      'TOTAL GENERAL',
+      ...matrixCentralesData.columns.map(c => matrixCentralesData.colTotals[c] || 0),
+      matrixCentralesData.grandTotal
+    ];
+    return [...baseRows, totalRow];
   }, [matrixCentralesData]);
 
   // Copy Headers & Rows for Matrix Zonas x Grupos
@@ -672,7 +678,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   }, [matrixZonasData.columns]);
 
   const copyZonasRows = useMemo(() => {
-    return matrixZonasData.rows.map(r => {
+    const baseRows = matrixZonasData.rows.map(r => {
       const rowTot = matrixZonasData.rowTotals[r] || 0;
       const pct = matrixZonasData.grandTotal > 0 ? (rowTot / matrixZonasData.grandTotal) * 100 : 0;
       return [
@@ -681,6 +687,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         `${rowTot} (${pct.toFixed(1)}%)`
       ];
     });
+    const totalRow = [
+      'TOTAL GENERAL',
+      ...matrixZonasData.columns.map(c => matrixZonasData.colTotals[c] || 0),
+      `${matrixZonasData.grandTotal} (100.0%)`
+    ];
+    return [...baseRows, totalRow];
   }, [matrixZonasData]);
 
   // Copy Headers & Rows for Matrix Cables x Grupos
@@ -689,11 +701,17 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   }, [matrixCablesData.columns]);
 
   const copyCablesRows = useMemo(() => {
-    return matrixCablesData.rows.map(r => [
+    const baseRows = matrixCablesData.rows.map(r => [
       r,
       ...matrixCablesData.columns.map(c => matrixCablesData.cellMap[r]?.[c] || 0),
       matrixCablesData.rowTotals[r] || 0
     ]);
+    const totalRow = [
+      'TOTAL GENERAL',
+      ...matrixCablesData.columns.map(c => matrixCablesData.colTotals[c] || 0),
+      matrixCablesData.grandTotal
+    ];
+    return [...baseRows, totalRow];
   }, [matrixCablesData]);
 
   const filteredCableGroups = useMemo(() => {
@@ -1890,19 +1908,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
               <CopyTableButton
                 headers={['N°', 'SERVICIO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA']}
-                rows={displayModalServices.map((s, idx) => [
-                  (idx + 1).toString(),
-                  s.servicio,
-                  s.central,
-                  s.cableP || '-',
-                  s.parP || '-',
-                  s.cableS || '-',
-                  s.parS || '-',
-                  s.grupo,
-                  s.networkTypeLabel || '-',
-                  `${getDemoraDays(s)} días`,
-                  s.fechaReporte || '-'
-                ])}
+                rows={[
+                  ...displayModalServices.map((s, idx) => [
+                    (idx + 1).toString(),
+                    s.servicio,
+                    s.central,
+                    s.cableP || '-',
+                    s.parP || '-',
+                    s.cableS || '-',
+                    s.parS || '-',
+                    s.grupo,
+                    s.networkTypeLabel || '-',
+                    `${getDemoraDays(s)} días`,
+                    s.fechaReporte || '-'
+                  ]),
+                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-']
+                ]}
                 label="Copiar Servicios"
               />
             </div>
