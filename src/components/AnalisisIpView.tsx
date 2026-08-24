@@ -65,6 +65,7 @@ import {
   parseIpCablesExcelFile,
   generateSampleIpCablesData,
   classifyNetworkType,
+  cleanCableName,
   matchCableInItem,
   matchCableInItemExact
 } from '../utils/ipCablesExcelParser';
@@ -199,6 +200,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [selectedCentralFilter, setSelectedCentralFilter] = useState<string>('all');
   const [selectedNetworkTypeFilter, setSelectedNetworkTypeFilter] = useState<NetworkTypeCategory>('all');
   const [selectedMonthYearFilter, setSelectedMonthYearFilter] = useState<string>('all'); // e.g. "2026-8"
+  const [cableSearchMode, setCableSearchMode] = useState<'cable' | 'servicio'>('cable');
   const [cableSearchTerm, setCableSearchTerm] = useState<string>('');
   const [cableSortOrder, setCableSortOrder] = useState<'desc' | 'asc' | 'alpha'>('desc');
 
@@ -246,7 +248,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         return {
           ...row,
           networkType: classification.networkType,
-          networkTypeLabel: classification.networkTypeLabel
+          networkTypeLabel: classification.networkTypeLabel,
+          flexibleRuleId: classification.flexibleRuleId,
+          flexibleAssignedName: classification.flexibleAssignedName
         };
       });
 
@@ -264,6 +268,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // Matrix Filter States
   const [matrixDemoraFilter, setMatrixDemoraFilter] = useState<string>('all');
+  const [matrixManualDate, setMatrixManualDate] = useState<string>('');
   const [matrixMonthFilter, setMatrixMonthFilter] = useState<string>('all');
   const [matrixYearFilter, setMatrixYearFilter] = useState<string>('all');
   const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
@@ -281,14 +286,21 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return Array.from(yrSet).sort((a, b) => b - a);
   }, [excelData]);
 
-  // Rows filtered by Demora en Días, Mes, and Año for Tab 1 Matrices
+  // Rows filtered by Demora en Días (including manual date), Mes, and Año for Tab 1 Matrices
   const matrixFilteredConsolidatedRows = useMemo(() => {
     if (!excelData) return [];
 
     return excelData.consolidatedRows.filter(item => {
-      // 1. Demora Filter
-      const days = getDemoraDays(item);
-      if (!matchDemoraFilter(days, matrixDemoraFilter)) return false;
+      // 1. Demora Filter / Manual Date Filter
+      if (matrixDemoraFilter === 'manual_date') {
+        if (matrixManualDate.trim()) {
+          const itemDate = (item.fechaReporte || '').trim().slice(0, 10);
+          if (itemDate !== matrixManualDate.trim()) return false;
+        }
+      } else {
+        const days = getDemoraDays(item);
+        if (!matchDemoraFilter(days, matrixDemoraFilter)) return false;
+      }
 
       // 2. Month and Year Filter
       if (item.fechaReporte && item.fechaReporte.length >= 7) {
@@ -310,7 +322,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
       return true;
     });
-  }, [excelData, matrixDemoraFilter, matrixMonthFilter, matrixYearFilter]);
+  }, [excelData, matrixDemoraFilter, matrixManualDate, matrixMonthFilter, matrixYearFilter]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -465,70 +477,57 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     };
   }, [excelData, zones, matrixCentralesData.columns, matrixFilteredConsolidatedRows]);
 
-  // Cell Click Modal State (Pestaña 1 Matrices)
-  const [selectedCellFilter, setSelectedCellFilter] = useState<{
-    title: string;
-    subtitle: string;
-    matrixType: 'centrales' | 'zonas';
-    rowName?: string;
-    colName?: string;
-  } | null>(null);
-  const [cellModalSearch, setCellModalSearch] = useState<string>('');
-
-  // Filtered services list for Cell Click Modal
-  const cellServicesList = useMemo(() => {
-    if (!selectedCellFilter || !excelData) return [];
-
-    const { matrixType, rowName, colName } = selectedCellFilter;
-
-    return matrixFilteredConsolidatedRows.filter(item => {
-      const itemCentral = (item.central || '').trim().toUpperCase();
-      const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim().toUpperCase()).filter(Boolean);
-
-      // Filter by group if colName is specified
-      if (colName) {
-        const matchGroup = rawGroups.includes(colName.trim().toUpperCase());
-        if (!matchGroup) return false;
-      }
-
-      // Filter by row (Central or Zone) if rowName is specified
-      if (rowName) {
-        if (matrixType === 'centrales') {
-          const centralParts = itemCentral.split('/').map(p => p.trim()).filter(Boolean);
-          const rowNameClean = rowName.trim().toUpperCase();
-          const matchCentral = centralParts.includes(rowNameClean) || itemCentral === rowNameClean;
-          if (!matchCentral) return false;
-        } else if (matrixType === 'zonas') {
-          const matchedZone = findMatchingZoneForItem(item, zones);
-          if (rowName === 'Sin Zonificar') {
-            if (matchedZone !== null) return false;
-          } else {
-            if (!matchedZone || matchedZone.name !== rowName) return false;
-          }
-        }
-      }
-
-      return true;
-    });
-  }, [selectedCellFilter, excelData, zones, matrixFilteredConsolidatedRows]);
-
-  const displayModalServices = useMemo(() => {
-    if (!cellModalSearch.trim()) return cellServicesList;
-    const q = cellModalSearch.trim().toLowerCase();
-    return cellServicesList.filter(s =>
-      s.servicio.toLowerCase().includes(q) ||
-      s.central.toLowerCase().includes(q) ||
-      s.cable.toLowerCase().includes(q) ||
-      (s.cableP && s.cableP.toLowerCase().includes(q)) ||
-      (s.cableS && s.cableS.toLowerCase().includes(q)) ||
-      (s.parP && s.parP.toLowerCase().includes(q)) ||
-      (s.parS && s.parS.toLowerCase().includes(q)) ||
-      s.grupo.toLowerCase().includes(q) ||
-      (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes(q))
-    );
-  }, [cellServicesList, cellModalSearch]);
-
   // --- COMPUTED DATA FOR IP CABLES TAB (PESTAÑA 2) ---
+
+  // Exact Service Match Lookup for "Buscar por Servicio"
+  const matchedServiceInfo = useMemo(() => {
+    if (!excelData || cableSearchMode !== 'servicio' || !cableSearchTerm.trim()) {
+      return null;
+    }
+    const q = cableSearchTerm.trim().toUpperCase();
+    // Coincidencia exacta por número de servicio
+    const matchingServices = excelData.consolidatedRows.filter(
+      r => (r.servicio || '').trim().toUpperCase() === q
+    );
+
+    if (matchingServices.length === 0) {
+      return { found: false, query: cableSearchTerm.trim(), cables: [], service: null, count: 0 };
+    }
+
+    const cablesSet = new Set<string>();
+    matchingServices.forEach(item => {
+      if (item.cableP) {
+        item.cableP.split('/').forEach(c => {
+          const cl = cleanCableName(c).toUpperCase();
+          if (cl) cablesSet.add(cl);
+        });
+      }
+      if (item.cableS) {
+        item.cableS.split('/').forEach(c => {
+          const cl = cleanCableName(c).toUpperCase();
+          if (cl) cablesSet.add(cl);
+        });
+      }
+      if (item.cable) {
+        item.cable.split('/').forEach(c => {
+          const cl = cleanCableName(c).toUpperCase();
+          if (cl) cablesSet.add(cl);
+        });
+      }
+    });
+
+    const cablesList = Array.from(cablesSet);
+
+    return {
+      found: true,
+      query: cableSearchTerm.trim(),
+      cables: cablesList,
+      service: matchingServices[0],
+      matchingServices
+    };
+  }, [excelData, cableSearchMode, cableSearchTerm]);
+
+  // Filtered rows for Pestaña 2
   const filteredIpCablesRows = useMemo(() => {
     if (!excelData) return [];
 
@@ -540,7 +539,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
-      // 2. Filter Network Type
+      // 2. Filter Network Type (Strictly uses Red Flexible rules from Ajustes de Cables)
       if (selectedNetworkTypeFilter !== 'all') {
         if (item.networkType !== selectedNetworkTypeFilter) {
           return false;
@@ -558,42 +557,235 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
-      // 4. Cable Search (Supports Cable P, Cable S, Par P, Par S)
+      // 4. Exact Search Logic (Cable vs Servicio)
       if (cableSearchTerm.trim()) {
-        const query = cableSearchTerm.trim();
-        const matchCable = matchCableInItem(item, query);
-        const srvVal = (item.servicio || '').toLowerCase();
-        const matchSrv = srvVal.includes(query.toLowerCase());
-        if (!matchCable && !matchSrv) {
-          return false;
+        const query = cableSearchTerm.trim().toUpperCase();
+
+        if (cableSearchMode === 'cable') {
+          // Búsqueda exacta por cable
+          const matchCable = matchCableInItemExact(item, query);
+          if (!matchCable) return false;
+        } else if (cableSearchMode === 'servicio') {
+          // Búsqueda exacta por servicio: muestra todas las incidencias en el mismo cable del servicio buscado
+          if (!matchedServiceInfo || !matchedServiceInfo.found || matchedServiceInfo.cables.length === 0) {
+            return false;
+          }
+          const sharesCable = matchedServiceInfo.cables.some(cbl => matchCableInItemExact(item, cbl));
+          if (!sharesCable) return false;
         }
       }
 
       return true;
     });
-  }, [excelData, selectedCentralFilter, selectedNetworkTypeFilter, selectedMonthYearFilter, cableSearchTerm]);
+  }, [excelData, selectedCentralFilter, selectedNetworkTypeFilter, selectedMonthYearFilter, cableSearchTerm, cableSearchMode, matchedServiceInfo]);
 
-  // Matrix Cables vs GRUPO (filtered, Contabiliza SERVICIOS CONSOLIDADOS y ordena de Mayor a Menor/Viceversa)
+  // Cell Click Modal State (Pestañas 1 y 2)
+  const [selectedCellFilter, setSelectedCellFilter] = useState<{
+    title: string;
+    subtitle: string;
+    matrixType: 'centrales' | 'zonas' | 'cables';
+    rowName?: string;
+    colName?: string;
+  } | null>(null);
+  const [cellModalSearch, setCellModalSearch] = useState<string>('');
+
+  // Filtered services list for Cell Click Modal
+  const cellServicesList = useMemo(() => {
+    if (!selectedCellFilter || !excelData) return [];
+
+    const { matrixType, rowName, colName } = selectedCellFilter;
+    const baseList = matrixType === 'cables' ? filteredIpCablesRows : matrixFilteredConsolidatedRows;
+
+    return baseList.filter(item => {
+      const itemCentral = (item.central || '').trim().toUpperCase();
+      const rawGroups = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim().toUpperCase()).filter(Boolean);
+
+      // Filter by group if colName is specified
+      if (colName) {
+        const matchGroup = rawGroups.includes(colName.trim().toUpperCase());
+        if (!matchGroup) return false;
+      }
+
+      // Filter by row (Central, Zone, or Cable/Assigned Name)
+      if (rowName) {
+        if (matrixType === 'centrales') {
+          const centralParts = itemCentral.split('/').map(p => p.trim()).filter(Boolean);
+          const rowNameClean = rowName.trim().toUpperCase();
+          const matchCentral = centralParts.includes(rowNameClean) || itemCentral === rowNameClean;
+          if (!matchCentral) return false;
+        } else if (matrixType === 'zonas') {
+          const matchedZone = findMatchingZoneForItem(item, zones);
+          if (rowName === 'Sin Zonificar') {
+            if (matchedZone !== null) return false;
+          } else {
+            if (!matchedZone || matchedZone.name !== rowName) return false;
+          }
+        } else if (matrixType === 'cables') {
+          if (selectedNetworkTypeFilter === 'flexible') {
+            const matchFlex = (item.flexibleAssignedName && item.flexibleAssignedName.toUpperCase() === rowName.toUpperCase()) ||
+              (item.networkTypeLabel && item.networkTypeLabel.toUpperCase() === rowName.toUpperCase());
+            if (!matchFlex) return false;
+          } else {
+            const matchCable = matchCableInItemExact(item, rowName) || matchCableInItem(item, rowName);
+            if (!matchCable) return false;
+          }
+        }
+      }
+
+      return true;
+    });
+  }, [selectedCellFilter, excelData, zones, matrixFilteredConsolidatedRows, filteredIpCablesRows, selectedNetworkTypeFilter]);
+
+  const displayModalServices = useMemo(() => {
+    if (!cellModalSearch.trim()) return cellServicesList;
+    const q = cellModalSearch.trim().toLowerCase();
+    return cellServicesList.filter(s =>
+      s.servicio.toLowerCase().includes(q) ||
+      s.central.toLowerCase().includes(q) ||
+      s.cable.toLowerCase().includes(q) ||
+      (s.cableP && s.cableP.toLowerCase().includes(q)) ||
+      (s.cableS && s.cableS.toLowerCase().includes(q)) ||
+      (s.parP && s.parP.toLowerCase().includes(q)) ||
+      (s.parS && s.parS.toLowerCase().includes(q)) ||
+      s.grupo.toLowerCase().includes(q) ||
+      (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes(q))
+    );
+  }, [cellServicesList, cellModalSearch]);
+
+  // Matrix Cables vs GRUPO (Handles both Standard Cable Matrix and Strict Red Flexible Assigned Name Matrix)
   const matrixCablesData = useMemo(() => {
-    if (!filteredIpCablesRows.length) {
-      return { rows: [], columns: [], cellMap: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
+    if (!filteredIpCablesRows.length && selectedNetworkTypeFilter !== 'flexible') {
+      return {
+        isFlexibleMode: false,
+        rows: [],
+        columns: [],
+        cellMap: {},
+        rowTotals: {},
+        colTotals: {},
+        grandTotal: 0,
+        assignedRulesInfo: new Map<string, string[]>()
+      };
     }
 
-    const cablesSet = new Set<string>();
     const groupsSet = new Set<string>();
-
+    if (excelData?.uniqueGroups) {
+      excelData.uniqueGroups.forEach(g => groupsSet.add(g));
+    }
     filteredIpCablesRows.forEach(item => {
-      if (item.cable) {
-        item.cable.split('/').forEach(c => cablesSet.add(c.trim()));
-      }
       if (item.grupo) {
         item.grupo.split('/').forEach(g => groupsSet.add(g.trim()));
       }
     });
-
-    const rowsList = Array.from(cablesSet);
     const colsList = Array.from(groupsSet).sort();
 
+    // Mode A: Strict Red Flexible Mode (Groups by Assigned Name and sums each pattern)
+    if (selectedNetworkTypeFilter === 'flexible') {
+      const flexRules = cableRules.flexibleRules || [];
+      const assignedRulesInfo = new Map<string, string[]>(); // assignedName -> array of patterns
+
+      flexRules.forEach(rule => {
+        const name = rule.assignedName || `Red Flexible (${rule.pattern})`;
+        const pats = (rule.pattern || '')
+          .split(',')
+          .map(p => cleanCableName(p).toUpperCase())
+          .filter(Boolean);
+
+        if (assignedRulesInfo.has(name)) {
+          assignedRulesInfo.get(name)!.push(...pats);
+        } else {
+          assignedRulesInfo.set(name, pats);
+        }
+      });
+
+      // Ensure any assigned names present in filtered items are registered
+      filteredIpCablesRows.forEach(item => {
+        const name = item.flexibleAssignedName || item.networkTypeLabel || 'Red Flexible General';
+        if (!assignedRulesInfo.has(name)) {
+          assignedRulesInfo.set(name, []);
+        }
+      });
+
+      const rowsList = Array.from(assignedRulesInfo.keys());
+
+      const cellMap: Record<string, Record<string, number>> = {};
+      const rowTotals: Record<string, number> = {};
+      const colTotals: Record<string, number> = {};
+      let grandTotal = 0;
+
+      rowsList.forEach(r => {
+        cellMap[r] = {};
+        rowTotals[r] = 0;
+        colsList.forEach(c => { cellMap[r][c] = 0; });
+      });
+      colsList.forEach(c => { colTotals[c] = 0; });
+
+      // Group rows strictly by Assigned Name; sum equals sum of each pattern
+      filteredIpCablesRows.forEach(item => {
+        let targetAssignedName = item.flexibleAssignedName;
+
+        if (!targetAssignedName) {
+          for (const [name, pats] of assignedRulesInfo.entries()) {
+            if (pats.some(p => matchCableInItemExact(item, p) || matchCableInItem(item, p))) {
+              targetAssignedName = name;
+              break;
+            }
+          }
+        }
+
+        if (!targetAssignedName) {
+          targetAssignedName = item.networkTypeLabel || rowsList[0] || 'Red Flexible General';
+        }
+
+        if (!cellMap[targetAssignedName]) {
+          cellMap[targetAssignedName] = {};
+          rowTotals[targetAssignedName] = 0;
+          if (!rowsList.includes(targetAssignedName)) rowsList.push(targetAssignedName);
+          colsList.forEach(c => { cellMap[targetAssignedName][c] = 0; });
+        }
+
+        const groupsInItem = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim());
+        groupsInItem.forEach(g => {
+          if (cellMap[targetAssignedName][g] === undefined) cellMap[targetAssignedName][g] = 0;
+          if (colTotals[g] === undefined) colTotals[g] = 0;
+
+          cellMap[targetAssignedName][g] += 1;
+          rowTotals[targetAssignedName] += 1;
+          colTotals[g] += 1;
+          grandTotal += 1;
+        });
+      });
+
+      const sortedRowsList = [...rowsList].sort((a, b) => {
+        if (cableSortOrder === 'desc') {
+          return (rowTotals[b] || 0) - (rowTotals[a] || 0) || a.localeCompare(b);
+        } else if (cableSortOrder === 'asc') {
+          return (rowTotals[a] || 0) - (rowTotals[b] || 0) || a.localeCompare(b);
+        } else {
+          return a.localeCompare(b);
+        }
+      });
+
+      return {
+        isFlexibleMode: true,
+        rows: sortedRowsList,
+        columns: colsList,
+        cellMap,
+        rowTotals,
+        colTotals,
+        grandTotal,
+        assignedRulesInfo
+      };
+    }
+
+    // Mode B: Standard Cable Matrix
+    const cablesSet = new Set<string>();
+    filteredIpCablesRows.forEach(item => {
+      if (item.cable) {
+        item.cable.split('/').forEach(c => cablesSet.add(c.trim()));
+      }
+    });
+
+    const rowsList = Array.from(cablesSet);
     const cellMap: Record<string, Record<string, number>> = {};
     const rowTotals: Record<string, number> = {};
     const colTotals: Record<string, number> = {};
@@ -623,7 +815,6 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             colTotals[g] = 0;
           }
 
-          // Each consolidated service counts as 1
           cellMap[c][g] = (cellMap[c][g] || 0) + 1;
           rowTotals[c] = (rowTotals[c] || 0) + 1;
           colTotals[g] = (colTotals[g] || 0) + 1;
@@ -632,7 +823,6 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       });
     });
 
-    // Sort rows according to cableSortOrder
     const sortedRowsList = [...rowsList].sort((a, b) => {
       if (cableSortOrder === 'desc') {
         return (rowTotals[b] || 0) - (rowTotals[a] || 0) || a.localeCompare(b);
@@ -644,14 +834,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     });
 
     return {
+      isFlexibleMode: false,
       rows: sortedRowsList,
       columns: colsList,
       cellMap,
       rowTotals,
       colTotals,
-      grandTotal
+      grandTotal,
+      assignedRulesInfo: new Map<string, string[]>()
     };
-  }, [filteredIpCablesRows, cableSortOrder]);
+  }, [filteredIpCablesRows, cableSortOrder, selectedNetworkTypeFilter, cableRules.flexibleRules, excelData?.uniqueGroups]);
 
   // Copy Headers & Rows for Matrix Centrales x Grupos
   const copyCentralesHeaders = useMemo(() => {
@@ -697,8 +889,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // Copy Headers & Rows for Matrix Cables x Grupos
   const copyCablesHeaders = useMemo(() => {
-    return ['Nombre de Cable', ...matrixCablesData.columns, 'Total General'];
-  }, [matrixCablesData.columns]);
+    const headerTitle = selectedNetworkTypeFilter === 'flexible' ? 'Nombre Asignado (Red Flexible)' : 'Nombre de Cable';
+    return [headerTitle, ...matrixCablesData.columns, 'Total General'];
+  }, [matrixCablesData.columns, selectedNetworkTypeFilter]);
 
   const copyCablesRows = useMemo(() => {
     const baseRows = matrixCablesData.rows.map(r => [
@@ -706,26 +899,30 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       ...matrixCablesData.columns.map(c => matrixCablesData.cellMap[r]?.[c] || 0),
       matrixCablesData.rowTotals[r] || 0
     ]);
+    const totalRowLabel = selectedNetworkTypeFilter === 'flexible' ? 'TOTAL GENERAL RED FLEXIBLE' : 'TOTAL GENERAL CABLES';
     const totalRow = [
-      'TOTAL GENERAL',
+      totalRowLabel,
       ...matrixCablesData.columns.map(c => matrixCablesData.colTotals[c] || 0),
       matrixCablesData.grandTotal
     ];
     return [...baseRows, totalRow];
-  }, [matrixCablesData]);
+  }, [matrixCablesData, selectedNetworkTypeFilter]);
 
   const filteredCableGroups = useMemo(() => {
     return matrixCablesData.rows.map(rowName => {
       const rowTotal = matrixCablesData.rowTotals[rowName] || 0;
-      const sampleItem = filteredIpCablesRows.find(item => item.cable && item.cable.includes(rowName));
+      const sampleItem = filteredIpCablesRows.find(item => 
+        (selectedNetworkTypeFilter === 'flexible' && (item.flexibleAssignedName === rowName || item.networkTypeLabel === rowName)) ||
+        (item.cable && item.cable.includes(rowName))
+      );
       return {
-        central: sampleItem?.central || 'CENTRAL GENERAL',
+        central: sampleItem?.central || (selectedNetworkTypeFilter === 'flexible' ? 'Varios / Red Flexible' : 'CENTRAL GENERAL'),
         cableName: rowName,
-        networkTypeLabel: sampleItem?.networkTypeLabel || 'Flexible',
+        networkTypeLabel: sampleItem?.networkTypeLabel || (selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible' : 'Flexible'),
         itemsCount: rowTotal
       };
     });
-  }, [matrixCablesData, filteredIpCablesRows]);
+  }, [matrixCablesData, filteredIpCablesRows, selectedNetworkTypeFilter]);
 
   // Floating FAB navigation items list
   const availableSectionsList: SectionNavItem[] = [
@@ -1077,22 +1274,23 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <div>
                   <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
                     <span>Filtros de Análisis para Matrices</span>
-                    {(matrixDemoraFilter !== 'all' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
+                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
                       <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
                         {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
                       </span>
                     )}
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Filtra simultáneamente las matrices por Demora en Días, Mes y Año.
+                    Filtra simultáneamente las matrices por Demora en Días (o Fecha Manual), Mes y Año.
                   </p>
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
+                    setMatrixManualDate('');
                     setMatrixMonthFilter('all');
                     setMatrixYearFilter('all');
                   }}
@@ -1110,7 +1308,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <Clock className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Demora en Días</span>
+                  <span>Demora en Días / Fecha</span>
                 </label>
                 <select
                   value={matrixDemoraFilter}
@@ -1128,7 +1326,30 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <option value="91-180">91 - 180 días</option>
                   <option value="181-365">181 - 365 días</option>
                   <option value=">365">Más de 1 año (&gt; 365 días)</option>
+                  <option value="manual_date">📅 Filtrar por Fecha Manual...</option>
                 </select>
+
+                {/* Manual Date Input Picker */}
+                {matrixDemoraFilter === 'manual_date' && (
+                  <div className="pt-1.5 flex items-center space-x-1.5">
+                    <input
+                      type="date"
+                      value={matrixManualDate}
+                      onChange={(e) => setMatrixManualDate(e.target.value)}
+                      className="w-full bg-slate-950 border border-amber-500/80 rounded-xl px-2.5 py-1.5 text-xs text-amber-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                    {matrixManualDate && (
+                      <button
+                        type="button"
+                        onClick={() => setMatrixManualDate('')}
+                        className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors shrink-0"
+                        title="Limpiar fecha manual"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* 2. Month Filter */}
@@ -1621,14 +1842,35 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               <div>
                 <h3 className="text-lg font-black text-white flex items-center space-x-2">
                   <Cable className="w-5 h-5 text-emerald-400" />
-                  <span>Monitoreo e Inventario de IP Cables por Grupo</span>
+                  <span>
+                    {selectedNetworkTypeFilter === 'flexible'
+                      ? 'Monitoreo de Red Flexible por Nombre Asignado'
+                      : 'Monitoreo e Inventario de IP Cables por Grupo'}
+                  </span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Filtre las incidencias por Central, Tipo de Red (Rígida, Flexible, Outdoor) y Fecha de Reporte.
+                  {selectedNetworkTypeFilter === 'flexible'
+                    ? 'Agrupado estrictamente según los Nombres Asignados y Patrones creados en Ajustes de Cables.'
+                    : 'Filtre incidencias por Central, Tipo de Red (Rígida, Flexible, Outdoor), Fecha y Búsqueda Exacta.'}
                 </p>
               </div>
 
               <div className="flex items-center space-x-2">
+                {(selectedCentralFilter !== 'all' || selectedNetworkTypeFilter !== 'all' || selectedMonthYearFilter !== 'all' || cableSearchTerm.trim() !== '') && (
+                  <button
+                    onClick={() => {
+                      setSelectedCentralFilter('all');
+                      setSelectedNetworkTypeFilter('all');
+                      setSelectedMonthYearFilter('all');
+                      setCableSearchTerm('');
+                    }}
+                    className="flex items-center space-x-1.5 px-3 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                    title="Restablecer filtros de IP Cables"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Restablecer</span>
+                  </button>
+                )}
                 <button
                   onClick={() => toggleEmailSection('section-cables')}
                   className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
@@ -1641,7 +1883,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <Mail className="w-3.5 h-3.5" />
                   <span>{selectedEmailSectionIds.has('section-cables') ? 'En Correo' : '+ Correo'}</span>
                 </button>
-                <CopyTableButton headers={copyCablesHeaders} rows={copyCablesRows} label="Copiar Tabla Cables" />
+                <CopyTableButton headers={copyCablesHeaders} rows={copyCablesRows} label="Copiar Tabla" />
               </div>
             </div>
 
@@ -1667,25 +1909,37 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
               {/* 2. Network Type Filter */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
-                  2. Tipo de Red
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                    2. Tipo de Red
+                  </label>
+                  {selectedNetworkTypeFilter === 'flexible' && (
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-1.5 py-0.2 rounded border border-emerald-800/60">
+                      {cableRules.flexibleRules?.length || 0} reglas
+                    </span>
+                  )}
+                </div>
                 <select
                   value={selectedNetworkTypeFilter}
                   onChange={(e) => setSelectedNetworkTypeFilter(e.target.value as NetworkTypeCategory)}
-                  className="w-full bg-slate-950 border border-slate-800 text-white text-xs rounded-xl p-2.5 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+                  className={`w-full bg-slate-950 border text-xs rounded-xl p-2.5 font-bold focus:outline-none cursor-pointer ${
+                    selectedNetworkTypeFilter === 'flexible'
+                      ? 'border-emerald-500 text-emerald-300 bg-emerald-950/20'
+                      : 'border-slate-800 text-white focus:border-emerald-500'
+                  }`}
                 >
                   <option value="all">Todas las Redes</option>
+                  <option value="flexible">Red Flexible (Reglas Ajustes de Cables)</option>
                   <option value="rigida">Red Rígida</option>
-                  <option value="flexible">Red Flexible</option>
                   <option value="outdoor">Outdoor</option>
+                  <option value="other">Otras Redes</option>
                 </select>
               </div>
 
               {/* 3. Month & Year Filter (FECHA REPORTE) */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
-                  3. Mes y Año (FECHA REPORTE)
+                  3. Mes y Año (FECHA)
                 </label>
                 <select
                   value={selectedMonthYearFilter}
@@ -1701,20 +1955,60 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </select>
               </div>
 
-              {/* 4. Cable Name Search */}
+              {/* 4. Exact Search (Cable vs Servicio) */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
-                  4. Buscar por Cable / Servicio
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                    4. Búsqueda Exacta
+                  </label>
+                  <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setCableSearchMode('cable')}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold transition-all ${
+                        cableSearchMode === 'cable'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Cable
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCableSearchMode('servicio')}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold transition-all ${
+                        cableSearchMode === 'servicio'
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Servicio
+                    </button>
+                  </div>
+                </div>
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="text"
-                    placeholder="Ej. CR-101 o SER-10023"
+                    placeholder={
+                      cableSearchMode === 'cable'
+                        ? 'Cable exacto (ej. CR-101)...'
+                        : 'Servicio exacto (ej. SER-10023)...'
+                    }
                     value={cableSearchTerm}
                     onChange={(e) => setCableSearchTerm(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                    className="w-full pl-8 pr-8 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
                   />
+                  {cableSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setCableSearchTerm('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-white p-0.5 rounded"
+                      title="Limpiar búsqueda"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1730,18 +2024,68 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 >
                   <option value="desc">De Mayor a Menor (↓)</option>
                   <option value="asc">De Menor a Mayor (↑)</option>
-                  <option value="alpha">Nombre de Cable (A - Z)</option>
+                  <option value="alpha">Nombre Alfabético (A - Z)</option>
                 </select>
               </div>
 
             </div>
+
+            {/* Service Search Result Banner */}
+            {cableSearchMode === 'servicio' && cableSearchTerm.trim() !== '' && (
+              <div>
+                {matchedServiceInfo && matchedServiceInfo.found ? (
+                  <div className="p-3.5 bg-blue-950/40 border border-blue-500/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30 shrink-0">
+                        <CheckCircle2 className="w-5 h-5 text-blue-400" />
+                      </div>
+                      <div>
+                        <div className="font-black text-white text-sm flex items-center space-x-2">
+                          <span>Servicio Encontrado: {matchedServiceInfo.query}</span>
+                          <span className="bg-blue-600/30 text-blue-300 text-[10px] px-2 py-0.5 rounded-md font-mono border border-blue-500/30">
+                            {matchedServiceInfo.service?.central || 'CENTRAL'}
+                          </span>
+                        </div>
+                        <p className="text-slate-300 text-xs mt-0.5">
+                          Cable(s) asociado(s) al servicio: <strong className="text-emerald-400 font-mono font-black">{matchedServiceInfo.cables.join(' / ') || 'SIN CABLE'}</strong>
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2 bg-slate-900/90 px-3.5 py-2 rounded-xl border border-slate-700 shrink-0">
+                      <span className="text-slate-300 font-medium">Incidencias en el mismo cable:</span>
+                      <span className="font-mono font-black text-emerald-400 text-base bg-emerald-950/80 px-2 py-0.5 rounded-lg border border-emerald-700/50">
+                        {matrixCablesData.grandTotal}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-amber-950/40 border border-amber-500/40 rounded-2xl flex items-center space-x-3 text-xs text-amber-200">
+                    <Info className="w-5 h-5 text-amber-400 shrink-0" />
+                    <div>
+                      <span className="font-bold text-amber-300">Servicio no encontrado:</span> No se localizó ningún registro con el número exacto <strong className="font-mono text-white bg-slate-900 px-1.5 py-0.5 rounded">"{cableSearchTerm.trim()}"</strong> en el archivo cargado.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Matrix Cables vs GRUPO */}
+          {/* Matrix Table */}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-400">
-                Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> cables filtrados.
+                {selectedNetworkTypeFilter === 'flexible' ? (
+                  <span>
+                    Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> nombres asignados de Red Flexible. El total de cada fila equivale a la suma de cada uno de sus patrones asociados.
+                  </span>
+                ) : (
+                  <span>
+                    Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> cables filtrados.
+                  </span>
+                )}
+              </span>
+              <span className="text-[11px] text-slate-500 italic">
+                * Haga clic en cualquier celda o total para inspeccionar el detalle de servicios.
               </span>
             </div>
 
@@ -1749,7 +2093,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               <table className="w-full text-xs text-left text-slate-300">
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
-                    <th className="py-3.5 px-4 font-black text-white">Nombre de Cable</th>
+                    <th className="py-3.5 px-4 font-black text-white">
+                      {selectedNetworkTypeFilter === 'flexible' ? 'Nombre Asignado (Red Flexible)' : 'Nombre de Cable'}
+                    </th>
                     {matrixCablesData.columns.map(col => (
                       <th key={col} className="py-3.5 px-4 text-center">{col}</th>
                     ))}
@@ -1760,26 +2106,74 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   {matrixCablesData.rows.length === 0 ? (
                     <tr>
                       <td colSpan={matrixCablesData.columns.length + 2} className="py-8 text-center text-slate-500 italic">
-                        No se encontraron cables que coincidan con los filtros seleccionados.
+                        {selectedNetworkTypeFilter === 'flexible' && (!cableRules.flexibleRules || cableRules.flexibleRules.length === 0)
+                          ? 'No hay reglas de Red Flexible configuradas en la pestaña "4. Ajustes de Cables". Cree una regla para asociar patrones.'
+                          : 'No se encontraron registros que coincidan con los filtros seleccionados.'}
                       </td>
                     </tr>
                   ) : (
-                    matrixCablesData.rows.map(cableName => {
-                      const rowTotal = matrixCablesData.rowTotals[cableName] || 0;
+                    matrixCablesData.rows.map(rowKey => {
+                      const rowTotal = matrixCablesData.rowTotals[rowKey] || 0;
+                      const patternsList = selectedNetworkTypeFilter === 'flexible'
+                        ? matrixCablesData.assignedRulesInfo?.get(rowKey) || []
+                        : [];
+
                       return (
-                        <tr key={cableName} className="hover:bg-slate-800/50 transition-colors">
-                          <td className="py-3.5 px-4 font-mono font-bold text-emerald-300 flex items-center space-x-2">
-                            <Cable className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                            <span>{cableName}</span>
+                        <tr key={rowKey} className="hover:bg-slate-800/50 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="flex flex-col space-y-0.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (rowTotal > 0) {
+                                    setSelectedCellFilter({
+                                      title: rowKey,
+                                      subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible Asignada (Todos los Grupos)' : 'Cable (Todos los Grupos)',
+                                      matrixType: 'cables',
+                                      rowName: rowKey
+                                    });
+                                    setCellModalSearch('');
+                                  }
+                                }}
+                                className="font-mono font-bold text-emerald-300 hover:text-emerald-200 flex items-center space-x-2 text-left cursor-pointer transition-colors"
+                              >
+                                {selectedNetworkTypeFilter === 'flexible' ? (
+                                  <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                ) : (
+                                  <Cable className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                )}
+                                <span>{rowKey}</span>
+                              </button>
+
+                              {patternsList.length > 0 && (
+                                <div className="text-[10px] text-slate-400 font-mono flex items-center space-x-1 pl-5">
+                                  <span className="text-slate-500">Patrones:</span>
+                                  <span className="text-slate-300">{patternsList.join(', ')}</span>
+                                </div>
+                              )}
+                            </div>
                           </td>
                           {matrixCablesData.columns.map(colName => {
-                            const val = matrixCablesData.cellMap[cableName]?.[colName] || 0;
+                            const val = matrixCablesData.cellMap[rowKey]?.[colName] || 0;
                             return (
                               <td key={colName} className="py-3.5 px-4 text-center font-mono">
                                 {val > 0 ? (
-                                  <span className="font-black text-emerald-300 px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/50">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCellFilter({
+                                        title: `${rowKey} · ${colName}`,
+                                        subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible Asignada' : 'Incidencias de Cable',
+                                        matrixType: 'cables',
+                                        rowName: rowKey,
+                                        colName: colName
+                                      });
+                                      setCellModalSearch('');
+                                    }}
+                                    className="font-black text-emerald-300 px-2 py-0.5 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-800/50 hover:border-emerald-500 transition-all cursor-pointer"
+                                  >
                                     {val}
-                                  </span>
+                                  </button>
                                 ) : hideZeroValues ? null : (
                                   <span className="text-slate-600">-</span>
                                 )}
@@ -1787,7 +2181,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             );
                           })}
                           <td className="py-3.5 px-4 text-center font-mono font-black text-amber-400 text-sm bg-slate-900/40">
-                            {rowTotal}
+                            {rowTotal > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCellFilter({
+                                    title: rowKey,
+                                    subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Total Red Flexible Asignada' : 'Total Incidencias Cable',
+                                    matrixType: 'cables',
+                                    rowName: rowKey
+                                  });
+                                  setCellModalSearch('');
+                                }}
+                                className="hover:underline cursor-pointer"
+                              >
+                                {rowTotal}
+                              </button>
+                            ) : (
+                              <span>0</span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -1796,7 +2208,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </tbody>
                 <tfoot className="bg-slate-900 font-black text-white border-t-2 border-slate-700">
                   <tr>
-                    <td className="py-3.5 px-4 uppercase text-[11px] text-slate-300 font-mono">TOTAL CABLES FILTRADOS</td>
+                    <td className="py-3.5 px-4 uppercase text-[11px] text-slate-300 font-mono">
+                      {selectedNetworkTypeFilter === 'flexible' ? 'TOTAL GENERAL RED FLEXIBLE' : 'TOTAL CABLES FILTRADOS'}
+                    </td>
                     {matrixCablesData.columns.map(colName => (
                       <td key={colName} className="py-3.5 px-4 text-center font-mono text-emerald-400 text-sm">
                         {matrixCablesData.colTotals[colName] || 0}

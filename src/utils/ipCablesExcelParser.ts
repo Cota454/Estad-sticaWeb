@@ -119,7 +119,12 @@ export function classifyNetworkType(
   cableSVal: string,
   centralVal: string,
   rules: CableClassificationRules
-): { networkType: 'rigida' | 'flexible' | 'outdoor' | 'other'; networkTypeLabel: string } {
+): {
+  networkType: 'rigida' | 'flexible' | 'outdoor' | 'other';
+  networkTypeLabel: string;
+  flexibleRuleId?: string;
+  flexibleAssignedName?: string;
+} {
   const normCableP = cleanCableName(cablePVal).toUpperCase();
   const normCableS = cleanCableName(cableSVal).toUpperCase();
   const normCentral = (centralVal || '').toString().trim().toUpperCase();
@@ -141,25 +146,31 @@ export function classifyNetworkType(
     return { networkType: 'rigida', networkTypeLabel: 'Red Rígida' };
   }
 
-  // 2. Check Red Flexible (Matches in rules.flexibleRules against Cable P or Cable S)
-  const flexibleRuleMatch = rules.flexibleRules.find(rule => {
+  // 2. Check Red Flexible (Matches strictly against rules.flexibleRules defined in Ajustes de Cables)
+  const flexibleRuleMatch = (rules.flexibleRules || []).find(rule => {
     const rawPatterns = (rule.pattern || '').toString().split(',');
     return rawPatterns.some(p => {
       const pat = cleanCableName(p).toUpperCase();
       if (!pat) return false;
-      return (normCableP && normCableP.includes(pat)) || (normCableS && normCableS.includes(pat));
+      return (
+        (normCableP && (normCableP === pat || normCableP.includes(pat))) ||
+        (normCableS && (normCableS === pat || normCableS.includes(pat)))
+      );
     });
   });
 
   if (flexibleRuleMatch) {
+    const assigned = flexibleRuleMatch.assignedName || `Red Flexible (${flexibleRuleMatch.pattern})`;
     return {
       networkType: 'flexible',
-      networkTypeLabel: `Red Flexible (${flexibleRuleMatch.assignedName || flexibleRuleMatch.pattern})`
+      networkTypeLabel: assigned,
+      flexibleRuleId: flexibleRuleMatch.id,
+      flexibleAssignedName: assigned
     };
   }
 
   // 3. Check Outdoor (Matches in rules.outdoorRules against Central)
-  const outdoorRuleMatch = rules.outdoorRules.find(rule => {
+  const outdoorRuleMatch = (rules.outdoorRules || []).find(rule => {
     const rawPatterns = (rule.centralPattern || '').toString().split(',');
     return rawPatterns.some(p => {
       const pat = cleanCableName(p).toUpperCase();
@@ -172,11 +183,6 @@ export function classifyNetworkType(
       networkType: 'outdoor',
       networkTypeLabel: `Outdoor (${outdoorRuleMatch.assignedName || outdoorRuleMatch.centralPattern})`
     };
-  }
-
-  // If Cable S exists, treat as Flexible network by default
-  if (normCableS) {
-    return { networkType: 'flexible', networkTypeLabel: 'Red Flexible (Secundario)' };
   }
 
   return { networkType: 'other', networkTypeLabel: 'Otra Red / General' };
@@ -397,6 +403,8 @@ export async function parseIpCablesExcelFile(
       const updatedClassification = classifyNetworkType(existing.cableP || '', existing.cableS || '', existing.central || '', rules);
       existing.networkType = updatedClassification.networkType;
       existing.networkTypeLabel = updatedClassification.networkTypeLabel;
+      existing.flexibleRuleId = updatedClassification.flexibleRuleId;
+      existing.flexibleAssignedName = updatedClassification.flexibleAssignedName;
 
       // Merge rawRowData across all Excel columns
       if (!existing.rawRowData) {
@@ -446,6 +454,8 @@ export async function parseIpCablesExcelFile(
         rawRowData: rowObj,
         networkType: classification.networkType,
         networkTypeLabel: classification.networkTypeLabel,
+        flexibleRuleId: classification.flexibleRuleId,
+        flexibleAssignedName: classification.flexibleAssignedName,
         count: 1,
         combinedDetails: [`Fila ${rowIdx + 5}: Central=${rawCentral}, Cable P=${rawCableP}, Cable S=${rawCableS}, Grupo=${rawGrupo}`]
       });
@@ -551,6 +561,8 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
         },
         networkType: classification.networkType,
         networkTypeLabel: classification.networkTypeLabel,
+        flexibleRuleId: classification.flexibleRuleId,
+        flexibleAssignedName: classification.flexibleAssignedName,
         count: 1
       });
     }

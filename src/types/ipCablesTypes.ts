@@ -13,7 +13,7 @@ export interface CableClassificationRules {
   outdoorRules: { id: string; centralPattern: string; assignedName: string }[]; // Match in CENTRAL TELEFONICA column
 }
 
-export type NetworkTypeCategory = 'all' | 'rigida' | 'flexible' | 'outdoor';
+export type NetworkTypeCategory = 'all' | 'rigida' | 'flexible' | 'outdoor' | 'other';
 
 export interface IpCableRow {
   id: string;
@@ -29,6 +29,8 @@ export interface IpCableRow {
   rawRowData: Record<string, any>;
   networkType: 'rigida' | 'flexible' | 'outdoor' | 'other';
   networkTypeLabel: string;
+  flexibleRuleId?: string;
+  flexibleAssignedName?: string;
   count: number;              // Consolidated record count (e.g. 1 or merged count)
   combinedDetails?: string[]; // Log of merged rows
 }
