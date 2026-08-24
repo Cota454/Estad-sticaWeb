@@ -41,6 +41,8 @@ import {
   PrintedRecord
 } from '../utils/ipCablesStorage';
 
+import { SiprecTicket } from './SiprecTicket';
+
 interface PrintReportsViewProps {
   excelData: IpCableExcelParseResult | null;
   onUpdateExcelData?: (newData: IpCableExcelParseResult) => void;
@@ -85,10 +87,14 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   const [isMerging, setIsMerging] = useState<boolean>(false);
   const [mergeSuccessMsg, setMergeSuccessMsg] = useState<string>('');
 
+  // Ticket Format & Styling State
+  const [ticketFormat, setTicketFormat] = useState<'siprec' | 'standard'>('siprec');
+  const [ticketWidth, setTicketWidth] = useState<'80mm' | '58mm' | 'full'>('80mm');
+  const [showFooterLiquidation, setShowFooterLiquidation] = useState<boolean>(true);
+
   // Live Print Preview Modal State
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState<boolean>(false);
-  const [previewMode, setPreviewMode] = useState<'sheet' | 'ticket'>('sheet');
-  const [ticketWidth, setTicketWidth] = useState<'80mm' | '58mm' | 'full'>('80mm');
+  const [previewMode, setPreviewMode] = useState<'sheet' | 'ticket'>('ticket');
 
   // Print Mode triggered for native browser print
   const [activePrintMode, setActivePrintMode] = useState<'none' | 'sheet' | 'ticket'>('none');
@@ -625,10 +631,73 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
       </div>
 
       {/* ------------------------------------------------------------- */}
-      {/* FILTER CONTROLS BAR (Hidden during Print) */}
+      {/* FILTER & TICKET CONFIGURATION CONTROLS BAR (Hidden during Print) */}
       {/* ------------------------------------------------------------- */}
       <div className="print:hidden bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white shadow-lg space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        
+        {/* Ticket Format & Thermal Printing Customization Bar */}
+        <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+            <div className="flex items-center space-x-2">
+              <Tag className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-black uppercase text-white tracking-wider">
+                Configuración del Modelo de Ticket Térmico
+              </span>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              Formato idéntico a boleta de campo SIPREC para rollos continuos (80mm / 58mm) o A4
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Modelo / Formato de Ticket */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                Modelo de Boleta / Ticket
+              </label>
+              <select
+                value={ticketFormat}
+                onChange={(e) => setTicketFormat(e.target.value as any)}
+                className="w-full bg-slate-900 border border-slate-800 text-white text-xs rounded-xl p-2 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+              >
+                <option value="siprec">🧾 Boleta SIPREC (Físico Térmico Real)</option>
+                <option value="standard">📇 Tarjeta Estándar / Dinámica</option>
+              </select>
+            </div>
+
+            {/* Ancho de Rollo / Papel */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                Ancho de Impresora
+              </label>
+              <select
+                value={ticketWidth}
+                onChange={(e) => setTicketWidth(e.target.value as any)}
+                className="w-full bg-slate-900 border border-slate-800 text-white text-xs rounded-xl p-2 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+              >
+                <option value="80mm">80 mm (Estándar Impresora Térmica POS)</option>
+                <option value="58mm">58 mm (Mini Térmica Portátil)</option>
+                <option value="full">A4 Ancho Completo</option>
+              </select>
+            </div>
+
+            {/* Incluir Liquidación y Trabajo Efectuado */}
+            <div className="space-y-1 flex flex-col justify-end">
+              <label className="p-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 cursor-pointer flex items-center space-x-2 text-xs font-bold text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={showFooterLiquidation}
+                  onChange={(e) => setShowFooterLiquidation(e.target.checked)}
+                  className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                />
+                <span>Incluir Trabajo Efectuado y Firma</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 pt-1">
 
           {/* 1. Central */}
           <div className="space-y-1">
@@ -883,48 +952,17 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
       {/* TICKET PRINT CONTAINER (Rendered only during Native Ticket Print) */}
       {/* ------------------------------------------------------------- */}
       {activePrintMode === 'ticket' && (
-        <div className="hidden print:block space-y-6">
+        <div className="hidden print:block space-y-4">
           {rowsToPrint.map((row, index) => (
-            <div
+            <SiprecTicket
               key={`ticket_print_${row.id}_${index}`}
-              className="border-2 border-black p-4 mb-6 rounded-lg text-black font-mono space-y-3 bg-white"
-              style={{ pageBreakAfter: 'always', breakAfter: 'page' }}
-            >
-              {/* Ticket Header */}
-              <div className="text-center border-b-2 border-black pb-2 space-y-1">
-                <h2 className="text-base font-black uppercase">ORDEN DE TRABAJO</h2>
-                <div className="text-xs font-bold">SERVICIO: {row.servicio}</div>
-                <div className="text-[10px] text-gray-700">Impreso: {new Date().toLocaleString()}</div>
-              </div>
-
-              {/* Grid of Key-Value Data */}
-              <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                {selectedColumns.map(col => {
-                  let val = row.rawRowData?.[col];
-                  if (val === undefined || val === null || val === '') {
-                    if (col.toUpperCase() === 'SERVICIO') val = row.servicio;
-                    else if (col.toUpperCase().includes('CENTRAL')) val = row.central;
-                    else if (col.toUpperCase().includes('GRUPO')) val = row.grupo;
-                    else if (col.toUpperCase().includes('CABLE')) val = row.cable;
-                    else if (col.toUpperCase().includes('FECHA')) val = row.fechaReporte;
-                    else val = 'N/A';
-                  }
-
-                  return (
-                    <div key={col} className="border-b border-gray-300 pb-1">
-                      <span className="font-bold text-[10px] uppercase text-gray-600 block">{col}</span>
-                      <span className="font-bold text-xs">{val.toString()}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Footer Stamp Box */}
-              <div className="border-t-2 border-dashed border-black pt-4 mt-4 grid grid-cols-2 gap-4 text-center text-[10px]">
-                <div className="border-t border-black pt-1">Firma Técnico / Técnico Asignado</div>
-                <div className="border-t border-black pt-1">Sello / Conformidad Cliente</div>
-              </div>
-            </div>
+              row={row}
+              index={index + 1}
+              ticketWidth={ticketWidth}
+              showFooterLiquidation={showFooterLiquidation}
+              ticketFormat={ticketFormat}
+              selectedColumns={selectedColumns}
+            />
           ))}
         </div>
       )}
@@ -1117,17 +1155,41 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
               </div>
 
               {previewMode === 'ticket' && (
-                <div className="flex items-center space-x-2 text-xs">
-                  <span className="text-slate-400 font-bold">Ancho Ticket:</span>
-                  <select
-                    value={ticketWidth}
-                    onChange={(e) => setTicketWidth(e.target.value as any)}
-                    className="bg-slate-900 border border-slate-800 text-white text-xs rounded-xl p-1 font-bold"
-                  >
-                    <option value="80mm">80 mm (Estándar POS)</option>
-                    <option value="58mm">58 mm (Mini Térmica)</option>
-                    <option value="full">A4 Ancho Completo</option>
-                  </select>
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-slate-400 font-bold">Formato:</span>
+                    <select
+                      value={ticketFormat}
+                      onChange={(e) => setTicketFormat(e.target.value as any)}
+                      className="bg-slate-900 border border-slate-800 text-white text-xs rounded-xl p-1 font-bold"
+                    >
+                      <option value="siprec">🧾 Boleta SIPREC (Real)</option>
+                      <option value="standard">📇 Tarjeta Dinámica</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-slate-400 font-bold">Ancho:</span>
+                    <select
+                      value={ticketWidth}
+                      onChange={(e) => setTicketWidth(e.target.value as any)}
+                      className="bg-slate-900 border border-slate-800 text-white text-xs rounded-xl p-1 font-bold"
+                    >
+                      <option value="80mm">80 mm (POS)</option>
+                      <option value="58mm">58 mm (Mini)</option>
+                      <option value="full">A4 Ancho</option>
+                    </select>
+                  </div>
+
+                  <label className="flex items-center space-x-1.5 cursor-pointer text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={showFooterLiquidation}
+                      onChange={(e) => setShowFooterLiquidation(e.target.checked)}
+                      className="rounded border-slate-700 text-emerald-500"
+                    />
+                    <span>Firma/Cierre</span>
+                  </label>
                 </div>
               )}
             </div>
@@ -1172,37 +1234,21 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                 </div>
               ) : (
                 /* Tickets Simulator */
-                <div className="space-y-4 w-full flex flex-col items-center">
+                <div className="space-y-6 w-full flex flex-col items-center">
                   {rowsToPrint.slice(0, 3).map((row, idx) => (
-                    <div
-                      key={`prev_ticket_${row.id}`}
-                      className={`bg-white text-black p-4 rounded-lg shadow-xl font-mono text-xs space-y-3 border border-gray-300 ${
-                        ticketWidth === '58mm'
-                          ? 'w-64'
-                          : ticketWidth === '80mm'
-                          ? 'w-80'
-                          : 'w-full'
-                      }`}
-                    >
-                      <div className="text-center border-b border-black pb-1">
-                        <div className="font-black text-xs uppercase">ORDEN DE TRABAJO - TICKET #{idx + 1}</div>
-                        <div className="font-bold text-sm text-blue-900">SERVICIO: {row.servicio}</div>
-                      </div>
-                      <div className="space-y-1 text-[11px]">
-                        {selectedColumns.map(col => (
-                          <div key={col} className="flex justify-between border-b border-gray-200 pb-0.5">
-                            <span className="font-bold text-gray-600 uppercase text-[9px]">{col}:</span>
-                            <span className="font-bold truncate max-w-[140px]">
-                              {(row.rawRowData?.[col] || row.servicio || '-').toString()}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <SiprecTicket
+                      key={`prev_ticket_${row.id}_${idx}`}
+                      row={row}
+                      index={idx + 1}
+                      ticketWidth={ticketWidth}
+                      showFooterLiquidation={showFooterLiquidation}
+                      ticketFormat={ticketFormat}
+                      selectedColumns={selectedColumns}
+                    />
                   ))}
                   {rowsToPrint.length > 3 && (
                     <div className="text-xs text-slate-400 font-bold pt-2">
-                      + {rowsToPrint.length - 3} tickets adicionales listos para imprimir.
+                      + {rowsToPrint.length - 3} tickets adicionales listos para imprimir en el lote.
                     </div>
                   )}
                 </div>

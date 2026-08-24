@@ -82,3 +82,29 @@ html.light-mode select {
   color: #0f172a !important;
   border-color: #cbd5e1 !important;
 }
+
+/* Print Optimization for Thermal Tickets & Reports */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @page {
+    margin: 0.5cm;
+    size: auto;
+  }
+
+  .print\:hidden {
+    display: none !important;
+  }
+
+  .print\:block {
+    display: block !important;
+  }
+}
+
