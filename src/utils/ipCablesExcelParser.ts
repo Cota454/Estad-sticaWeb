@@ -70,40 +70,81 @@ export function matchCableInItem(item: IpCableRow, targetPattern: string): boole
 }
 
 /**
+ * Checks if a specific cable string contains an exact match for targetPattern.
+ * Strictly checks full equality or isolated token equality, without allowing partial substring matches.
+ */
+export function isCableExactMatch(cableString: string, targetPattern: string): boolean {
+  if (!cableString || !targetPattern) return false;
+  const targetClean = cleanCableName(targetPattern).trim().toUpperCase();
+  if (!targetClean) return false;
+
+  // Split by common cable delimiters: '/', ',', ';', '|', and newlines
+  const subTokens = String(cableString).split(/[\/,;|\r\n]+/).map(s => s.trim()).filter(Boolean);
+
+  for (const rawToken of subTokens) {
+    const cleanToken = cleanCableName(rawToken).trim().toUpperCase();
+    if (!cleanToken) continue;
+
+    // 1. Direct exact equality
+    if (cleanToken === targetClean) return true;
+
+    // 2. Exact match when removing parenthetical annotations, e.g. "CR-101 (PAR 20)" -> "CR-101"
+    const withoutParens = cleanCableName(cleanToken.replace(/\s*\([^)]*\)/g, '')).trim().toUpperCase();
+    if (withoutParens && withoutParens === targetClean) return true;
+
+    // 3. Exact match when removing bracket annotations, e.g. "CR-101 [PAR 20]" -> "CR-101"
+    const withoutBrackets = cleanCableName(cleanToken.replace(/\s*\[[^\]]*\]/g, '')).trim().toUpperCase();
+    if (withoutBrackets && withoutBrackets === targetClean) return true;
+
+    // 4. Exact match with contents inside parentheses, e.g. "CABLE GENERAL (CR-101)" -> inside = "CR-101"
+    const parenMatches = cleanToken.match(/\(([^)]+)\)/g);
+    if (parenMatches) {
+      for (const pm of parenMatches) {
+        const inside = cleanCableName(pm.replace(/[()]/g, '')).trim().toUpperCase();
+        if (inside === targetClean) {
+          return true;
+        }
+      }
+    }
+
+    // 5. Exact match with contents inside brackets
+    const bracketMatches = cleanToken.match(/\[([^\]]+)\]/g);
+    if (bracketMatches) {
+      for (const bm of bracketMatches) {
+        const inside = cleanCableName(bm.replace(/[\[\]]/g, '')).trim().toUpperCase();
+        if (inside === targetClean) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Checks if a cable pattern matches an item's Cable P, Cable S, or Cable strictly/exactly.
  */
 export function matchCableInItemExact(item: IpCableRow, targetPattern: string): boolean {
-  const targetClean = cleanCableName(targetPattern).toUpperCase();
+  if (!item || !targetPattern) return false;
+  const targetClean = cleanCableName(targetPattern).trim().toUpperCase();
   if (!targetClean) return false;
 
   const cableValues = [
     item.cableP,
     item.cableS,
-    item.cable
+    item.cable,
+    item.rawRowData?.['Cable P'],
+    item.rawRowData?.['Cable S'],
+    item.rawRowData?.['Cable'],
+    item.rawRowData?.['CABLE'],
+    item.rawRowData?.['CABLE P'],
+    item.rawRowData?.['CABLE S']
   ].filter(Boolean) as string[];
 
   for (const rawVal of cableValues) {
-    if (!rawVal) continue;
-
-    // Check each sub-cable if split by '/'
-    const subCables = rawVal.split('/').map(c => cleanCableName(c).toUpperCase());
-
-    for (const c of subCables) {
-      if (!c) continue;
-
-      // 1. Direct exact equality
-      if (c === targetClean) return true;
-
-      // 2. Extract contents inside parentheses, e.g. "CABLE A (C12)" -> inside = "C12"
-      const parenMatches = c.match(/\(([^)]+)\)/g);
-      if (parenMatches) {
-        for (const pm of parenMatches) {
-          const inside = cleanCableName(pm.replace(/[()]/g, '')).toUpperCase();
-          if (inside === targetClean) {
-            return true;
-          }
-        }
-      }
+    if (isCableExactMatch(rawVal, targetClean)) {
+      return true;
     }
   }
 

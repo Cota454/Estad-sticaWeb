@@ -69,6 +69,7 @@ import {
   generateSampleIpCablesData,
   classifyNetworkType,
   cleanCableName,
+  isCableExactMatch,
   matchCableInItem,
   matchCableInItemExact,
   matchZoneCableRule,
@@ -671,7 +672,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               (item.networkTypeLabel && item.networkTypeLabel.toUpperCase() === rowName.toUpperCase());
             if (!matchFlex) return false;
           } else {
-            const matchCable = matchCableInItemExact(item, rowName) || matchCableInItem(item, rowName);
+            const matchCable = matchCableInItemExact(item, rowName);
             if (!matchCable) return false;
           }
         }
@@ -770,7 +771,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
         if (!targetAssignedName) {
           for (const [name, pats] of assignedRulesInfo.entries()) {
-            if (pats.some(p => matchCableInItemExact(item, p) || matchCableInItem(item, p))) {
+            if (pats.some(p => matchCableInItemExact(item, p))) {
               targetAssignedName = name;
               break;
             }
@@ -824,9 +825,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     // Mode B: Standard Cable Matrix
     const cablesSet = new Set<string>();
+    const isSearchingCable = cableSearchMode === 'cable' && cableSearchTerm.trim() !== '';
+    const targetCableQuery = cableSearchTerm.trim().toUpperCase();
+
     filteredIpCablesRows.forEach(item => {
       if (item.cable) {
-        item.cable.split('/').forEach(c => cablesSet.add(c.trim()));
+        item.cable.split(/[\/,;]+/).forEach(c => {
+          const clean = cleanCableName(c.replace(/\s*\([^)]*\)/g, '')).trim();
+          if (clean && clean !== 'SIN CABLE') {
+            if (!isSearchingCable || isCableExactMatch(clean, targetCableQuery)) {
+              cablesSet.add(clean);
+            }
+          }
+        });
       }
     });
 
@@ -845,10 +856,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     colsList.forEach(c => { colTotals[c] = 0; });
 
     filteredIpCablesRows.forEach(item => {
-      const cablesInItem = (item.cable || 'CABLE GENERAL').split('/').map(c => c.trim());
-      const groupsInItem = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim());
+      const cablesInItem = (item.cable || 'CABLE GENERAL').split(/[\/,;]+/).map(c => cleanCableName(c.replace(/\s*\([^)]*\)/g, '')).trim()).filter(Boolean);
+      const groupsInItem = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim()).filter(Boolean);
 
       cablesInItem.forEach(c => {
+        if (isSearchingCable && !isCableExactMatch(c, targetCableQuery)) {
+          return;
+        }
+
         groupsInItem.forEach(g => {
           if (!cellMap[c]) {
             cellMap[c] = {};
@@ -888,7 +903,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       grandTotal,
       assignedRulesInfo: new Map<string, string[]>()
     };
-  }, [filteredIpCablesRows, cableSortOrder, selectedNetworkTypeFilter, cableRules.flexibleRules, excelData?.uniqueGroups]);
+  }, [filteredIpCablesRows, cableSortOrder, selectedNetworkTypeFilter, cableRules.flexibleRules, excelData?.uniqueGroups, cableSearchMode, cableSearchTerm]);
 
   // Copy Headers & Rows for Matrix Centrales x Grupos
   const copyCentralesHeaders = useMemo(() => {
