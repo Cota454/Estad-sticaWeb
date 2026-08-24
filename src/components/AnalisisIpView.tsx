@@ -26,7 +26,10 @@ import {
   Clock,
   RotateCcw,
   Mail,
-  EyeOff
+  EyeOff,
+  Phone,
+  Zap,
+  Binary
 } from 'lucide-react';
 
 import { EmailReportModal, SelectedSectionData } from './EmailReportModal';
@@ -68,7 +71,12 @@ import {
   cleanCableName,
   matchCableInItem,
   matchCableInItemExact,
-  matchZoneCableRule
+  matchZoneCableRule,
+  extractTelefonoFromItem,
+  extractAsociadoFromItem,
+  matchTelefonoTypeFilter,
+  optimizeAndSimplifyRows,
+  TelefonoTypeFilter
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -272,7 +280,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [matrixManualDate, setMatrixManualDate] = useState<string>('');
   const [matrixMonthFilter, setMatrixMonthFilter] = useState<string>('all');
   const [matrixYearFilter, setMatrixYearFilter] = useState<string>('all');
+  const [matrixTelefonoFilter, setMatrixTelefonoFilter] = useState<TelefonoTypeFilter>('all');
+  const [isOptimized, setIsOptimized] = useState<boolean>(false);
   const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
+
+  // Optimization Statistics (Shows how many records are simplified when Optimizar is on)
+  const optimizationStats = useMemo(() => {
+    if (!excelData) return { totalBase: 0, optimizedCount: 0, difference: 0 };
+    const totalBase = excelData.consolidatedRows.length;
+    const optimized = optimizeAndSimplifyRows(excelData.consolidatedRows);
+    const optimizedCount = optimized.length;
+    return {
+      totalBase,
+      optimizedCount,
+      difference: Math.max(0, totalBase - optimizedCount)
+    };
+  }, [excelData]);
 
   // Available Years dynamically from dataset
   const availableMatrixYears = useMemo(() => {
@@ -287,12 +310,24 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return Array.from(yrSet).sort((a, b) => b - a);
   }, [excelData]);
 
-  // Rows filtered by Demora en Días (including manual date), Mes, and Año for Tab 1 Matrices
+  // Rows filtered by Demora en Días (including manual date), Mes, Año, Tipo de Teléfono, and Optimizar (Simplificación)
   const matrixFilteredConsolidatedRows = useMemo(() => {
     if (!excelData) return [];
 
-    return excelData.consolidatedRows.filter(item => {
-      // 1. Demora Filter / Manual Date Filter
+    let baseRows = excelData.consolidatedRows;
+
+    // 1. Optimization: Compare Teléfono & Asociado and collapse matching pairs into a single service
+    if (isOptimized) {
+      baseRows = optimizeAndSimplifyRows(baseRows);
+    }
+
+    return baseRows.filter(item => {
+      // 2. Telefono Column Type Filter (Todos / Teléfono: solo números / TxD Dato: al menos una letra)
+      if (matrixTelefonoFilter !== 'all') {
+        if (!matchTelefonoTypeFilter(item, matrixTelefonoFilter)) return false;
+      }
+
+      // 3. Demora Filter / Manual Date Filter
       if (matrixDemoraFilter === 'manual_date') {
         if (matrixManualDate.trim()) {
           const itemDate = (item.fechaReporte || '').trim().slice(0, 10);
@@ -303,7 +338,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         if (!matchDemoraFilter(days, matrixDemoraFilter)) return false;
       }
 
-      // 2. Month and Year Filter
+      // 4. Month and Year Filter
       if (item.fechaReporte && item.fechaReporte.length >= 7) {
         const parts = item.fechaReporte.split('-');
         const y = parseInt(parts[0], 10);
@@ -323,7 +358,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
       return true;
     });
-  }, [excelData, matrixDemoraFilter, matrixManualDate, matrixMonthFilter, matrixYearFilter]);
+  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixMonthFilter, matrixYearFilter]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -1284,25 +1319,27 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <div>
                   <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
                     <span>Filtros de Análisis para Matrices</span>
-                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
+                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
                       <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
                         {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
                       </span>
                     )}
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Filtra simultáneamente las matrices por Demora en Días (o Fecha Manual), Mes y Año.
+                    Optimice servicios cruzados (Teléfono/Asociado) y filtre por Tipo de Teléfono, Demora, Mes y Año.
                   </p>
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all') && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
                     setMatrixManualDate('');
                     setMatrixMonthFilter('all');
                     setMatrixYearFilter('all');
+                    setMatrixTelefonoFilter('all');
+                    setIsOptimized(false);
                   }}
                   className="flex items-center space-x-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer w-fit"
                   title="Restablecer todos los filtros"
@@ -1313,8 +1350,83 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* 1. Demora en Días Filter */}
+            {/* Recuadro de Optimización (Teléfono vs Asociado) */}
+            <div className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+              isOptimized
+                ? 'bg-amber-950/30 border-amber-500/60 shadow-lg shadow-amber-500/10'
+                : 'bg-slate-950 border-slate-800 hover:border-slate-700/80'
+            }`}>
+              <div className="flex items-start md:items-center space-x-3">
+                <div className={`p-2.5 rounded-xl border shrink-0 ${
+                  isOptimized
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700'
+                }`}>
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-extrabold text-sm text-white flex items-center space-x-1.5">
+                      <span>Recuadro para Optimizar (Teléfono / Asociado)</span>
+                    </span>
+                    {isOptimized ? (
+                      <span className="bg-amber-500/25 text-amber-300 border border-amber-500/50 text-[10px] px-2.5 py-0.5 rounded-md font-black tracking-wide">
+                        {optimizationStats.difference > 0
+                          ? `✨ OPTIMIZADO (-${optimizationStats.difference} DUPLICADOS ASOCIADOS)`
+                          : '✨ OPTIMIZADO (SIN CRUCES DETECTADOS)'}
+                      </span>
+                    ) : (
+                      <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded-md font-semibold">
+                        Inactivo
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Compara las columnas <strong>Teléfono</strong> y <strong>Asociado</strong> para detectar servicios coincidentes y simplificarlos a un único registro consolidado.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/60">
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isOptimized}
+                    onChange={(e) => setIsOptimized(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-12 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                  <span className="ml-2.5 text-xs font-black uppercase text-slate-200">
+                    {isOptimized ? 'Optimizado' : 'Normal'}
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Grid of Standard and Type Filters */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 pt-1">
+              {/* 1. Filtro Columna Teléfono (Teléfono vs TxD Dato) */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                  <Phone className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Filtro Columna Teléfono</span>
+                </label>
+                <select
+                  value={matrixTelefonoFilter}
+                  onChange={(e) => setMatrixTelefonoFilter(e.target.value as TelefonoTypeFilter)}
+                  className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
+                    matrixTelefonoFilter !== 'all'
+                      ? 'border-cyan-500 text-cyan-300 font-bold bg-cyan-950/20'
+                      : 'border-slate-800 text-white focus:border-cyan-500'
+                  }`}
+                >
+                  <option value="all">Todos los Servicios</option>
+                  <option value="telefono">📞 Teléfono (Solo números)</option>
+                  <option value="txd_dato">💻 TxD Dato (Con letras)</option>
+                </select>
+              </div>
+
+              {/* 2. Demora en Días Filter */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <Clock className="w-3.5 h-3.5 text-amber-400" />
@@ -1362,7 +1474,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 )}
               </div>
 
-              {/* 2. Month Filter */}
+              {/* 3. Month Filter */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <Calendar className="w-3.5 h-3.5 text-blue-400" />
@@ -1389,7 +1501,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </select>
               </div>
 
-              {/* 3. Year Filter */}
+              {/* 4. Year Filter */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <Calendar className="w-3.5 h-3.5 text-purple-400" />
@@ -1407,7 +1519,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </select>
               </div>
 
-              {/* 4. Ocultar Ceros Option */}
+              {/* 5. Ocultar Ceros Option */}
               <div className="space-y-1.5 flex flex-col justify-end">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
@@ -2379,7 +2491,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     displayModalServices.map((item, idx) => (
                       <tr key={`${item.id}_${idx}`} className="hover:bg-slate-800/50 transition-colors">
                         <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
-                        <td className="py-3 px-4 font-bold text-amber-300 font-mono">{item.servicio}</td>
+                        <td className="py-3 px-4 font-bold text-amber-300 font-mono">
+                          <div>{item.servicio}</div>
+                          {extractAsociadoFromItem(item) && (
+                            <div className="text-[10px] text-cyan-300 font-mono font-normal flex items-center space-x-1 mt-0.5">
+                              <span className="text-slate-400">Asoc:</span>
+                              <span className="text-cyan-400 font-bold">{extractAsociadoFromItem(item)}</span>
+                            </div>
+                          )}
+                        </td>
                         <td className="py-3 px-4 font-semibold text-white">{item.central}</td>
                         <td className="py-3 px-4 text-cyan-300 font-mono">
                           {item.cableP || '-'}{item.parP ? <span className="text-slate-400 font-sans text-[10px] ml-1">({item.parP})</span> : ''}

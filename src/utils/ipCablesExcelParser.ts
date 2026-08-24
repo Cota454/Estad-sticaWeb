@@ -138,6 +138,172 @@ export function extractTerminalFromItem(item: IpCableRow): string {
 }
 
 /**
+ * Extracts the Teléfono value from an item's rawRowData.
+ */
+export function extractTelefonoFromItem(item: IpCableRow): string {
+  if (!item) return '';
+  if (item.rawRowData) {
+    const raw = item.rawRowData;
+    const keys = Object.keys(raw);
+
+    // Exact matching aliases
+    const exactKey = keys.find(k => {
+      const norm = normalizeHeader(k);
+      return norm === 'telefono' || norm === 'tel' || norm === 'servicio' || norm === 'linea' || norm === 'numero';
+    });
+    if (exactKey && raw[exactKey] !== undefined && raw[exactKey] !== null && String(raw[exactKey]).trim() !== '') {
+      return String(raw[exactKey]).trim();
+    }
+
+    // Partial matching aliases
+    const partialKey = keys.find(k => {
+      const norm = normalizeHeader(k);
+      return (norm.includes('telefono') || norm.includes('servicio') || norm.includes('abonado')) && !norm.includes('asoc');
+    });
+    if (partialKey && raw[partialKey] !== undefined && raw[partialKey] !== null && String(raw[partialKey]).trim() !== '') {
+      return String(raw[partialKey]).trim();
+    }
+  }
+
+  return item.servicio || '';
+}
+
+/**
+ * Extracts the Asociado value from an item's rawRowData.
+ */
+export function extractAsociadoFromItem(item: IpCableRow): string {
+  if (!item || !item.rawRowData) return '';
+  const raw = item.rawRowData;
+  const keys = Object.keys(raw);
+
+  const key = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return norm === 'asociado' || norm === 'telasoc' || norm === 'telefonoasociado' || norm === 'servicioasociado' ||
+      norm === 'asoc' || norm.includes('asociado') || norm.includes('asoc');
+  });
+
+  if (key && raw[key] !== undefined && raw[key] !== null && String(raw[key]).trim() !== '') {
+    const val = String(raw[key]).trim();
+    const upper = val.toUpperCase();
+    if (['N/A', 'NA', 'SIN ASOCIADO', 'NINGUNO', 'NONE', '0', '-', 'S/A', 'SIN', 'NO'].includes(upper)) {
+      return '';
+    }
+    return val;
+  }
+
+  return '';
+}
+
+export type TelefonoTypeFilter = 'all' | 'telefono' | 'txd_dato';
+
+/**
+ * Evaluates whether an item matches the Teléfono column filter:
+ * - 'telefono': Only numbers in the Teléfono column (taking into account whitespace)
+ * - 'txd_dato': At least one letter in the Teléfono column (taking into account whitespace)
+ */
+export function matchTelefonoTypeFilter(item: IpCableRow, filter: TelefonoTypeFilter): boolean {
+  if (filter === 'all') return true;
+
+  const rawTel = extractTelefonoFromItem(item);
+  if (!rawTel) return false;
+
+  const clean = rawTel.trim();
+  if (!clean) return false;
+
+  // Check if it has at least one letter (a-z, A-Z, accents)
+  const hasLetters = /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(clean);
+
+  if (filter === 'txd_dato') {
+    return hasLetters;
+  }
+
+  if (filter === 'telefono') {
+    // Only numbers taking into account whitespace and phone separators
+    const digitsOnly = clean.replace(/[\s\-\.\(\)\/]/g, '');
+    const isNumeric = digitsOnly.length > 0 && /^\d+$/.test(digitsOnly);
+    return isNumeric && !hasLetters;
+  }
+
+  return true;
+}
+
+/**
+ * Optimizes dataset by comparing Teléfono and Asociado columns,
+ * collapsing records that match / cross-reference into a single consolidated record.
+ */
+export function optimizeAndSimplifyRows(rows: IpCableRow[]): IpCableRow[] {
+  if (!rows || rows.length <= 1) return rows;
+
+  const parent = new Map<string, string>();
+
+  const find = (i: string): string => {
+    let root = i;
+    while (parent.has(root) && parent.get(root) !== root) {
+      root = parent.get(root)!;
+    }
+    let curr = i;
+    while (curr !== root) {
+      const nxt = parent.get(curr) || curr;
+      parent.set(curr, root);
+      curr = nxt;
+    }
+    return root;
+  };
+
+  const union = (i: string, j: string) => {
+    const rootI = find(i);
+    const rootJ = find(j);
+    if (rootI !== rootJ) {
+      parent.set(rootI, rootJ);
+    }
+  };
+
+  const cleanVal = (val: string): string => {
+    if (!val) return '';
+    return String(val).trim().toUpperCase();
+  };
+
+  // 1. Establish union-find sets between Teléfono and Asociado
+  rows.forEach(item => {
+    const tel = cleanVal(extractTelefonoFromItem(item));
+    const asoc = cleanVal(extractAsociadoFromItem(item));
+
+    if (tel) {
+      if (!parent.has(tel)) parent.set(tel, tel);
+    }
+    if (asoc) {
+      if (!parent.has(asoc)) parent.set(asoc, asoc);
+    }
+    if (tel && asoc) {
+      union(tel, asoc);
+    }
+  });
+
+  // 2. Group items by their canonical connected key
+  const groups = new Map<string, IpCableRow>();
+
+  rows.forEach(item => {
+    const tel = cleanVal(extractTelefonoFromItem(item));
+    const asoc = cleanVal(extractAsociadoFromItem(item));
+
+    let key = '';
+    if (tel) {
+      key = find(tel);
+    } else if (asoc) {
+      key = find(asoc);
+    } else {
+      key = item.id || item.servicio;
+    }
+
+    if (!groups.has(key)) {
+      groups.set(key, item);
+    }
+  });
+
+  return Array.from(groups.values());
+}
+
+/**
  * Validates whether an item matches a specific Zone Cable Rule (evaluating both Cable and optional Terminal check)
  */
 export function matchZoneCableRule(
