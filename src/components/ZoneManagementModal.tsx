@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ZoneConfig } from '../types/ipCablesTypes';
+import { ZoneConfig, ZoneCableRule } from '../types/ipCablesTypes';
 import { saveZones, DEFAULT_ZONES } from '../utils/ipCablesStorage';
 import {
   MapPin,
@@ -12,7 +12,9 @@ import {
   Cable,
   RotateCcw,
   Sparkles,
-  Layers
+  Layers,
+  HelpCircle,
+  Tag
 } from 'lucide-react';
 
 interface ZoneManagementModalProps {
@@ -40,8 +42,14 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
   const [formDesc, setFormDesc] = useState<string>('');
   const [formColor, setFormColor] = useState<string>('#3B82F6');
   const [formCentrales, setFormCentrales] = useState<string[]>([]);
-  const [formCables, setFormCables] = useState<string[]>([]);
-  const [newCableInput, setNewCableInput] = useState<string>('');
+  
+  // Cable Rules State (Supports simple cable or cable with specific terminals)
+  const [formCableRules, setFormCableRules] = useState<ZoneCableRule[]>([]);
+  
+  // Add Cable Sub-Form State
+  const [cableInput, setCableInput] = useState<string>('');
+  const [cableMode, setCableMode] = useState<'all' | 'terminals'>('all'); // 'all' = Todo el Cable, 'terminals' = Verificar Terminal
+  const [terminalsInput, setTerminalsInput] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -52,8 +60,10 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
     setFormDesc('');
     setFormColor('#3B82F6');
     setFormCentrales([]);
-    setFormCables([]);
-    setNewCableInput('');
+    setFormCableRules([]);
+    setCableInput('');
+    setCableMode('all');
+    setTerminalsInput('');
   };
 
   const handleStartEdit = (zone: ZoneConfig) => {
@@ -63,8 +73,27 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
     setFormDesc(zone.description || '');
     setFormColor(zone.color || '#3B82F6');
     setFormCentrales([...zone.centralNames]);
-    setFormCables([...zone.cableNames]);
-    setNewCableInput('');
+    
+    // Normalize existing cableRules or convert legacy cableNames
+    let initialRules: ZoneCableRule[] = [];
+    if (zone.cableRules && zone.cableRules.length > 0) {
+      initialRules = zone.cableRules.map(r => ({
+        cableName: r.cableName,
+        matchTerminal: Boolean(r.matchTerminal),
+        terminals: r.terminals ? [...r.terminals] : []
+      }));
+    } else if (zone.cableNames && zone.cableNames.length > 0) {
+      initialRules = zone.cableNames.map(c => ({
+        cableName: c,
+        matchTerminal: false,
+        terminals: []
+      }));
+    }
+
+    setFormCableRules(initialRules);
+    setCableInput('');
+    setCableMode('all');
+    setTerminalsInput('');
   };
 
   const handleCancelForm = () => {
@@ -80,29 +109,72 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
     }
   };
 
-  const handleAddCable = () => {
-    if (!newCableInput.trim()) return;
-    const rawParts = newCableInput.split(',');
-    const updated = [...formCables];
+  const handleAddCableRule = () => {
+    if (!cableInput.trim()) return;
 
-    rawParts.forEach(part => {
-      const trimmed = part.trim().toUpperCase();
-      if (trimmed && !updated.includes(trimmed)) {
-        updated.push(trimmed);
+    // Split multiple cables if user entered comma-separated cable names
+    const rawCables = cableInput.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+    if (rawCables.length === 0) return;
+
+    const parsedTerminals = cableMode === 'terminals' && terminalsInput.trim()
+      ? terminalsInput.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
+      : [];
+
+    const isMatchTerminal = cableMode === 'terminals';
+
+    const updated = [...formCableRules];
+
+    rawCables.forEach(cableName => {
+      // Find if this cable is already configured
+      const existingIdx = updated.findIndex(r => r.cableName === cableName);
+      if (existingIdx >= 0) {
+        // Update existing rule
+        if (isMatchTerminal) {
+          // Merge terminals if already exists or replace
+          const existingTerms = updated[existingIdx].terminals || [];
+          const mergedTerms = Array.from(new Set([...existingTerms, ...parsedTerminals]));
+          updated[existingIdx] = {
+            cableName,
+            matchTerminal: true,
+            terminals: mergedTerms
+          };
+        } else {
+          updated[existingIdx] = {
+            cableName,
+            matchTerminal: false,
+            terminals: []
+          };
+        }
+      } else {
+        // Add new rule
+        updated.push({
+          cableName,
+          matchTerminal: isMatchTerminal,
+          terminals: isMatchTerminal ? parsedTerminals : []
+        });
       }
     });
 
-    setFormCables(updated);
-    setNewCableInput('');
+    setFormCableRules(updated);
+    setCableInput('');
+    setTerminalsInput('');
+    setCableMode('all');
   };
 
-  const handleRemoveCable = (cableName: string) => {
-    setFormCables(formCables.filter(c => c !== cableName));
+  const handleRemoveCableRule = (cableName: string) => {
+    setFormCableRules(formCableRules.filter(r => r.cableName !== cableName));
+  };
+
+  const handleSelectSuggestedCable = (suggestedCable: string) => {
+    setCableInput(suggestedCable);
   };
 
   const handleSaveForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim()) return;
+
+    // Backward compatibility: maintain cableNames array alongside detailed cableRules
+    const legacyCableNames: string[] = Array.from(new Set(formCableRules.map(r => r.cableName)));
 
     let updatedList: ZoneConfig[];
 
@@ -112,7 +184,8 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
         name: formName.trim(),
         description: formDesc.trim(),
         centralNames: formCentrales,
-        cableNames: formCables,
+        cableNames: legacyCableNames,
+        cableRules: formCableRules,
         color: formColor
       };
       updatedList = [...zones, newZone];
@@ -124,7 +197,8 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
             name: formName.trim(),
             description: formDesc.trim(),
             centralNames: formCentrales,
-            cableNames: formCables,
+            cableNames: legacyCableNames,
+            cableRules: formCableRules,
             color: formColor
           };
         }
@@ -171,7 +245,7 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
                 Gestor y Dashboard de Zonificación
               </h2>
               <p className="text-xs text-slate-400">
-                Creación, edición y asignación de Centrales Telefónicas y Cables por Zona.
+                Creación, edición y asignación de Centrales Telefónicas, Cables y Terminales por Zona.
               </p>
             </div>
           </div>
@@ -308,80 +382,185 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
                 </div>
               </div>
 
-              {/* Cables Selection */}
-              <div className="space-y-2 pt-2 border-t border-slate-800">
-                <label className="text-[11px] font-extrabold uppercase text-amber-300 flex items-center space-x-1.5">
-                  <Cable className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Asignar Cables Pertenecientes a esta Zona ({formCables.length} cables)</span>
-                </label>
+              {/* Cables & Terminals Selection */}
+              <div className="space-y-3 pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-extrabold uppercase text-amber-300 flex items-center space-x-1.5">
+                    <Cable className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Asignar Cables y Terminales a esta Zona ({formCableRules.length} reglas configuradas)</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Verificación de Columna Terminal activa</span>
+                </div>
 
-                {/* Cable Input Add */}
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="text"
-                    placeholder="Escriba uno o varios cables separados por coma (ej: VA61, VA62, VA63) o seleccione abajo"
-                    value={newCableInput}
-                    onChange={(e) => setNewCableInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddCable();
-                      }
-                    }}
-                    className="flex-1 bg-slate-900 border border-slate-700 text-white text-xs rounded-xl p-2.5 focus:outline-none focus:border-amber-500 font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddCable}
-                    className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-xl transition-all"
-                  >
-                    + Agregar
-                  </button>
+                {/* Cable Rule Configuration Box */}
+                <div className="p-3 bg-slate-900 rounded-2xl border border-slate-800 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                    
+                    {/* Cable Input */}
+                    <div className="md:col-span-5 space-y-1">
+                      <label className="text-[10px] font-extrabold uppercase text-slate-400">
+                        1. Nombre de Cable (ej: VA12, VA61):
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Escriba cable (ej: VA12 o varios: VA12, VA13)"
+                        value={cableInput}
+                        onChange={(e) => setCableInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && cableMode === 'all') {
+                            e.preventDefault();
+                            handleAddCableRule();
+                          }
+                        }}
+                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 focus:outline-none focus:border-amber-500 font-mono font-bold"
+                      />
+                    </div>
+
+                    {/* Mode Selector */}
+                    <div className="md:col-span-4 space-y-1">
+                      <label className="text-[10px] font-extrabold uppercase text-slate-400">
+                        2. Cobertura del Cable:
+                      </label>
+                      <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => setCableMode('all')}
+                          className={`py-1.5 px-2 rounded-lg text-xs font-bold transition-all text-center ${
+                            cableMode === 'all'
+                              ? 'bg-amber-600 text-white shadow'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Todo el Cable
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCableMode('terminals')}
+                          className={`py-1.5 px-2 rounded-lg text-xs font-bold transition-all text-center ${
+                            cableMode === 'terminals'
+                              ? 'bg-blue-600 text-white shadow'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Verificar Terminal
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Add Button */}
+                    <div className="md:col-span-3">
+                      <button
+                        type="button"
+                        onClick={handleAddCableRule}
+                        disabled={!cableInput.trim()}
+                        className={`w-full py-2.5 font-extrabold text-xs rounded-xl transition-all flex items-center justify-center space-x-1.5 ${
+                          cableInput.trim()
+                            ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/20'
+                            : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                        }`}
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Asignar a Zona</span>
+                      </button>
+                    </div>
+
+                  </div>
+
+                  {/* Terminal Input field shown only when 'Verificar Terminal' is selected */}
+                  {cableMode === 'terminals' && (
+                    <div className="p-3 bg-blue-950/30 border border-blue-800/40 rounded-xl space-y-1.5 animate-in fade-in duration-150">
+                      <label className="text-[11px] font-bold text-blue-300 flex items-center space-x-1">
+                        <Tag className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Nombres de los Terminales pertenecientes a este Cable (separados por coma):</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ejemplo: 1210, 1211, 1215, T-04, 204B"
+                        value={terminalsInput}
+                        onChange={(e) => setTerminalsInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCableRule();
+                          }
+                        }}
+                        className="w-full bg-slate-950 border border-blue-600/50 text-blue-100 text-xs rounded-xl p-2.5 font-mono focus:outline-none focus:border-blue-400"
+                      />
+                      <p className="text-[10px] text-blue-300/70">
+                        * El servicio se asignará a esta zona <strong>únicamente si pertenece al cable "{cableInput || '...'}" y al Terminal indicado en la columna Terminal</strong> del archivo Excel.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Assigned Cables Badges */}
-                <div className="flex flex-wrap gap-1.5 p-2 bg-slate-900 rounded-xl border border-slate-800 min-h-[48px]">
-                  {formCables.length === 0 ? (
-                    <span className="text-xs text-slate-500 p-1">No hay cables asignados a esta zona.</span>
-                  ) : (
-                    formCables.map((cb) => (
-                      <span
-                        key={cb}
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold"
-                      >
-                        <span>{cb}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveCable(cb)}
-                          className="hover:text-rose-400 ml-1"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))
-                  )}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-extrabold uppercase text-slate-400">
+                    Cables y Reglas asignadas a esta zona:
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 p-3 bg-slate-900 rounded-xl border border-slate-800 min-h-[52px]">
+                    {formCableRules.length === 0 ? (
+                      <span className="text-xs text-slate-500 p-1">No hay cables o terminales asignados a esta zona.</span>
+                    ) : (
+                      formCableRules.map((rule) => {
+                        const hasTerminals = rule.matchTerminal && rule.terminals && rule.terminals.length > 0;
+                        return (
+                          <span
+                            key={rule.cableName}
+                            className={`inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold ${
+                              hasTerminals
+                                ? 'bg-blue-950/70 text-blue-200 border-blue-700/60 shadow-sm'
+                                : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-1.5">
+                              <Cable className="w-3.5 h-3.5 text-amber-400" />
+                              <span className="font-extrabold">{rule.cableName}</span>
+                              {hasTerminals ? (
+                                <span className="text-[10px] bg-blue-600/30 border border-blue-500/50 text-blue-300 px-1.5 py-0.5 rounded-md font-sans">
+                                  Terminal: {rule.terminals!.join(', ')}
+                                </span>
+                              ) : (
+                                <span className="text-[9px] text-amber-400/70 font-sans uppercase">
+                                  (Todo el cable)
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCableRule(rule.cableName)}
+                              className="hover:text-rose-400 ml-1.5 transition-colors"
+                              title="Eliminar regla"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
 
                 {/* Available Cables Suggestions */}
                 {availableCables.length > 0 && (
                   <div className="text-[11px] text-slate-400 pt-1">
-                    <span className="font-bold text-slate-300">Cables detectados en Excel:</span>
+                    <span className="font-bold text-slate-300">Cables detectados en Excel (clic para autocompletar):</span>
                     <div className="flex flex-wrap gap-1 mt-1 max-h-24 overflow-y-auto">
                       {availableCables.map(c => {
-                        const isAssigned = formCables.includes(c);
+                        const isAssigned = formCableRules.some(r => r.cableName === c);
                         return (
                           <button
                             type="button"
                             key={c}
-                            onClick={() => {
-                              if (!isAssigned) setFormCables([...formCables, c]);
-                            }}
-                            disabled={isAssigned}
-                            className={`px-2 py-0.5 rounded text-[10px] font-mono border ${
-                              isAssigned ? 'bg-slate-800 text-slate-600 border-slate-800' : 'bg-slate-900 text-amber-400 border-slate-700 hover:border-amber-500'
+                            onClick={() => handleSelectSuggestedCable(c)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
+                              isAssigned
+                                ? 'bg-slate-800 text-slate-500 border-slate-800 hover:border-slate-700'
+                                : 'bg-slate-900 text-amber-400 border-slate-700 hover:border-amber-500 hover:bg-slate-800'
                             }`}
                           >
-                            + {c}
+                            + {c} {isAssigned && '✓'}
                           </button>
                         );
                       })}
@@ -411,83 +590,104 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({
 
           {/* Zones Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {zones.map((zone) => (
-              <div
-                key={zone.id}
-                className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3 relative hover:border-slate-700 transition-all"
-              >
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <div className="flex items-center space-x-2">
-                    <span
-                      className="w-3.5 h-3.5 rounded-full shrink-0"
-                      style={{ backgroundColor: zone.color || '#3B82F6' }}
-                    />
-                    <h3 className="font-black text-sm text-white">{zone.name}</h3>
+            {zones.map((zone) => {
+              const cableRulesList = zone.cableRules && zone.cableRules.length > 0
+                ? zone.cableRules
+                : (zone.cableNames || []).map(c => ({ cableName: c, matchTerminal: false }));
+
+              return (
+                <div
+                  key={zone.id}
+                  className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3 relative hover:border-slate-700 transition-all"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="flex items-center space-x-2">
+                      <span
+                        className="w-3.5 h-3.5 rounded-full shrink-0"
+                        style={{ backgroundColor: zone.color || '#3B82F6' }}
+                      />
+                      <h3 className="font-black text-sm text-white">{zone.name}</h3>
+                    </div>
+
+                    <div className="flex items-center space-x-1">
+                      <button
+                        onClick={() => handleStartEdit(zone)}
+                        className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-800 transition-colors"
+                        title="Editar Zona"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 text-blue-400" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteZone(zone.id)}
+                        className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-800 transition-colors"
+                        title="Eliminar Zona"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex items-center space-x-1">
-                    <button
-                      onClick={() => handleStartEdit(zone)}
-                      className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-800 transition-colors"
-                      title="Editar Zona"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-blue-400" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteZone(zone.id)}
-                      className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-800 transition-colors"
-                      title="Eliminar Zona"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                    </button>
+                  {zone.description && (
+                    <p className="text-xs text-slate-400 italic">{zone.description}</p>
+                  )}
+
+                  {/* Centrales list */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Centrales Telefónicas ({zone.centralNames.length}):</span>
+                    <div className="flex flex-wrap gap-1">
+                      {zone.centralNames.length === 0 ? (
+                        <span className="text-[11px] text-slate-600 italic">Ninguna asignada</span>
+                      ) : (
+                        zone.centralNames.map(c => (
+                          <span key={c} className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 text-[10px] font-semibold">
+                            {c}
+                          </span>
+                        ))
+                      )}
+                    </div>
                   </div>
+
+                  {/* Cables & Terminals list */}
+                  <div className="space-y-1 pt-1">
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Cables y Terminales ({cableRulesList.length}):</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {cableRulesList.length === 0 ? (
+                        <span className="text-[11px] text-slate-600 italic">Ningún cable asignado</span>
+                      ) : (
+                        cableRulesList.map(rule => {
+                          const hasTerminals = rule.matchTerminal && rule.terminals && rule.terminals.length > 0;
+                          return (
+                            <span
+                              key={rule.cableName}
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono border flex items-center space-x-1 ${
+                                hasTerminals
+                                  ? 'bg-blue-950 text-blue-200 border-blue-700/60'
+                                  : 'bg-amber-950 text-amber-300 border border-amber-800/60'
+                              }`}
+                            >
+                              <span className="font-bold">{rule.cableName}</span>
+                              {hasTerminals && (
+                                <span className="text-[9px] text-blue-300 font-sans">
+                                  [Term: {rule.terminals!.join(',')}]
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
                 </div>
-
-                {zone.description && (
-                  <p className="text-xs text-slate-400 italic">{zone.description}</p>
-                )}
-
-                {/* Centrales list */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Centrales Telefónicas ({zone.centralNames.length}):</span>
-                  <div className="flex flex-wrap gap-1">
-                    {zone.centralNames.length === 0 ? (
-                      <span className="text-[11px] text-slate-600 italic">Ninguna asignada</span>
-                    ) : (
-                      zone.centralNames.map(c => (
-                        <span key={c} className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 text-[10px] font-semibold">
-                          {c}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Cables list */}
-                <div className="space-y-1 pt-1">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Cables Pertencientes ({zone.cableNames.length}):</span>
-                  <div className="flex flex-wrap gap-1">
-                    {zone.cableNames.length === 0 ? (
-                      <span className="text-[11px] text-slate-600 italic">Ningún cable asignado</span>
-                    ) : (
-                      zone.cableNames.map(c => (
-                        <span key={c} className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60 text-[10px] font-mono">
-                          {c}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-              </div>
-            ))}
+              );
+            })}
           </div>
 
         </div>
 
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 bg-slate-950 rounded-b-3xl flex items-center justify-between text-xs text-slate-400">
-          <span>Las zonas creadas se actualizan inmediatamente en la Tabla de Zonificación vs Grupos.</span>
+          <span>Las zonas y terminales configurados se actualizan automáticamente en la Matriz 2 de Zonificación.</span>
           <button
             onClick={onClose}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl"

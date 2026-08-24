@@ -1,9 +1,16 @@
+export interface ZoneCableRule {
+  cableName: string;
+  matchTerminal?: boolean;
+  terminals?: string[]; // list of terminal strings/numbers
+}
+
 export interface ZoneConfig {
   id: string;
   name: string;
   description?: string;
   centralNames: string[]; // Centrales allocated to this zone
-  cableNames: string[];   // Cable names or patterns allocated to this zone
+  cableNames: string[];   // Cable names or patterns allocated to this zone (legacy or simple string)
+  cableRules?: ZoneCableRule[]; // Detailed cable rules with optional Terminal filtering
   color?: string;
 }
 

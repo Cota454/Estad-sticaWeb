@@ -67,7 +67,8 @@ import {
   classifyNetworkType,
   cleanCableName,
   matchCableInItem,
-  matchCableInItemExact
+  matchCableInItemExact,
+  matchZoneCableRule
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -403,8 +404,17 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       }
     }
 
-    // STEP 2: Priority by Cable (only for services whose Central is not assigned to any zone - EXACT match)
+    // STEP 2: Priority by Cable and optional Terminal (only for services whose Central is not assigned to any zone)
     for (const z of zoneList) {
+      // 2a. Check detailed cableRules if present
+      if (z.cableRules && z.cableRules.length > 0) {
+        const matchesDetailedRule = z.cableRules.some(rule => matchZoneCableRule(item, rule));
+        if (matchesDetailedRule) {
+          return z; // Assigned to this zone by Cable & Terminal!
+        }
+      }
+
+      // 2b. Check simple cableNames (legacy or simple cable names without specific rules)
       const validCableNames = (z.cableNames || []).map(cb => cb.trim().toUpperCase()).filter(Boolean);
       if (validCableNames.length > 0) {
         const matchesCable = validCableNames.some(cb => matchCableInItemExact(item, cb));

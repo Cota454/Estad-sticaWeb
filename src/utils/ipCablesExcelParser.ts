@@ -111,6 +111,62 @@ export function matchCableInItemExact(item: IpCableRow, targetPattern: string): 
 }
 
 /**
+ * Extracts the Terminal value from an item's rawRowData looking for Terminal column aliases.
+ */
+export function extractTerminalFromItem(item: IpCableRow): string {
+  if (!item.rawRowData) return '';
+  const raw = item.rawRowData;
+  const keys = Object.keys(raw);
+  
+  // Direct match for "TERMINAL"
+  const directKey = keys.find(k => k.trim().toUpperCase() === 'TERMINAL');
+  if (directKey && raw[directKey] !== undefined && raw[directKey] !== null && String(raw[directKey]).trim() !== '') {
+    return String(raw[directKey]).trim();
+  }
+
+  // Alias matches
+  const aliasKey = keys.find(k => {
+    const clean = k.trim().toUpperCase();
+    return clean === 'TERM' || clean.includes('TERMINAL') || clean === 'CAJA' || clean === 'CAJA TERMINAL';
+  });
+
+  if (aliasKey && raw[aliasKey] !== undefined && raw[aliasKey] !== null && String(raw[aliasKey]).trim() !== '') {
+    return String(raw[aliasKey]).trim();
+  }
+
+  return '';
+}
+
+/**
+ * Validates whether an item matches a specific Zone Cable Rule (evaluating both Cable and optional Terminal check)
+ */
+export function matchZoneCableRule(
+  item: IpCableRow,
+  rule: { cableName: string; matchTerminal?: boolean; terminals?: string[] }
+): boolean {
+  const cableMatches = matchCableInItemExact(item, rule.cableName);
+  if (!cableMatches) return false;
+
+  // If no terminal verification is required, matching the cable is sufficient
+  if (!rule.matchTerminal || !rule.terminals || rule.terminals.length === 0) {
+    return true;
+  }
+
+  // Terminal verification is active
+  const itemTerminal = extractTerminalFromItem(item).toUpperCase();
+  if (!itemTerminal) {
+    // If the row doesn't have a terminal, it fails strict terminal filter
+    return false;
+  }
+
+  const validTerminals = rule.terminals.map(t => t.trim().toUpperCase()).filter(Boolean);
+  return validTerminals.some(t => {
+    // Exact or substring match (e.g., "1210" matches "1210" or "T-1210")
+    return itemTerminal === t || itemTerminal.includes(t) || t.includes(itemTerminal);
+  });
+}
+
+/**
  * Classifies a row into Red Rígida, Red Flexible, Outdoor, or Other
  * Evaluates both Cable P and Cable S
  */
