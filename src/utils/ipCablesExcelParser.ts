@@ -1,6 +1,38 @@
 import * as XLSX from 'xlsx-js-style';
 import Papa from 'papaparse';
-import { IpCableRow, IpCableExcelParseResult, CableClassificationRules } from '../types/ipCablesTypes';
+import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig } from '../types/ipCablesTypes';
+
+/**
+ * Calculates delay in days from item raw data or fechaReporte
+ */
+export function getDemoraDays(item: IpCableRow): number {
+  if (item.rawRowData) {
+    for (const key of Object.keys(item.rawRowData)) {
+      const k = key.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+      if (k.includes('demora') || k.includes('dias')) {
+        const val = item.rawRowData[key];
+        if (val !== undefined && val !== null && val !== '') {
+          const num = parseInt(String(val).trim(), 10);
+          if (!isNaN(num)) return Math.max(0, num);
+        }
+      }
+    }
+  }
+
+  // Fallback to fechaReporte
+  if (item.fechaReporte) {
+    const reportDate = new Date(item.fechaReporte);
+    if (!isNaN(reportDate.getTime())) {
+      const now = new Date();
+      const d1 = new Date(reportDate.getFullYear(), reportDate.getMonth(), reportDate.getDate());
+      const d2 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const diffMs = d2.getTime() - d1.getTime();
+      return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+    }
+  }
+
+  return 0;
+}
 
 function normalizeHeader(str: string): string {
   return (str || '')
@@ -416,8 +448,8 @@ export function classifyNetworkType(
       const pat = cleanCableName(p).toUpperCase();
       if (!pat) return false;
       return (
-        (normCableP && (normCableP === pat || normCableP.includes(pat))) ||
-        (normCableS && (normCableS === pat || normCableS.includes(pat)))
+        (normCableP && (normCableP === pat || isCableExactMatch(cablePVal, pat))) ||
+        (normCableS && (normCableS === pat || isCableExactMatch(cableSVal, pat)))
       );
     });
   });
@@ -449,6 +481,56 @@ export function classifyNetworkType(
   }
 
   return { networkType: 'other', networkTypeLabel: 'Otra Red / General' };
+}
+
+/**
+ * Exclusive, prioritized zone matching:
+ * Step 1: If item's central belongs to a zone's centralNames, assign AUTOMATICALLY to that zone.
+ * Step 2: If item's central is NOT in any zone, analyze strictly by Cable against zone cableNames (exact match).
+ * Step 3: Returns null if no zone matched (Sin Zonificar).
+ */
+export function findMatchingZoneForItem(item: IpCableRow, zoneList: ZoneConfig[]): ZoneConfig | null {
+  if (!item || !zoneList || zoneList.length === 0) return null;
+  const itemCentral = (item.central || '').trim().toUpperCase();
+
+  // STEP 1: Priority by Central Telefónica (EXACT match)
+  if (itemCentral) {
+    const centralParts = itemCentral.split('/').map(p => p.trim()).filter(Boolean);
+    for (const z of zoneList) {
+      const validCentralNames = (z.centralNames || []).map(cn => cn.trim().toUpperCase()).filter(Boolean);
+      if (validCentralNames.length > 0) {
+        const matchesCentral = validCentralNames.some(cn => {
+          return centralParts.some(part => part === cn) || itemCentral === cn;
+        });
+        if (matchesCentral) {
+          return z; // Automatically assigned to this zone by Central!
+        }
+      }
+    }
+  }
+
+  // STEP 2: Priority by Cable and optional Terminal (only for services whose Central is not assigned to any zone)
+  for (const z of zoneList) {
+    // 2a. Check detailed cableRules if present
+    if (z.cableRules && z.cableRules.length > 0) {
+      const matchesDetailedRule = z.cableRules.some(rule => matchZoneCableRule(item, rule));
+      if (matchesDetailedRule) {
+        return z; // Assigned to this zone by Cable & Terminal!
+      }
+    }
+
+    // 2b. Check simple cableNames (legacy or simple cable names without specific rules)
+    const validCableNames = (z.cableNames || []).map(cb => cb.trim().toUpperCase()).filter(Boolean);
+    if (validCableNames.length > 0) {
+      const matchesCable = validCableNames.some(cb => matchCableInItemExact(item, cb));
+      if (matchesCable) {
+        return z; // Assigned to this zone by Cable!
+      }
+    }
+  }
+
+  // STEP 3: Unassigned (Sin Zonificar)
+  return null;
 }
 
 /**
