@@ -470,53 +470,78 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
     const tfStyle = `border: 1px solid #cbd5e1; padding: 6px 8px; background-color: #f1f5f9; font-weight: bold; text-align: center;`;
     const tfFirstStyle = `border: 1px solid #cbd5e1; padding: 6px 8px; background-color: #f1f5f9; font-weight: bold; text-align: left; color: #0f172a;`;
 
-    const renderHtmlTable = (mat: MatrixResult) => `
-      <div style="margin-bottom: 24px; page-break-inside: avoid; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
-        <div style="font-weight: bold; font-size: 11pt; color: #0f172a; border-bottom: 2px solid #2563eb; padding-bottom: 4px; margin-bottom: 6px;">
-          ${mat.title}
-        </div>
-        <div style="font-size: 9pt; color: #64748b; margin-bottom: 8px;">
-          ${mat.subtitle}
-        </div>
-        <table style="${tableStyle}">
-          <thead>
-            <tr>
-              <th style="${thFirstStyle}">Elemento</th>
-              ${mat.columns.map(c => `<th style="${thStyle}">${c}</th>`).join('')}
-              <th style="${thStyle}; background-color: #1e293b;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${mat.rows.map((r, idx) => `
-              <tr style="background-color: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                <td style="${tdFirstStyle}">${r}</td>
-                ${mat.columns.map(c => {
-                  const val = mat.cellMap[r]?.[c] || 0;
-                  return `<td style="${tdStyle}">${val > 0 ? val : '-'}</td>`;
-                }).join('')}
-                <td style="${tdStyle}; font-weight: bold; background-color: #f1f5f9;">${mat.rowTotals[r] || 0}</td>
+    const renderHtmlTable = (mat: MatrixResult) => {
+      if (!mat || mat.rows.length === 0 || mat.grandTotal === 0) {
+        return `
+          <div style="margin-bottom: 18px; page-break-inside: avoid; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+            <div style="font-weight: bold; font-size: 11pt; color: #0f172a; border-bottom: 2px solid #2563eb; padding-bottom: 4px; margin-bottom: 4px;">
+              ${mat?.title || 'Matriz'}
+            </div>
+            <div style="font-size: 8.5pt; color: #64748b; margin-bottom: 6px;">
+              ${mat?.subtitle || ''}
+            </div>
+            <p style="font-size: 9pt; color: #94a3b8; font-style: italic; margin: 6px 0;">Sin reportes registrados para este criterio en el período seleccionado.</p>
+          </div>
+        `;
+      }
+
+      return `
+        <div style="margin-bottom: 24px; page-break-inside: avoid; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
+          <div style="font-weight: bold; font-size: 11pt; color: #0f172a; border-bottom: 2px solid #2563eb; padding-bottom: 4px; margin-bottom: 6px;">
+            ${mat.title}
+          </div>
+          <div style="font-size: 9pt; color: #64748b; margin-bottom: 8px;">
+            ${mat.subtitle}
+          </div>
+          <table style="${tableStyle}" border="1" cellpadding="5" cellspacing="0">
+            <thead>
+              <tr style="background-color: #0f172a; color: #ffffff;">
+                <th style="${thFirstStyle}">Elemento</th>
+                ${mat.columns.map(c => `<th style="${thStyle}">${c}</th>`).join('')}
+                <th style="${thStyle}; background-color: #1e293b;">Total</th>
               </tr>
-            `).join('')}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td style="${tfFirstStyle}">TOTAL GENERAL</td>
-              ${mat.columns.map(c => `<td style="${tfStyle}">${mat.colTotals[c] || 0}</td>`).join('')}
-              <td style="${tfStyle}; background-color: #e2e8f0; color: #0f172a;">${mat.grandTotal}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    `;
+            </thead>
+            <tbody>
+              ${mat.rows.map((r, idx) => `
+                <tr style="background-color: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                  <td style="${tdFirstStyle}">${r}</td>
+                  ${mat.columns.map(c => {
+                    const val = mat.cellMap[r]?.[c] || 0;
+                    return `<td style="${tdStyle}">${val > 0 ? val : '-'}</td>`;
+                  }).join('')}
+                  <td style="${tdStyle}; font-weight: bold; background-color: #f1f5f9;">${mat.rowTotals[r] || 0}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr style="background-color: #f1f5f9; font-weight: bold;">
+                <td style="${tfFirstStyle}">TOTAL GENERAL</td>
+                ${mat.columns.map(c => `<td style="${tfStyle}">${mat.colTotals[c] || 0}</td>`).join('')}
+                <td style="${tfStyle}; background-color: #e2e8f0; color: #0f172a;">${mat.grandTotal}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      `;
+    };
 
     let html = `
-      <!DOCTYPE html>
-      <html>
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
       <head>
         <meta charset="utf-8">
         <title>${reportFileName}</title>
+        <!--[if gte mso 9]>
+        <xml>
+          <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>100</w:Zoom>
+            <w:DoNotOptimizeForBrowser/>
+          </w:WordDocument>
+        </xml>
+        <![endif]-->
         <style>
-          @page { size: A4 landscape; margin: 15mm; }
+          @page Section1 { size: 841.9pt 595.3pt; mso-page-orientation: landscape; margin: 36.0pt 36.0pt 36.0pt 36.0pt; mso-header-margin: 36.0pt; mso-footer-margin: 36.0pt; }
+          div.Section1 { page: Section1; }
           body { font-family: Arial, sans-serif; background-color: #ffffff; color: #1e293b; margin: 0; padding: 20px; }
           h1 { color: #0f172a; font-size: 18pt; margin: 0 0 6px 0; border-bottom: 3px solid #2563eb; padding-bottom: 8px; }
           h2 { color: #1e293b; font-size: 14pt; margin: 24px 0 12px 0; border-bottom: 1px solid #94a3b8; padding-bottom: 6px; }
@@ -527,56 +552,57 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
         </style>
       </head>
       <body>
-        <h1>📊 ${reportFileName}</h1>
-        <div class="meta-box">
-          <strong>Fecha y Hora de Generación:</strong> ${reportDate.toLocaleDateString()} ${reportDate.toLocaleTimeString()}<br/>
-          <strong>Total de Servicios Consolidados:</strong> ${baseRows.length}<br/>
-          <strong>Filtro de Año:</strong> ${selectedYear === 'all' ? 'Todos los Años' : selectedYear}<br/>
-          <strong>Consolidación Activa:</strong> ${localOptimization ? 'Sí (Optimización Teléfono / Asociado)' : 'No (Base)'}
+        <div class="Section1">
+          <h1>📊 ${reportFileName}</h1>
+          <div class="meta-box">
+            <strong>Fecha y Hora de Generación:</strong> ${reportDate.toLocaleDateString()} ${reportDate.toLocaleTimeString()}<br/>
+            <strong>Total de Servicios Consolidados:</strong> ${baseRows.length}<br/>
+            <strong>Total Segmento Teléfono (Solo números):</strong> ${telefonoSections.totalRows} servicios<br/>
+            <strong>Total Segmento TxD Dato (Con letras):</strong> ${txdSections.totalRows} servicios<br/>
+            <strong>Filtro de Año:</strong> ${selectedYear === 'all' ? 'Todos los Años' : selectedYear}<br/>
+            <strong>Consolidación Activa:</strong> ${localOptimization ? 'Sí (Optimización Teléfono / Asociado)' : 'No (Base)'}
+          </div>
+
+          <!-- 1. Teléfono section -->
+          <div class="section-block">
+            <h2>📞 1. Segmento: Columna Teléfono → Teléfono (Solo números) [Total: ${telefonoSections.totalRows} servicios]</h2>
+            
+            <h3>📅 1.1 Análisis Cronológico Mes por Mes</h3>
+            ${telefonoSections.monthlyData.length === 0 ? '<p style="color: #64748b; font-style: italic;">No hay meses con reportes en este período para Teléfonos numéricos.</p>' : ''}
+            ${telefonoSections.monthlyData.map(m => `
+              ${renderHtmlTable(m.matrixCentrales)}
+              ${renderHtmlTable(m.matrixZonas)}
+            `).join('')}
+
+            <h3>⏱️ 1.2 Análisis por Demora en Días</h3>
+            ${telefonoSections.delayData.map(d => `
+              ${renderHtmlTable(d.matrixCentrales)}
+              ${renderHtmlTable(d.matrixZonas)}
+            `).join('')}
+          </div>
+
+          <!-- 2. TxD section -->
+          <div class="section-block" style="page-break-before: always; mso-break-type: section-break;">
+            <h2>💻 2. Segmento: Columna Teléfono → TxD Dato (Con letras) [Total: ${txdSections.totalRows} servicios]</h2>
+            
+            <h3>📅 2.1 Análisis Cronológico Mes por Mes</h3>
+            ${txdSections.monthlyData.length === 0 ? '<p style="color: #64748b; font-style: italic;">No hay meses con reportes en este período para TxD Datos.</p>' : ''}
+            ${txdSections.monthlyData.map(m => `
+              ${renderHtmlTable(m.matrixCentrales)}
+              ${renderHtmlTable(m.matrixZonas)}
+            `).join('')}
+
+            <h3>⏱️ 2.2 Análisis por Demora en Días</h3>
+            ${txdSections.delayData.map(d => `
+              ${renderHtmlTable(d.matrixCentrales)}
+              ${renderHtmlTable(d.matrixZonas)}
+            `).join('')}
+          </div>
+
+          <div class="footer">
+            Documento oficial generado por la Plataforma de Análisis de Incidencias IP y Planta Externa.
+          </div>
         </div>
-    `;
-
-    // 1. Teléfono section
-    html += `
-      <div class="section-block">
-        <h2>📞 1. Segmento: Columna Teléfono $\rightarrow$ Teléfono (Solo números) [Total: ${telefonoSections.totalRows} servicios]</h2>
-        
-        <h3>📅 1.1 Análisis Cronológico Mes por Mes</h3>
-        ${telefonoSections.monthlyData.length === 0 ? '<p><i>No hay meses con reportes en este período.</i></p>' : ''}
-        ${telefonoSections.monthlyData.map(m => `
-          ${renderHtmlTable(m.matrixCentrales)}
-          ${renderHtmlTable(m.matrixZonas)}
-        `).join('')}
-
-        <h3>⏱️ 1.2 Análisis por Demora en Días</h3>
-        ${telefonoSections.delayData.map(d => `
-          ${renderHtmlTable(d.matrixCentrales)}
-          ${renderHtmlTable(d.matrixZonas)}
-        `).join('')}
-      </div>
-    `;
-
-    // 2. TxD section
-    html += `
-      <div class="section-block" style="page-break-before: always;">
-        <h2>💻 2. Segmento: Columna Teléfono $\rightarrow$ TxD Dato (Con letras) [Total: ${txdSections.totalRows} servicios]</h2>
-        
-        <h3>📅 2.1 Análisis Cronológico Mes por Mes</h3>
-        ${txdSections.monthlyData.length === 0 ? '<p><i>No hay meses con reportes en este período.</i></p>' : ''}
-        ${txdSections.monthlyData.map(m => `
-          ${renderHtmlTable(m.matrixCentrales)}
-          ${renderHtmlTable(m.matrixZonas)}
-        `).join('')}
-
-        <h3>⏱️ 2.2 Análisis por Demora en Días</h3>
-        ${txdSections.delayData.map(d => `
-          ${renderHtmlTable(d.matrixCentrales)}
-          ${renderHtmlTable(d.matrixZonas)}
-        `).join('')}
-      </div>
-      <div class="footer">
-        Documento oficial generado por la Plataforma de Análisis de Incidencias IP y Planta Externa.
-      </div>
       </body>
       </html>
     `;

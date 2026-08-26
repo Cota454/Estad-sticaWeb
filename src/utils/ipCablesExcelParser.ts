@@ -861,16 +861,16 @@ export async function parseIpCablesExcelFile(
  */
 export function generateSampleIpCablesData(rules: CableClassificationRules): IpCableExcelParseResult {
   const sampleDataRaw = [
-    { srv: 'SER-10023', cnt: 'CTA SE', grp: 'BRIGADA NORTE 1', cblP: 'CR-101', parP: '12', cblS: 'CS-01', parS: '45', fch: '2026-08-01' },
-    { srv: 'SER-10023', cnt: 'CTA SE', grp: 'BRIGADA NORTE 1', cblP: 'CR-101', parP: '12', cblS: 'CS-01', parS: '45', fch: '2026-08-01' }, // Repeat for consolidation test
-    { srv: 'SER-10024', cnt: 'CTA SE', grp: 'BRIGADA NORTE 2', cblP: 'CR-102', parP: '18', cblS: 'CS-02', parS: '50', fch: '2026-08-02' },
-    { srv: 'SER-10025', cnt: 'PLAZA NORTE', grp: 'BRIGADA NORTE 1', cblP: 'CF-201', parP: '04', cblS: '', parS: '', fch: '2026-08-03' },
-    { srv: 'SER-10026', cnt: 'PLAZA NORTE', grp: 'BRIGADA SUR 1', cblP: 'CF-202', parP: '33', cblS: 'CS-05', parS: '11', fch: '2026-08-04' },
-    { srv: 'SER-10027', cnt: 'CENTRAL SUR', grp: 'BRIGADA SUR 1', cblP: 'CABLE-05', parP: '10', cblS: '', parS: '', fch: '2026-08-05' },
-    { srv: 'SER-10028', cnt: 'CENTRAL SUR', grp: 'BRIGADA SUR 2', cblP: 'OUT-301', parP: '01', cblS: 'CS-09', parS: '88', fch: '2026-08-06' },
-    { srv: 'SER-10029', cnt: 'CORE CENTRAL', grp: 'NOC CORE', cblP: 'CR-103', parP: '15', cblS: '', parS: '', fch: '2026-08-07' },
-    { srv: 'SER-10030', cnt: 'CORE CENTRAL', grp: 'NOC CORE', cblP: 'CF-203', parP: '22', cblS: 'CS-10', parS: '03', fch: '2026-08-08' },
-    { srv: 'SER-10031', cnt: 'OUTDOOR EXT-1', grp: 'BRIGADA EXTERIOR', cblP: 'CAB-EXT', parP: '09', cblS: '', parS: '', fch: '2026-08-09' }
+    { srv: '72210023', cnt: 'CTA SE', grp: 'BRIGADA NORTE 1', cblP: 'CR-101', parP: '12', cblS: 'CS-01', parS: '45', fch: '2026-08-01', tel: '72210023', asoc: '' },
+    { srv: '72210023', cnt: 'CTA SE', grp: 'BRIGADA NORTE 1', cblP: 'CR-101', parP: '12', cblS: 'CS-01', parS: '45', fch: '2026-08-01', tel: '72210023', asoc: '' }, // Repeat for consolidation test
+    { srv: '72210024', cnt: 'CTA SE', grp: 'BRIGADA NORTE 2', cblP: 'CR-102', parP: '18', cblS: 'CS-02', parS: '50', fch: '2026-08-02', tel: '72210024', asoc: '' },
+    { srv: '72210025', cnt: 'PLAZA NORTE', grp: 'BRIGADA NORTE 1', cblP: 'CF-201', parP: '04', cblS: '', parS: '', fch: '2026-08-03', tel: '72210025', asoc: '' },
+    { srv: '72210026', cnt: 'PLAZA NORTE', grp: 'BRIGADA SUR 1', cblP: 'CF-202', parP: '33', cblS: 'CS-05', parS: '11', fch: '2026-08-04', tel: '72210026', asoc: '' },
+    { srv: 'TXD-DAT-501', cnt: 'CENTRAL SUR', grp: 'BRIGADA SUR 1', cblP: 'CABLE-05', parP: '10', cblS: '', parS: '', fch: '2026-08-05', tel: 'TXD-501', asoc: '' },
+    { srv: 'TXD-DAT-502', cnt: 'CENTRAL SUR', grp: 'BRIGADA SUR 2', cblP: 'OUT-301', parP: '01', cblS: 'CS-09', parS: '88', fch: '2026-08-06', tel: 'IP-DAT-502', asoc: '' },
+    { srv: '72210029', cnt: 'CORE CENTRAL', grp: 'NOC CORE', cblP: 'CR-103', parP: '15', cblS: '', parS: '', fch: '2026-08-07', tel: '72210029', asoc: '' },
+    { srv: 'TXD-CORP-901', cnt: 'CORE CENTRAL', grp: 'NOC CORE', cblP: 'CF-203', parP: '22', cblS: 'CS-10', parS: '03', fch: '2026-08-08', tel: 'TXD-CORP-901', asoc: '' },
+    { srv: 'TXD-EXT-777', cnt: 'OUTDOOR EXT-1', grp: 'BRIGADA EXTERIOR', cblP: 'CAB-EXT', parP: '09', cblS: '', parS: '', fch: '2026-08-09', tel: 'DATO-EXT-777', asoc: '' }
   ];
 
   const map = new Map<string, IpCableRow>();
@@ -896,6 +896,7 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
         fechaReporte: item.fch,
         rawRowData: {
           SERVICIO: item.srv,
+          TELÉFONO: item.tel,
           CENTRAL: item.cnt,
           GRUPO: item.grp,
           'Cable P': item.cblP,
@@ -917,8 +918,8 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
 
   return {
     totalRowsRead: sampleDataRaw.length,
-    totalHeaderCols: 7,
-    headers: ['SERVICIO', 'CENTRAL TELEFÓNICA', 'GRUPO', 'Cable P', 'Par P', 'Cable S', 'Par S', 'FECHA REPORTE'],
+    totalHeaderCols: 8,
+    headers: ['SERVICIO', 'TELÉFONO', 'CENTRAL TELEFÓNICA', 'GRUPO', 'Cable P', 'Par P', 'Cable S', 'Par S', 'FECHA REPORTE'],
     consolidatedRows,
     uniqueServicesCount: consolidatedRows.length,
     uniqueCentrales: ['CENTRAL SUR', 'CORE CENTRAL', 'CTA SE', 'OUTDOOR EXT-1', 'PLAZA NORTE'],
