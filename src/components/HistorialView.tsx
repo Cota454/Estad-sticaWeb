@@ -230,6 +230,11 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
 
     // Map counts
     const grid: Record<string, Record<string, number>> = {};
+    const groupTotals: Record<string, number> = {};
+    activeGroups.forEach(g => {
+      groupTotals[g.id] = 0;
+    });
+
     activeCentrales.forEach(c => {
       grid[c.id] = {};
       activeGroups.forEach(g => {
@@ -237,16 +242,24 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
       });
     });
 
+    let grandTotal = 0;
     filteredReports.forEach(r => {
       if (grid[r.centralId] && grid[r.centralId][r.workGroupId] !== undefined) {
-        grid[r.centralId][r.workGroupId] += r.reportCount || 0;
+        const count = r.reportCount || 0;
+        grid[r.centralId][r.workGroupId] += count;
+        if (groupTotals[r.workGroupId] !== undefined) {
+          groupTotals[r.workGroupId] += count;
+        }
+        grandTotal += count;
       }
     });
 
     return {
       activeCentrales,
       activeGroups,
-      grid
+      grid,
+      groupTotals,
+      grandTotal
     };
   }, [filteredReports, centrales, workGroups, selectedCentralId, selectedGroupId]);
 
@@ -269,7 +282,7 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
       return [c.name, c.code, ...groupVals, totalC];
     });
 
-    const groupTotals = matrixData.activeGroups.map(g => matrixData.groupTotals[g.id] || 0);
+    const groupTotals = matrixData.activeGroups.map(g => matrixData.groupTotals?.[g.id] || 0);
     const grandTotal = matrixData.grandTotal || 0;
     const totalRow = ['TOTAL GENERAL', 'RED', ...groupTotals, grandTotal];
 

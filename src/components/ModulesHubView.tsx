@@ -220,8 +220,8 @@ export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
                 <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-2xl text-blue-400 group-hover:scale-110 transition-transform">
                   <Network className="w-7 h-7" />
                 </div>
-                <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] font-black uppercase px-2.5 py-1 rounded-full tracking-wider font-mono">
-                  PRÓXIMAMENTE v2.6
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-black uppercase px-2.5 py-1 rounded-full tracking-wider font-mono">
+                  MÓDULO ACTIVO
                 </span>
               </div>
 
@@ -230,28 +230,28 @@ export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
                   2. Análisis de IP
                 </h3>
                 <p className="text-slate-300 text-xs mt-2 leading-relaxed">
-                  Supervisión de subredes, estado de direccionamiento IPv4/IPv6, pruebas de latencia ping ICMP en vivo y mapa de routers/switches distribuidos.
+                  Análisis consolidado de cables y pares, matrices por Centrales y Zonas vs Grupos de Trabajo, filtros por rango de fecha, clasificación de red y tickets SIPREC.
                 </p>
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-slate-800">
                 <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
-                  <Radio className="w-3.5 h-3.5 text-blue-400" />
-                  <span>24 Subredes Monitoreadas</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Matrices por Central, Zona y Cable</span>
                 </div>
                 <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
-                  <Radio className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Pruebas Ping y Diagnóstico de Latencia</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Filtro por Rango de Fecha y Demoras</span>
                 </div>
                 <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
-                  <Radio className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Topología de Enlaces Troncales NOC</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Generador e Impresión SIPREC</span>
                 </div>
               </div>
             </div>
 
-            <button className="w-full py-3 px-4 bg-slate-800 group-hover:bg-blue-600 text-slate-200 group-hover:text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2 border border-slate-700 group-hover:border-blue-500">
-              <span>Explorar Vista Previa</span>
+            <button className="w-full py-3 px-4 bg-blue-600 group-hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/20">
+              <span>Ingresar a Análisis de IP</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
           </div>

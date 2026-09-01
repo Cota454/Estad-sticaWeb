@@ -254,11 +254,53 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   // Matrix Filter States
   const [matrixDemoraFilter, setMatrixDemoraFilter] = useState<string>('all');
   const [matrixManualDate, setMatrixManualDate] = useState<string>('');
+  const [matrixStartDate, setMatrixStartDate] = useState<string>('');
+  const [matrixEndDate, setMatrixEndDate] = useState<string>('');
   const [matrixMonthFilter, setMatrixMonthFilter] = useState<string>('all');
   const [matrixYearFilter, setMatrixYearFilter] = useState<string>('all');
   const [matrixTelefonoFilter, setMatrixTelefonoFilter] = useState<TelefonoTypeFilter>('all');
   const [isOptimized, setIsOptimized] = useState<boolean>(false);
   const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
+
+  // Handlers for Date Range Filter with strict validation (fecha inicial no puede ser mayor que la final)
+  const handleMatrixStartDateChange = (val: string) => {
+    setMatrixStartDate(val);
+    if (val && matrixEndDate && val > matrixEndDate) {
+      // Auto-correct end date so start date is never greater than end date
+      setMatrixEndDate(val);
+    }
+  };
+
+  const handleMatrixEndDateChange = (val: string) => {
+    setMatrixEndDate(val);
+    if (val && matrixStartDate && val < matrixStartDate) {
+      // Auto-correct start date so end date is never less than start date
+      setMatrixStartDate(val);
+    }
+  };
+
+  const handleClearDateRange = () => {
+    setMatrixStartDate('');
+    setMatrixEndDate('');
+  };
+
+  const handleQuickDatePreset = (preset: 'today' | '7days' | 'thisMonth') => {
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    if (preset === 'today') {
+      setMatrixStartDate(todayStr);
+      setMatrixEndDate(todayStr);
+    } else if (preset === '7days') {
+      const d7 = new Date();
+      d7.setDate(d7.getDate() - 6);
+      setMatrixStartDate(d7.toISOString().split('T')[0]);
+      setMatrixEndDate(todayStr);
+    } else if (preset === 'thisMonth') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      setMatrixStartDate(firstDay.toISOString().split('T')[0]);
+      setMatrixEndDate(todayStr);
+    }
+  };
 
   // Optimization Statistics (Shows how many records are simplified when Optimizar is on)
   const optimizationStats = useMemo(() => {
@@ -286,7 +328,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return Array.from(yrSet).sort((a, b) => b - a);
   }, [excelData]);
 
-  // Rows filtered by Demora en Días (including manual date), Mes, Año, Tipo de Teléfono, and Optimizar (Simplificación)
+  // Rows filtered by Demora en Días (including manual date), Rango de Fechas, Mes, Año, Tipo de Teléfono, and Optimizar (Simplificación)
   const matrixFilteredConsolidatedRows = useMemo(() => {
     if (!excelData) return [];
 
@@ -314,7 +356,21 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         if (!matchDemoraFilter(days, matrixDemoraFilter)) return false;
       }
 
-      // 4. Month and Year Filter
+      // 4. Date Range Filter (Fecha Inicial - Fecha Final)
+      if (matrixStartDate || matrixEndDate) {
+        const itemDate = (item.fechaReporte || '').trim().slice(0, 10);
+        if (!itemDate) {
+          return false;
+        }
+        if (matrixStartDate && itemDate < matrixStartDate) {
+          return false;
+        }
+        if (matrixEndDate && itemDate > matrixEndDate) {
+          return false;
+        }
+      }
+
+      // 5. Month and Year Filter
       if (item.fechaReporte && item.fechaReporte.length >= 7) {
         const parts = item.fechaReporte.split('-');
         const y = parseInt(parts[0], 10);
@@ -334,7 +390,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
       return true;
     });
-  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixMonthFilter, matrixYearFilter]);
+  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -1180,23 +1236,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <div>
                   <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
                     <span>Filtros de Análisis para Matrices</span>
-                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
+                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
                       <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
                         {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
                       </span>
                     )}
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Optimice servicios cruzados (Teléfono/Asociado) y filtre por Tipo de Teléfono, Demora, Mes y Año.
+                    Optimice servicios cruzados (Teléfono/Asociado) y filtre por Rango de Fechas, Tipo de Teléfono, Demora, Mes y Año.
                   </p>
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
                     setMatrixManualDate('');
+                    setMatrixStartDate('');
+                    setMatrixEndDate('');
                     setMatrixMonthFilter('all');
                     setMatrixYearFilter('all');
                     setMatrixTelefonoFilter('all');
@@ -1209,6 +1267,160 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <span>Restablecer Filtros</span>
                 </button>
               )}
+            </div>
+
+            {/* Filtro por Rango de Fecha (Fecha Inicial - Fecha Final con validación) */}
+            <div className={`p-4 rounded-2xl border transition-all space-y-3 ${
+              (matrixStartDate || matrixEndDate)
+                ? 'bg-emerald-950/20 border-emerald-500/50 shadow-lg shadow-emerald-500/5'
+                : 'bg-slate-950 border-slate-800'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                <div className="flex items-center space-x-2.5">
+                  <div className={`p-2 rounded-xl border shrink-0 ${
+                    (matrixStartDate || matrixEndDate)
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}>
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-extrabold text-xs text-white">
+                        Filtro por Rango de Fecha
+                      </span>
+                      {(matrixStartDate || matrixEndDate) ? (
+                        <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] px-2.5 py-0.5 rounded-md font-mono font-bold flex items-center space-x-1">
+                          <span>Rango:</span>
+                          <strong>{matrixStartDate || 'Desde el inicio'}</strong>
+                          <span>al</span>
+                          <strong>{matrixEndDate || 'Hasta hoy'}</strong>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          (Sin rango activo)
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Filtre las matrices dentro de un período. La fecha inicial no puede ser mayor que la final.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Quick Presets & Clear */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 sm:pt-0">
+                  <button
+                    type="button"
+                    onClick={() => handleQuickDatePreset('today')}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-bold border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickDatePreset('7days')}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-bold border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    Últimos 7 días
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickDatePreset('thisMonth')}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-bold border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    Este Mes
+                  </button>
+                  {(matrixStartDate || matrixEndDate) && (
+                    <button
+                      type="button"
+                      onClick={handleClearDateRange}
+                      className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-lg text-[11px] font-bold transition-colors flex items-center space-x-1 cursor-pointer"
+                      title="Limpiar rango de fechas"
+                    >
+                      <X className="w-3 h-3" />
+                      <span>Limpiar Rango</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Date Inputs: Fecha Inicial / Fecha Final */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                    <span className="flex items-center space-x-1">
+                      <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Fecha Inicial (Desde)</span>
+                    </span>
+                    {matrixStartDate && (
+                      <span className="text-emerald-400 font-mono text-[10px] font-bold">
+                        {matrixStartDate}
+                      </span>
+                    )}
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      type="date"
+                      value={matrixStartDate}
+                      max={matrixEndDate || undefined}
+                      onChange={(e) => handleMatrixStartDateChange(e.target.value)}
+                      className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none transition-all ${
+                        matrixStartDate
+                          ? 'border-emerald-500 ring-1 ring-emerald-500/30'
+                          : 'border-slate-700 hover:border-slate-600 focus:border-emerald-500'
+                      }`}
+                    />
+                    {matrixStartDate && (
+                      <button
+                        type="button"
+                        onClick={() => handleMatrixStartDateChange('')}
+                        className="absolute right-8 p-1 text-slate-400 hover:text-white transition-colors"
+                        title="Borrar fecha inicial"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                    <span className="flex items-center space-x-1">
+                      <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Fecha Final (Hasta)</span>
+                    </span>
+                    {matrixEndDate && (
+                      <span className="text-emerald-400 font-mono text-[10px] font-bold">
+                        {matrixEndDate}
+                      </span>
+                    )}
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      type="date"
+                      value={matrixEndDate}
+                      min={matrixStartDate || undefined}
+                      onChange={(e) => handleMatrixEndDateChange(e.target.value)}
+                      className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none transition-all ${
+                        matrixEndDate
+                          ? 'border-emerald-500 ring-1 ring-emerald-500/30'
+                          : 'border-slate-700 hover:border-slate-600 focus:border-emerald-500'
+                      }`}
+                    />
+                    {matrixEndDate && (
+                      <button
+                        type="button"
+                        onClick={() => handleMatrixEndDateChange('')}
+                        className="absolute right-8 p-1 text-slate-400 hover:text-white transition-colors"
+                        title="Borrar fecha final"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Recuadro de Optimización (Teléfono vs Asociado) */}
