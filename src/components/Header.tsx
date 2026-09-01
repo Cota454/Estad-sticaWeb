@@ -1,6 +1,29 @@
-import React, { useRef } from 'react';
-import { Activity, Download, Upload, FileText, FileSpreadsheet, AlertCircle, Cloud, User, LogOut, CheckCircle2, Sun, Moon } from 'lucide-react';
-import { downloadJSONBackup, parseJSONBackupFile } from '../utils/exportUtils';
+import React, { useRef, useState, useEffect } from 'react';
+import {
+  Activity,
+  Download,
+  Upload,
+  FileText,
+  FileSpreadsheet,
+  AlertCircle,
+  Cloud,
+  User,
+  LogOut,
+  CheckCircle2,
+  Sun,
+  Moon,
+  Settings2,
+  Database,
+  SlidersHorizontal,
+  ChevronDown,
+  Layers
+} from 'lucide-react';
+import {
+  downloadJSONBackup,
+  downloadConfigBackup,
+  downloadHistoryBackup,
+  parseJSONBackupFile
+} from '../utils/exportUtils';
 import { Central, WorkGroup, DailyReport, UserProfile, RepairRecord, CustomTableSchema, RepairColumnMapping } from '../types';
 import { getTodayStr, formatDateShort } from '../utils/dateUtils';
 import { ADMIN_EMAIL } from '../utils/googleDriveService';
@@ -43,15 +66,37 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleTheme
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showBackupMenu, setShowBackupMenu] = useState<boolean>(false);
+  const backupMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (backupMenuRef.current && !backupMenuRef.current.contains(event.target as Node)) {
+        setShowBackupMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
-      const backup = await parseJSONBackupFile(file);
-      onImportBackup(backup);
-      alert(`Copia de seguridad restaurada con éxito: ${backup.centrales.length} centrales, ${backup.workGroups.length} grupos y ${backup.reports.length} reportes.`);
+      const parsedResult = await parseJSONBackupFile(file);
+      onImportBackup(parsedResult.data);
+      
+      let msg = '';
+      if (parsedResult.backupType === 'configuration') {
+        msg = `¡Configuraciones restauradas con éxito! (${parsedResult.summary.centralesCount} centrales, ${parsedResult.summary.workGroupsCount} grupos de trabajo, zonas y reglas del sistema).`;
+      } else if (parsedResult.backupType === 'history') {
+        msg = `¡Historial restaurado con éxito! (${parsedResult.summary.reportsCount} reportes, ${parsedResult.summary.repairRecordsCount} reparaciones y registros IP).`;
+      } else {
+        msg = `¡Copia de seguridad completa restaurada con éxito! (${parsedResult.summary.centralesCount} centrales, ${parsedResult.summary.reportsCount} reportes).`;
+      }
+      alert(msg);
     } catch (err: any) {
       alert(`Error al importar la copia de seguridad: ${err.message}`);
     } finally {
@@ -152,25 +197,102 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* Import JSON */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-medium transition-colors border border-slate-700"
-              title="Restaurar copia de seguridad desde un archivo .json"
-            >
-              <Upload className="w-3.5 h-3.5 text-blue-400" />
-              <span>Importar</span>
-            </button>
+            {/* Backup Menu Dropdown with Distinct Buttons */}
+            <div className="relative" ref={backupMenuRef}>
+              <button
+                onClick={() => setShowBackupMenu(!showBackupMenu)}
+                className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-bold transition-colors border border-slate-700 active:scale-95 shadow-sm"
+                title="Menú de copias de seguridad: Solo Configuraciones, Solo Historial o Completo"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Respaldos</span>
+                <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showBackupMenu ? 'rotate-180' : ''}`} />
+              </button>
 
-            {/* Export JSON */}
-            <button
-              onClick={() => downloadJSONBackup(centrales, workGroups, reports, repairRecords, customTables, columnMapping)}
-              className="inline-flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-medium transition-colors border border-slate-700"
-              title="Descargar copia de seguridad en formato JSON"
-            >
-              <Download className="w-3.5 h-3.5 text-slate-400" />
-              <span>Backup</span>
-            </button>
+              {showBackupMenu && (
+                <div className="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-2 space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-800">
+                    Descargar Copia de Seguridad
+                  </div>
+
+                  {/* 1. Solo Configuraciones */}
+                  <button
+                    onClick={() => {
+                      downloadConfigBackup(centrales, workGroups, columnMapping, customTables);
+                      setShowBackupMenu(false);
+                    }}
+                    className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-indigo-950/60 text-left transition-colors border border-transparent hover:border-indigo-500/30 group"
+                  >
+                    <div className="p-1.5 bg-indigo-600/20 text-indigo-400 rounded-md group-hover:bg-indigo-600 group-hover:text-white transition-colors mt-0.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-100 group-hover:text-indigo-300">
+                        1. Solo Configuraciones
+                      </div>
+                      <div className="text-[10px] text-slate-400 leading-tight">
+                        Centrales, grupos, técnicas, zonas IP, reglas y ajustes.
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* 2. Solo Historial */}
+                  <button
+                    onClick={() => {
+                      downloadHistoryBackup(reports, repairRecords, customTables);
+                      setShowBackupMenu(false);
+                    }}
+                    className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-emerald-950/60 text-left transition-colors border border-transparent hover:border-emerald-500/30 group"
+                  >
+                    <div className="p-1.5 bg-emerald-600/20 text-emerald-400 rounded-md group-hover:bg-emerald-600 group-hover:text-white transition-colors mt-0.5">
+                      <Database className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-100 group-hover:text-emerald-300">
+                        2. Solo Historial
+                      </div>
+                      <div className="text-[10px] text-slate-400 leading-tight">
+                        Reportes diarios, averías reparadas MTTR y datos IP.
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* 3. Copia Completa */}
+                  <button
+                    onClick={() => {
+                      downloadJSONBackup(centrales, workGroups, reports, repairRecords, customTables, columnMapping);
+                      setShowBackupMenu(false);
+                    }}
+                    className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-800 text-left transition-colors border border-transparent hover:border-slate-600 group"
+                  >
+                    <div className="p-1.5 bg-slate-800 text-slate-300 rounded-md group-hover:bg-slate-700 group-hover:text-white transition-colors mt-0.5">
+                      <Download className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-100 group-hover:text-blue-300">
+                        3. Copia Completa (Total)
+                      </div>
+                      <div className="text-[10px] text-slate-400 leading-tight">
+                        Agrupa configuraciones + historial juntos.
+                      </div>
+                    </div>
+                  </button>
+
+                  <div className="border-t border-slate-800 pt-1.5">
+                    <button
+                      onClick={() => {
+                        fileInputRef.current?.click();
+                        setShowBackupMenu(false);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white font-bold text-xs transition-colors border border-blue-500/30"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Importar / Restaurar JSON</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Export Word (.docx) */}
             <button

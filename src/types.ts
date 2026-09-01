@@ -135,17 +135,56 @@ export interface CustomTableSchema {
 import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult } from './types/ipCablesTypes';
 import { PrintedRecord } from './utils/ipCablesStorage';
 
-export interface SystemDataBackup {
+export interface SystemConfigBackup {
+  backupType: 'configuration';
   version: string;
   exportedAt: string;
+  description: string;
   centrales: Central[];
   workGroups: WorkGroup[];
+  repairColumnMapping?: RepairColumnMapping;
+  reportSettings?: ReportSettings;
+  ipZones?: ZoneConfig[];
+  ipCableRules?: CableClassificationRules;
+  wordReportProfiles?: WordReportProfile[];
+  customTableDefinitions?: Array<{
+    id: string;
+    tableName: string;
+    description?: string;
+    columnsToProcess: string[];
+    startRow: number;
+    endRow?: number;
+    createdDate: string;
+  }>;
+}
+
+export interface SystemHistoryBackup {
+  backupType: 'history';
+  version: string;
+  exportedAt: string;
+  description: string;
   reports: DailyReport[];
+  repairRecords?: RepairRecord[];
+  ipParsedData?: IpCableExcelParseResult;
+  ipPrintedServices?: Record<string, PrintedRecord>;
+  customTablesData?: CustomTableSchema[];
+}
+
+export interface SystemDataBackup {
+  backupType?: 'full' | 'configuration' | 'history';
+  version: string;
+  exportedAt: string;
+  description?: string;
+  centrales?: Central[];
+  workGroups?: WorkGroup[];
+  reports?: DailyReport[];
   repairRecords?: RepairRecord[];
   customTables?: CustomTableSchema[];
   repairColumnMapping?: RepairColumnMapping;
+  reportSettings?: ReportSettings;
   ipZones?: ZoneConfig[];
   ipCableRules?: CableClassificationRules;
+  wordReportProfiles?: WordReportProfile[];
   ipParsedData?: IpCableExcelParseResult;
   ipPrintedServices?: Record<string, PrintedRecord>;
 }

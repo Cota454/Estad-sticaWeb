@@ -1,16 +1,47 @@
 import React, { useState } from 'react';
-import { Settings, Save, RotateCcw, Check, FileText, ToggleLeft, ToggleRight, Info, Layout, Sparkles, SlidersHorizontal } from 'lucide-react';
-import { ReportSettings } from '../types';
+import {
+  Settings,
+  Save,
+  RotateCcw,
+  Check,
+  FileText,
+  ToggleLeft,
+  ToggleRight,
+  Info,
+  Layout,
+  Sparkles,
+  SlidersHorizontal,
+  Download,
+  Upload,
+  Layers,
+  CheckCircle2
+} from 'lucide-react';
+import { Central, WorkGroup, CustomTableSchema, RepairColumnMapping, ReportSettings } from '../types';
 import { DEFAULT_REPORT_SETTINGS, saveReportSettings, resetReportSettings } from '../utils/settingsUtils';
+import { downloadConfigBackup, parseJSONBackupFile } from '../utils/exportUtils';
 
 interface AjustesViewProps {
   settings: ReportSettings;
   onUpdateSettings: (newSettings: ReportSettings) => void;
+  centrales?: Central[];
+  workGroups?: WorkGroup[];
+  repairColumnMapping?: RepairColumnMapping;
+  customTables?: CustomTableSchema[];
+  onImportBackup?: (backup: any) => void;
 }
 
-export const AjustesView: React.FC<AjustesViewProps> = ({ settings, onUpdateSettings }) => {
+export const AjustesView: React.FC<AjustesViewProps> = ({
+  settings,
+  onUpdateSettings,
+  centrales = [],
+  workGroups = [],
+  repairColumnMapping,
+  customTables = [],
+  onImportBackup
+}) => {
   const [formData, setFormData] = useState<ReportSettings>({ ...settings });
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
 
   const handleToggle = (key: keyof ReportSettings) => {
     setFormData(prev => ({
@@ -44,33 +75,82 @@ export const AjustesView: React.FC<AjustesViewProps> = ({ settings, onUpdateSett
     }
   };
 
+  const handleRestoreConfigsFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm(`¿Desea restaurar las configuraciones desde "${file.name}"? Esto actualizará centrales, grupos, reglas y textos sin modificar el historial.`)) {
+      if (e.target) e.target.value = '';
+      return;
+    }
+
+    try {
+      const result = await parseJSONBackupFile(file);
+      if (onImportBackup) {
+        onImportBackup(result.data);
+      }
+      if (result.data.reportSettings) {
+        setFormData(result.data.reportSettings);
+        onUpdateSettings(result.data.reportSettings);
+      }
+      setBackupMsg(`¡Configuraciones restauradas con éxito desde "${file.name}"!`);
+      setTimeout(() => setBackupMsg(null), 4000);
+    } catch (err: any) {
+      alert(`Error al importar archivo de configuraciones: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl border border-slate-800 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div className="flex items-center space-x-4">
-          <div className="p-3.5 bg-blue-600/30 text-blue-400 rounded-2xl border border-blue-500/30">
+          <div className="p-3.5 bg-indigo-600/30 text-indigo-400 rounded-2xl border border-indigo-500/30">
             <Settings className="w-8 h-8" />
           </div>
           <div>
             <h1 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
-              Configuración y Ajustes del Informe Técnico
+              Configuraciones Generales y Parámetros del Sistema
             </h1>
             <p className="text-xs text-slate-300">
-              Personalice los títulos, textos explicativos, encabezados y active/desactive las tablas y gráficas que se exportan en Word y PDF.
+              Personalice títulos, encabezados, visibilidad de tablas y descargue la copia de seguridad de todas las configuraciones.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Botón 1: Descargar Solo Configuraciones */}
+          <button
+            type="button"
+            onClick={() => downloadConfigBackup(centrales, workGroups, repairColumnMapping, customTables)}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-lg shadow-indigo-600/30 transition-all border border-indigo-400/30 active:scale-95"
+            title="Descargar copia de seguridad exclusiva de todas las configuraciones del sistema"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Descargar Solo Configuraciones</span>
+          </button>
+
+          <label className="inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold text-indigo-200 bg-slate-800 hover:bg-slate-700 rounded-xl border border-indigo-500/30 cursor-pointer transition-colors">
+            <Upload className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Restaurar Configuraciones</span>
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleRestoreConfigsFile}
+              className="hidden"
+            />
+          </label>
+
           <button
             type="button"
             onClick={handleReset}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl border border-slate-700 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-            <span>Valores por Defecto</span>
+            <span>Por Defecto</span>
           </button>
           
           <button
@@ -83,6 +163,13 @@ export const AjustesView: React.FC<AjustesViewProps> = ({ settings, onUpdateSett
           </button>
         </div>
       </div>
+
+      {backupMsg && (
+        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-3.5 rounded-xl flex items-center gap-2 text-xs font-bold animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{backupMsg}</span>
+        </div>
+      )}
 
       {savedSuccess && (
         <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl p-4 flex items-center justify-between animate-in fade-in zoom-in duration-200">

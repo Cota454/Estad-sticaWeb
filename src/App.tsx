@@ -29,7 +29,8 @@ import { AjustesView } from './components/AjustesView';
 import { ExportReportModal } from './components/ExportReportModal';
 import { getTodayStr, getPastDateStr } from './utils/dateUtils';
 import { saveZones, saveCableRules, saveParsedIpData, savePrintedServices } from './utils/ipCablesStorage';
-import { loadReportSettings } from './utils/settingsUtils';
+import { loadReportSettings, saveReportSettings } from './utils/settingsUtils';
+import { saveWordReportProfiles } from './utils/wordProfileUtils';
 import { ReportSettings } from './types';
 import {
   ADMIN_EMAIL,
@@ -206,29 +207,65 @@ export default function App() {
   };
 
   const handleImportBackup = (backup: SystemDataBackup) => {
-    setCentrales(backup.centrales || []);
-    setWorkGroups(backup.workGroups || []);
-    setReports(backup.reports || []);
-    if (backup.repairRecords) setRepairRecords(backup.repairRecords);
-    if (backup.customTables) setCustomTables(backup.customTables);
-    if (backup.repairColumnMapping) setColumnMapping(backup.repairColumnMapping);
+    const isConfigOnly = backup.backupType === 'configuration';
+    const isHistoryOnly = backup.backupType === 'history';
 
-    saveCentrales(backup.centrales || [], currentUser?.email);
-    saveWorkGroups(backup.workGroups || [], currentUser?.email);
-    saveReports(backup.reports || [], currentUser?.email);
-    if (backup.repairRecords) saveRepairRecords(backup.repairRecords, currentUser?.email);
-    if (backup.customTables) saveCustomTables(backup.customTables, currentUser?.email);
-    if (backup.repairColumnMapping) saveRepairColumnMapping(backup.repairColumnMapping, currentUser?.email);
+    // 1. Apply Configurations (if not history-only)
+    if (!isHistoryOnly) {
+      if (backup.centrales && Array.isArray(backup.centrales)) {
+        setCentrales(backup.centrales);
+        saveCentrales(backup.centrales, currentUser?.email);
+      }
+      if (backup.workGroups && Array.isArray(backup.workGroups)) {
+        setWorkGroups(backup.workGroups);
+        saveWorkGroups(backup.workGroups, currentUser?.email);
+      }
+      if (backup.repairColumnMapping) {
+        setColumnMapping(backup.repairColumnMapping);
+        saveRepairColumnMapping(backup.repairColumnMapping, currentUser?.email);
+      }
+      if (backup.reportSettings) {
+        setReportSettings(backup.reportSettings);
+        saveReportSettings(backup.reportSettings);
+      }
+      if (backup.ipZones && Array.isArray(backup.ipZones)) {
+        saveZones(backup.ipZones);
+      }
+      if (backup.ipCableRules) {
+        saveCableRules(backup.ipCableRules);
+      }
+      if (backup.wordReportProfiles && Array.isArray(backup.wordReportProfiles)) {
+        saveWordReportProfiles(backup.wordReportProfiles);
+      }
+    }
 
-    if (backup.ipZones) saveZones(backup.ipZones);
-    if (backup.ipCableRules) saveCableRules(backup.ipCableRules);
-    if (backup.ipParsedData) saveParsedIpData(backup.ipParsedData);
-    if (backup.ipPrintedServices) savePrintedServices(backup.ipPrintedServices);
+    // 2. Apply History & Data (if not config-only)
+    if (!isConfigOnly) {
+      if (backup.reports && Array.isArray(backup.reports)) {
+        setReports(backup.reports);
+        saveReports(backup.reports, currentUser?.email);
+      }
+      if (backup.repairRecords && Array.isArray(backup.repairRecords)) {
+        setRepairRecords(backup.repairRecords);
+        saveRepairRecords(backup.repairRecords, currentUser?.email);
+      }
+      if (backup.customTables && Array.isArray(backup.customTables)) {
+        setCustomTables(backup.customTables);
+        saveCustomTables(backup.customTables, currentUser?.email);
+      }
+      if (backup.ipParsedData) {
+        saveParsedIpData(backup.ipParsedData);
+      }
+      if (backup.ipPrintedServices) {
+        savePrintedServices(backup.ipPrintedServices);
+      }
+    }
 
+    // Trigger auto backup to Drive
     triggerAutoDriveBackup(
-      backup.centrales || [],
-      backup.workGroups || [],
-      backup.reports || [],
+      backup.centrales || centrales,
+      backup.workGroups || workGroups,
+      backup.reports || reports,
       backup.repairRecords || repairRecords,
       backup.customTables || customTables,
       backup.repairColumnMapping || columnMapping
@@ -629,6 +666,9 @@ export default function App() {
             centrales={centrales}
             workGroups={workGroups}
             reports={reports}
+            repairRecords={repairRecords}
+            customTables={customTables}
+            onImportBackup={handleImportBackup}
             onClearAllReports={handleClearAllReports}
             onDeleteDateReports={handleDeleteDateReports}
           />
@@ -652,6 +692,11 @@ export default function App() {
           <AjustesView
             settings={reportSettings}
             onUpdateSettings={setReportSettings}
+            centrales={centrales}
+            workGroups={workGroups}
+            repairColumnMapping={columnMapping}
+            customTables={customTables}
+            onImportBackup={handleImportBackup}
           />
         )}
 

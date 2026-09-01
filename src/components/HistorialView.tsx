@@ -1,14 +1,32 @@
 import React, { useState, useMemo } from 'react';
-import { History, Calendar, Search, Filter, Download, Table, Layers, Cpu, Trash2, RotateCcw } from 'lucide-react';
-import { Central, WorkGroup, DailyReport } from '../types';
+import {
+  History,
+  Calendar,
+  Search,
+  Filter,
+  Download,
+  Upload,
+  Table,
+  Layers,
+  Cpu,
+  Trash2,
+  RotateCcw,
+  Database,
+  CheckCircle2
+} from 'lucide-react';
+import { Central, WorkGroup, DailyReport, RepairRecord, CustomTableSchema } from '../types';
 import { MONTH_NAMES_ES, formatDateShort, getDayOfWeekName } from '../utils/dateUtils';
 import { getCentralTotalCapacity } from '../utils/statCalculations';
 import { CopyTableButton } from './CopyButton';
+import { downloadHistoryBackup, parseJSONBackupFile } from '../utils/exportUtils';
 
 interface HistorialViewProps {
   centrales: Central[];
   workGroups: WorkGroup[];
   reports: DailyReport[];
+  repairRecords?: RepairRecord[];
+  customTables?: CustomTableSchema[];
+  onImportBackup?: (backup: any) => void;
   onClearAllReports?: () => void;
   onDeleteDateReports?: (dateStr: string) => void;
 }
@@ -19,6 +37,9 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
   centrales,
   workGroups,
   reports,
+  repairRecords = [],
+  customTables = [],
+  onImportBackup,
   onClearAllReports,
   onDeleteDateReports
 }) => {
@@ -35,6 +56,30 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [activeTableTab, setActiveTableTab] = useState<TableTab>('matriz');
   const [showConfirmClear, setShowConfirmClear] = useState<boolean>(false);
+  const [historyBackupMsg, setHistoryBackupMsg] = useState<string | null>(null);
+
+  const handleRestoreHistoryFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm(`¿Desea restaurar el historial desde "${file.name}"? Esto cargará los reportes diarios y registros históricos sin tocar sus configuraciones.`)) {
+      if (e.target) e.target.value = '';
+      return;
+    }
+
+    try {
+      const result = await parseJSONBackupFile(file);
+      if (onImportBackup) {
+        onImportBackup(result.data);
+      }
+      setHistoryBackupMsg(`¡Historial restaurado con éxito desde "${file.name}"! (${result.summary.reportsCount} reportes cargados).`);
+      setTimeout(() => setHistoryBackupMsg(null), 4000);
+    } catch (err: any) {
+      alert(`Error al importar archivo de historial: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
 
   // Single date deletion state
   const [showConfirmDeleteDateModal, setShowConfirmDeleteDateModal] = useState<boolean>(false);
@@ -372,8 +417,29 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
             </div>
           </div>
 
-          {/* Action buttons: Export, Delete Single Date & Clear History */}
+          {/* Action buttons: Export, Download History, Restore History, Delete Single Date & Clear History */}
           <div className="flex flex-wrap items-center gap-2 shrink-0 self-start lg:self-center">
+            {/* Botón 2: Descargar Solo Historial */}
+            <button
+              onClick={() => downloadHistoryBackup(reports, repairRecords, customTables)}
+              className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black px-3.5 py-2 rounded-xl transition-all shadow-md shadow-emerald-600/30 border border-emerald-400/30 active:scale-95"
+              title="Descargar copia de seguridad de todo el historial de reportes y registros acumulados para todos los recuadros"
+            >
+              <Database className="w-4 h-4" />
+              <span>Descargar Solo Historial</span>
+            </button>
+
+            <label className="inline-flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-200 border border-emerald-500/30 text-xs font-bold px-3 py-2 rounded-xl cursor-pointer transition-colors">
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Restaurar Historial</span>
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleRestoreHistoryFile}
+                className="hidden"
+              />
+            </label>
+
             <button
               onClick={handleExportCSV}
               className="inline-flex items-center space-x-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all shadow-md shadow-cyan-600/20"
@@ -405,6 +471,13 @@ export const HistorialView: React.FC<HistorialViewProps> = ({
             )}
           </div>
         </div>
+
+        {historyBackupMsg && (
+          <div className="mt-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-3 rounded-xl flex items-center gap-2 text-xs font-bold animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{historyBackupMsg}</span>
+          </div>
+        )}
 
         {/* Filters Grid */}
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
