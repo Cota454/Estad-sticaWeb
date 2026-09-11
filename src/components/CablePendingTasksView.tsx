@@ -47,6 +47,7 @@ import {
   saveCablePendingTasks
 } from '../utils/ipCablesStorage';
 import { getDemoraDays } from './AnalisisIpView';
+import { CableBatchTasksImportModal } from './CableBatchTasksImportModal';
 
 // Palabras clave típicas de encabezados de columnas de Excel que se descartan automáticamente
 const EXCEL_HEADER_WORDS = new Set([
@@ -192,6 +193,23 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   const [modalSearchTerm, setModalSearchTerm] = useState<string>('');
   const [modalFilterAfectacion, setModalFilterAfectacion] = useState<'all' | 'with_afectacion' | 'without_afectacion'>('all');
   const [taskFulfilledSuccessMsg, setTaskFulfilledSuccessMsg] = useState<string>('');
+
+  // Modal State para Carga Masiva desde Excel
+  const [showBatchModal, setShowBatchModal] = useState<boolean>(false);
+  const [batchSuccessMsg, setBatchSuccessMsg] = useState<string>('');
+
+  // Handler al confirmar la carga masiva desde Excel
+  const handleBatchImportSuccess = (
+    updatedTasks: CablePendingTask[],
+    stats: { createdCount: number; mergedCount: number; totalServices: number }
+  ) => {
+    handleUpdateTasks(updatedTasks);
+    const msg = `¡Carga masiva completada exitosamente! Se procesaron ${stats.totalServices} servicios: ${stats.createdCount} tareas nuevas creadas${
+      stats.mergedCount > 0 ? ` y ${stats.mergedCount} tareas existentes consolidadas` : ''
+    }.`;
+    setBatchSuccessMsg(msg);
+    setTimeout(() => setBatchSuccessMsg(''), 7000);
+  };
 
   // Save tasks and update state
   const handleUpdateTasks = (updated: CablePendingTask[]) => {
@@ -1345,15 +1363,27 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               <span>Ver Todas las Tareas ({tasks.length})</span>
             </button>
 
-            {/* New Task Button */}
-            <button
-              type="button"
-              onClick={handleOpenAddModal}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-amber-600/30 flex items-center space-x-2 cursor-pointer"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Agregar Trabajo</span>
-            </button>
+            {/* Botones de Agregar Trabajo y Carga Masiva (debajo) */}
+            <div className="flex flex-col gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleOpenAddModal}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-amber-600/30 flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Agregar Trabajo</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowBatchModal(true)}
+                className="px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/25 flex items-center justify-center space-x-2 cursor-pointer border border-emerald-400/40"
+                title="Copie y pegue en masa desde Excel todos los números con su trabajo y afectación"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-100" />
+                <span>Carga Masiva (Excel)</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1368,6 +1398,23 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               type="button"
               onClick={() => setDeleteAllSuccessMsg('')}
               className="text-emerald-400 hover:text-emerald-200 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Mensaje de confirmación al importar trabajos en masa desde Excel */}
+        {batchSuccessMsg && (
+          <div className="p-3 bg-emerald-950/80 border border-emerald-500/60 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in shadow-md">
+            <div className="flex items-center space-x-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-medium">{batchSuccessMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBatchSuccessMsg('')}
+              className="text-emerald-400 hover:text-emerald-200 cursor-pointer p-1"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -2950,6 +2997,18 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL DE CARGA MASIVA DE TRABAJOS DESDE EXCEL */}
+      {/* ------------------------------------------------------------- */}
+      <CableBatchTasksImportModal
+        isOpen={showBatchModal}
+        onClose={() => setShowBatchModal(false)}
+        onImport={handleBatchImportSuccess}
+        existingTasks={tasks}
+        excelServicesMap={excelServicesMap}
+        availableCables={excelData?.uniqueCables || []}
+      />
     </div>
   );
 };
