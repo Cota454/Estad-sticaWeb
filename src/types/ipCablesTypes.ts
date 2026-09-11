@@ -89,7 +89,8 @@ export interface CableTaskServiceDetailRow {
   grupo: string;
   demoraEnDias: number;
   central: string;
-  terminalDireccion: string;
+  terminal: string;               // Columna TERMINAL del Excel subido
+  terminalDireccion?: string;     // Mantenido para retrocompatibilidad
   afectacion: string;             // Columna AFECTACIONES
   status: 'pending' | 'in_progress' | 'completed';
 }

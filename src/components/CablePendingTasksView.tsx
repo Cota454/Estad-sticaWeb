@@ -26,7 +26,12 @@ import {
   Sparkles,
   Info,
   LayoutList,
-  Table as TableIcon
+  Table as TableIcon,
+  Clipboard,
+  Hash,
+  RefreshCw,
+  ListTodo,
+  CheckCheck
 } from 'lucide-react';
 
 import {
@@ -41,6 +46,85 @@ import {
   saveCablePendingTasks
 } from '../utils/ipCablesStorage';
 import { getDemoraDays } from './AnalisisIpView';
+
+// Palabras clave típicas de encabezados de columnas de Excel que se descartan automáticamente
+const EXCEL_HEADER_WORDS = new Set([
+  'SERVICIO', 'SERVICIOS', 'TELEFONO', 'TELEFONOS', 'TELÉFONO', 'TELÉFONOS',
+  'NUMERO', 'NUMEROS', 'NÚMERO', 'NÚMEROS', 'NRO', 'N°', 'LINEA', 'LINEAS',
+  'LÍNEA', 'LÍNEAS', 'ABONADO', 'ABONADOS', 'CLIENTE', 'CLIENTES', 'CABLE', 'PAR',
+  'TELEF', 'TLF', 'SERIAL', 'ID', 'CODIGO', 'CÓDIGO'
+]);
+
+/**
+ * Función robusta para extraer y limpiar números de servicio copiados desde columnas de Excel
+ */
+export function parseExcelServiceNumbers(input: string): string[] {
+  if (!input || typeof input !== 'string') return [];
+
+  const rawLines = input.split(/[\r\n;,]+/);
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of rawLines) {
+    // Si se copió una tabla de Excel con varias columnas separadas por tabulador
+    const tokens = rawLine.split(/\t+/);
+    for (let token of tokens) {
+      token = token.trim();
+      if (!token) continue;
+
+      // Quitar fórmulas y comillas de Excel: ="0212000001", "0212000001", '0212000001
+      token = token.replace(/^=["']|["']$/g, '').replace(/^['"]+|['"]+$/g, '').trim();
+      if (!token) continue;
+
+      // Descartar encabezados
+      const upper = token.toUpperCase();
+      if (EXCEL_HEADER_WORDS.has(upper)) {
+        continue;
+      }
+
+      // Si vienen varios números en una misma línea separados por espacios (de 6 a 15 dígitos)
+      const subTokens = token.split(/\s+/).filter(Boolean);
+      if (subTokens.length > 1 && subTokens.every(st => /^\d{6,15}$/.test(st))) {
+        for (const st of subTokens) {
+          const cleanSub = st.trim();
+          if (cleanSub && !seen.has(cleanSub)) {
+            seen.add(cleanSub);
+            result.push(cleanSub);
+          }
+        }
+        continue;
+      }
+
+      // Si es un número telefónico formateado con guiones o espacios (ej. 0212-345-6789 o 0212 3456789)
+      const digitsOnly = token.replace(/[\s\-\.\(\)]/g, '');
+      const cleaned = (digitsOnly.length >= 6 && /^\d+$/.test(digitsOnly)) ? digitsOnly : token.toUpperCase();
+
+      if (cleaned && !seen.has(cleaned)) {
+        seen.add(cleaned);
+        result.push(cleaned);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Extrae de forma insensible a mayúsculas y espacios el valor de una columna del Excel
+ */
+export function getExcelRawValue(raw: Record<string, any> | undefined, candidates: string[]): string {
+  if (!raw) return '';
+  const keys = Object.keys(raw);
+  for (const cand of candidates) {
+    const norm = cand.trim().toUpperCase();
+    const foundKey = keys.find(k => k.trim().toUpperCase() === norm);
+    if (foundKey && raw[foundKey] !== undefined && raw[foundKey] !== null) {
+      const val = String(raw[foundKey]).trim();
+      if (val !== '') return val;
+    }
+  }
+  return '';
+}
 
 interface CablePendingTasksViewProps {
   excelData: IpCableExcelParseResult | null;
@@ -91,14 +175,116 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   // Filter Afectaciones
   const [filterAfectacion, setFilterAfectacion] = useState<string>('all');
 
-  // UI Feedback
+  // UI Feedback & Cartel de Confirmación para Eliminar Todos los Trabajos
   const [copiedSuccess, setCopiedSuccess] = useState<boolean>(false);
+  const [pasteFeedbackMessage, setPasteFeedbackMessage] = useState<string>('');
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState<boolean>(false);
+  const [isDeletingAll, setIsDeletingAll] = useState<boolean>(false);
+  const [deleteAllSuccessMsg, setDeleteAllSuccessMsg] = useState<string>('');
+
+  // Modal State para "Ver Todas las Tareas" (Ventana de Resumen y Gestión)
+  const [showAllTasksModal, setShowAllTasksModal] = useState<boolean>(false);
+  const [modalSearchTerm, setModalSearchTerm] = useState<string>('');
+  const [modalFilterAfectacion, setModalFilterAfectacion] = useState<'all' | 'with_afectacion' | 'without_afectacion'>('all');
+  const [taskFulfilledSuccessMsg, setTaskFulfilledSuccessMsg] = useState<string>('');
 
   // Save tasks and update state
   const handleUpdateTasks = (updated: CablePendingTask[]) => {
     setTasks(updated);
     saveCablePendingTasks(updated);
   };
+
+  // Handler para confirmar eliminación de todos los trabajos desde el modal de seguridad
+  const handleConfirmDeleteAll = () => {
+    setIsDeletingAll(true);
+    setTimeout(() => {
+      handleUpdateTasks([]);
+      setIsDeletingAll(false);
+      setShowDeleteAllModal(false);
+      setDeleteAllSuccessMsg('Se han eliminado todos los trabajos registrados con éxito.');
+      setTimeout(() => setDeleteAllSuccessMsg(''), 4000);
+    }, 150);
+  };
+
+  // Handler para actualizar tarea desde la ventana de todas las tareas
+  const handleEditFromSummaryModal = (task: CablePendingTask) => {
+    setShowAllTasksModal(false);
+    handleOpenEditModal(task);
+  };
+
+  // Handler para eliminar tarea porque ya se cumplió el trabajo
+  const handleDeleteFulfilledTask = (task: CablePendingTask) => {
+    const isConfirmed = window.confirm(
+      `¿Desea eliminar el trabajo "${task.taskName}" del cable "${task.cable}" porque ya se cumplió?\n\nEsta acción quitará la tarea de la lista de pendientes.`
+    );
+    if (isConfirmed) {
+      const updated = tasks.filter(t => t.id !== task.id);
+      handleUpdateTasks(updated);
+      setTaskFulfilledSuccessMsg(`Se eliminó la tarea cumplida "${task.taskName}" (${task.cable}) con éxito.`);
+      setTimeout(() => setTaskFulfilledSuccessMsg(''), 4000);
+    }
+  };
+
+  // Handler para marcar tarea como cumplida / pendiente alternativamente
+  const handleToggleCompleteTask = (task: CablePendingTask) => {
+    const newStatus = task.status === 'completed' ? 'pending' : 'completed';
+    const updated = tasks.map(t => t.id === task.id ? { ...t, status: newStatus as any, updatedAt: new Date().toISOString() } : t);
+    handleUpdateTasks(updated);
+    setTaskFulfilledSuccessMsg(
+      newStatus === 'completed'
+        ? `Tarea "${task.taskName}" marcada como cumplida.`
+        : `Tarea "${task.taskName}" reactivada como pendiente.`
+    );
+    setTimeout(() => setTaskFulfilledSuccessMsg(''), 4000);
+  };
+
+  // Métricas para la ventana de Todas las Tareas
+  const allTasksMetrics = useMemo(() => {
+    const total = tasks.length;
+    const withAfectacion = tasks.filter(t => t.hasAfectacion).length;
+    const withoutAfectacion = total - withAfectacion;
+    const totalServices = tasks.reduce((acc, t) => acc + (t.serviceNumbers?.length || 0), 0);
+    const completed = tasks.filter(t => t.status === 'completed').length;
+    const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+    const pending = tasks.filter(t => !t.status || t.status === 'pending').length;
+
+    // Cables involucrados
+    const cablesSet = new Set<string>();
+    tasks.forEach(t => t.cable && cablesSet.add(t.cable));
+
+    return {
+      total,
+      withAfectacion,
+      withoutAfectacion,
+      totalServices,
+      completed,
+      inProgress,
+      pending,
+      uniqueCablesCount: cablesSet.size
+    };
+  }, [tasks]);
+
+  // Lista filtrada de tareas para la ventana modal
+  const modalFilteredTasks = useMemo(() => {
+    return tasks.filter(t => {
+      // Filtro por búsqueda
+      if (modalSearchTerm.trim()) {
+        const q = modalSearchTerm.toLowerCase();
+        const matchesCable = t.cable.toLowerCase().includes(q);
+        const matchesName = t.taskName.toLowerCase().includes(q);
+        const matchesMotivo = (t.afectacionMotivo || '').toLowerCase().includes(q);
+        const matchesTerminal = (t.terminalDireccion || '').toLowerCase().includes(q);
+        const matchesServices = (t.serviceNumbers || []).some(s => s.toLowerCase().includes(q));
+        if (!matchesCable && !matchesName && !matchesMotivo && !matchesTerminal && !matchesServices) {
+          return false;
+        }
+      }
+      // Filtro por afectación
+      if (modalFilterAfectacion === 'with_afectacion' && !t.hasAfectacion) return false;
+      if (modalFilterAfectacion === 'without_afectacion' && t.hasAfectacion) return false;
+      return true;
+    });
+  }, [tasks, modalSearchTerm, modalFilterAfectacion]);
 
   // -------------------------------------------------------------
   // Quick Date Range Handlers (validation: start <= end)
@@ -187,6 +373,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       const key = (row.servicio || '').toString().trim().toUpperCase();
       if (key) {
         map.set(key, row);
+        const digits = key.replace(/\D/g, '');
+        if (digits && !map.has(digits)) {
+          map.set(digits, row);
+        }
+        const noLeadingZero = digits.replace(/^0+/, '');
+        if (noLeadingZero && !map.has(noLeadingZero)) {
+          map.set(noLeadingZero, row);
+        }
       }
     });
     return map;
@@ -239,6 +433,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
   // -------------------------------------------------------------
   // Denormalize Tasks into Full Detail Service Rows
+  // Todos los datos se buscan en el excel que sube el usuario
   // -------------------------------------------------------------
   const allDetailRows = useMemo<CableTaskServiceDetailRow[]>(() => {
     const rows: CableTaskServiceDetailRow[] = [];
@@ -250,29 +445,71 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
       services.forEach((srvNum, idx) => {
         const sKey = (srvNum || '').trim().toUpperCase();
-        const matchedRow = excelServicesMap.get(sKey);
+        let matchedRow = excelServicesMap.get(sKey);
+        if (!matchedRow) {
+          const digits = sKey.replace(/\D/g, '');
+          if (digits) {
+            matchedRow = excelServicesMap.get(digits) || excelServicesMap.get(digits.replace(/^0+/, ''));
+          }
+        }
 
         const rowId = `${task.id}-${sKey}-${idx}`;
-        const associated = matchedRow
-          ? (matchedRow.rawRowData['ASOCIADO'] || matchedRow.rawRowData['Asociado'] || matchedRow.rawRowData['TELEFONO ASOCIADO'] || matchedRow.rawRowData['TELEFONO'] || '-')
-          : '-';
-        const cableP = matchedRow ? (matchedRow.cableP || matchedRow.rawRowData['Cable P'] || '-') : task.cable || '-';
-        const parP = matchedRow ? (matchedRow.parP || matchedRow.rawRowData['Par P'] || '-') : '-';
-        const cableS = matchedRow ? (matchedRow.cableS || matchedRow.rawRowData['Cable S'] || '-') : '-';
-        const parS = matchedRow ? (matchedRow.parS || matchedRow.rawRowData['Par S'] || '-') : '-';
-        const fechaReporte = matchedRow ? (matchedRow.fechaReporte || '-') : task.createdAt.slice(0, 10);
-        const grupo = matchedRow ? (matchedRow.grupo || '-') : '-';
-        const demoraEnDias = matchedRow ? getDemoraDays(matchedRow) : 0;
-        const central = matchedRow ? (matchedRow.central || '-') : '-';
+        const raw = matchedRow?.rawRowData || {};
 
-        // Terminal / Dirección: priority to task's terminalDireccion, fallback to rawRowData
-        let terminalDir = task.terminalDireccion || '';
-        if (!terminalDir && matchedRow) {
-          const term = matchedRow.rawRowData['TERMINAL'] || matchedRow.rawRowData['Terminal'] || '';
-          const dir = matchedRow.rawRowData['DIRECCION'] || matchedRow.rawRowData['Direccion'] || '';
-          terminalDir = [term, dir].filter(Boolean).join(' · ') || '-';
+        // 1. Asociado: del Excel subido
+        const associated = matchedRow
+          ? (getExcelRawValue(raw, ['ASOCIADO', 'TELEFONO ASOCIADO', 'TELÉFONO ASOCIADO', 'TELEFONO', 'TELÉFONO', 'ABONADO']) || '-')
+          : '-';
+
+        // 2. Cable P: del Excel subido
+        const cableP = matchedRow
+          ? (matchedRow.cableP || getExcelRawValue(raw, ['CABLE P', 'CABLE_P', 'CABLE PRIMARIO', 'CABLE_PRIMARIO']) || '-')
+          : task.cable || '-';
+
+        // 3. Par P: del Excel subido
+        const parP = matchedRow
+          ? (matchedRow.parP || getExcelRawValue(raw, ['PAR P', 'PAR_P', 'PAR PRIMARIO', 'PAR_PRIMARIO']) || '-')
+          : '-';
+
+        // 4. Cable S: del Excel subido
+        const cableS = matchedRow
+          ? (matchedRow.cableS || getExcelRawValue(raw, ['CABLE S', 'CABLE_S', 'CABLE SECUNDARIO', 'CABLE_SECUNDARIO']) || '-')
+          : '-';
+
+        // 5. Par S: del Excel subido
+        const parS = matchedRow
+          ? (matchedRow.parS || getExcelRawValue(raw, ['PAR S', 'PAR_S', 'PAR SECUNDARIO', 'PAR_SECUNDARIO']) || '-')
+          : '-';
+
+        // 6. Fecha Reporte: del Excel subido
+        const fechaReporte = matchedRow
+          ? (matchedRow.fechaReporte || getExcelRawValue(raw, ['FECHA REPORTE', 'FECHA DE REPORTE', 'FECHA']) || '-')
+          : task.createdAt.slice(0, 10);
+
+        // 7. Grupo: del Excel subido
+        const grupo = matchedRow
+          ? (matchedRow.grupo || getExcelRawValue(raw, ['GRUPO', 'GRUPO DE TRABAJO', 'GRUPO_TRABAJO']) || '-')
+          : '-';
+
+        // 8. Demora en Días: calculado con la fecha del Excel
+        const demoraEnDias = matchedRow ? getDemoraDays(matchedRow) : 0;
+
+        // 9. Central Telefónica: del Excel subido
+        const central = matchedRow
+          ? (matchedRow.central || getExcelRawValue(raw, ['CENTRAL TELEFONICA', 'CENTRAL TELEFÓNICA', 'CENTRAL']) || '-')
+          : '-';
+
+        // 10. Terminal: los datos están en el Excel en la columna llamada TERMINAL
+        let terminalVal = '';
+        if (matchedRow) {
+          terminalVal = getExcelRawValue(raw, ['TERMINAL', 'TERM', 'CAJA TERMINAL', 'CAJA']);
         }
-        if (!terminalDir) terminalDir = '-';
+        if (!terminalVal && task.terminalDireccion) {
+          terminalVal = task.terminalDireccion;
+        }
+        if (!terminalVal) {
+          terminalVal = '-';
+        }
 
         // Afectaciones logic
         let afectacion = '-';
@@ -309,7 +546,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           grupo: String(grupo),
           demoraEnDias: typeof demoraEnDias === 'number' ? demoraEnDias : 0,
           central: String(central),
-          terminalDireccion: terminalDir,
+          terminal: terminalVal,
+          terminalDireccion: terminalVal,
           afectacion: afectacion,
           status: task.status || 'pending'
         });
@@ -504,7 +742,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       'Grupo': r.grupo,
       'Demora en Días': r.demoraEnDias,
       'Central Telefónica': r.central,
-      'Terminal Dirección': r.terminalDireccion,
+      'Terminal': r.terminal || r.terminalDireccion || '-',
       'AFECTACIONES': r.afectacion,
       'Tarea o Trabajo': r.taskName
     }));
@@ -523,7 +761,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       { wch: 16 }, // Grupo
       { wch: 15 }, // Demora en Días
       { wch: 20 }, // Central Telefónica
-      { wch: 28 }, // Terminal Dirección
+      { wch: 18 }, // Terminal
       { wch: 18 }, // AFECTACIONES
       { wch: 35 }  // Tarea o Trabajo
     ];
@@ -564,7 +802,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       'Grupo',
       'Demora en Días',
       'Central Telefónica',
-      'Terminal Dirección',
+      'Terminal',
       'AFECTACIONES',
       'Tarea o Trabajo'
     ];
@@ -580,7 +818,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       r.grupo,
       r.demoraEnDias,
       r.central,
-      r.terminalDireccion,
+      r.terminal || r.terminalDireccion || '-',
       r.afectacion,
       r.taskName
     ].join('\t'));
@@ -618,12 +856,13 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     setFormTerminalDir(task.terminalDireccion || '');
     setFormStatus(task.status || 'pending');
     setFormPriority(task.priority || 'normal');
-    setFormServiceInput(task.serviceNumbers.join(', '));
+    setFormServiceInput(task.serviceNumbers.join('\n'));
     setSelectedServicesSet(new Set(task.serviceNumbers.map(s => s.toUpperCase())));
     setFormHasAfectacion(task.hasAfectacion || false);
     setFormAfectacionMotivo(task.afectacionMotivo || '');
     setFormAfectacionFechaInicio(task.afectacionFechaInicio || '');
     setFormAfectacionFechaFin(task.afectacionFechaFin || '');
+    setPasteFeedbackMessage('');
     setIsModalOpen(true);
   };
 
@@ -644,6 +883,162 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       return matchP || matchS || matchC;
     });
   }, [excelData, formCable]);
+
+  // Números parseados en tiempo real desde la caja de texto (pegados desde Excel)
+  const parsedPastedServices = useMemo(() => {
+    return parseExcelServiceNumbers(formServiceInput);
+  }, [formServiceInput]);
+
+  // Conteo total combinado único (seleccionados por checkbox + pegados de Excel)
+  const totalCombinedServicesCount = useMemo(() => {
+    const set = new Set<string>();
+    selectedServicesSet.forEach(s => set.add(s.toUpperCase()));
+    parsedPastedServices.forEach(s => set.add(s.toUpperCase()));
+    return set.size;
+  }, [selectedServicesSet, parsedPastedServices]);
+
+  // Conteo de servicios pegados que coinciden exactamente en el reporte Excel cargado
+  const matchedServicesInExcelCount = useMemo(() => {
+    if (parsedPastedServices.length === 0 || !excelServicesMap) return 0;
+    let count = 0;
+    parsedPastedServices.forEach(s => {
+      if (excelServicesMap.has(s.toUpperCase())) count++;
+    });
+    return count;
+  }, [parsedPastedServices, excelServicesMap]);
+
+  // Detección automática del cable predominante en los números pegados si coincide en el Excel
+  const suggestedCableFromPasted = useMemo(() => {
+    if (!excelData || parsedPastedServices.length === 0) return null;
+    const cableCount = new Map<string, number>();
+    parsedPastedServices.forEach(s => {
+      const row = excelServicesMap.get(s.toUpperCase());
+      if (row) {
+        const c = (row.cableP || row.cableS || row.cable || '').trim();
+        if (c && c !== '-') {
+          cableCount.set(c, (cableCount.get(c) || 0) + 1);
+        }
+      }
+    });
+    if (cableCount.size === 0) return null;
+    let max = 0;
+    let best = '';
+    cableCount.forEach((cnt, cable) => {
+      if (cnt > max) {
+        max = cnt;
+        best = cable;
+      }
+    });
+    return { cable: best, count: max };
+  }, [excelData, parsedPastedServices, excelServicesMap]);
+
+  // Evento al pegar directamente con Ctrl + V dentro del textarea
+  const handlePasteInTextarea = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData.getData('text');
+    if (!pasted) return;
+
+    const parsed = parseExcelServiceNumbers(pasted);
+    if (parsed.length > 0) {
+      e.preventDefault();
+      const existing = parseExcelServiceNumbers(formServiceInput);
+      const merged = Array.from(new Set([...existing, ...parsed]));
+      setFormServiceInput(merged.join('\n'));
+
+      // Si el campo de cable está vacío, sugerir o auto-asignar
+      if (!formCable.trim()) {
+        const cableCount = new Map<string, number>();
+        merged.forEach(s => {
+          const row = excelServicesMap.get(s.toUpperCase());
+          if (row) {
+            const c = (row.cableP || row.cableS || row.cable || '').trim();
+            if (c && c !== '-') {
+              cableCount.set(c, (cableCount.get(c) || 0) + 1);
+            }
+          }
+        });
+        let max = 0;
+        let best = '';
+        cableCount.forEach((cnt, cable) => {
+          if (cnt > max) {
+            max = cnt;
+            best = cable;
+          }
+        });
+        if (best) {
+          setFormCable(best);
+        }
+      }
+
+      setPasteFeedbackMessage(`¡Se pegaron ${parsed.length} números desde Excel con éxito!`);
+      setTimeout(() => setPasteFeedbackMessage(''), 4000);
+    }
+  };
+
+  // Botón para pegar directamente del portapapeles
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        alert('Haga clic en el recuadro de texto y presione Ctrl + V para pegar la columna copiada de Excel.');
+        return;
+      }
+      const text = await navigator.clipboard.readText();
+      const parsed = parseExcelServiceNumbers(text);
+      if (parsed.length === 0) {
+        alert('No se detectaron números válidos en el portapapeles. Copie una columna de números en Excel y vuelva a intentar.');
+        return;
+      }
+      const existing = parseExcelServiceNumbers(formServiceInput);
+      const merged = Array.from(new Set([...existing, ...parsed]));
+      setFormServiceInput(merged.join('\n'));
+
+      if (!formCable.trim()) {
+        const cableCount = new Map<string, number>();
+        merged.forEach(s => {
+          const row = excelServicesMap.get(s.toUpperCase());
+          if (row) {
+            const c = (row.cableP || row.cableS || row.cable || '').trim();
+            if (c && c !== '-') {
+              cableCount.set(c, (cableCount.get(c) || 0) + 1);
+            }
+          }
+        });
+        let max = 0;
+        let best = '';
+        cableCount.forEach((cnt, cable) => {
+          if (cnt > max) {
+            max = cnt;
+            best = cable;
+          }
+        });
+        if (best) {
+          setFormCable(best);
+        }
+      }
+
+      setPasteFeedbackMessage(`¡Añadidos ${parsed.length} números desde el portapapeles!`);
+      setTimeout(() => setPasteFeedbackMessage(''), 4000);
+    } catch {
+      alert('Haga clic en el recuadro de texto y presione Ctrl + V para pegar la columna de Excel.');
+    }
+  };
+
+  const handleCleanAndFormatPasted = () => {
+    const parsed = parseExcelServiceNumbers(formServiceInput);
+    setFormServiceInput(parsed.join('\n'));
+    setPasteFeedbackMessage(`Formato limpiado (${parsed.length} números ordenados)`);
+    setTimeout(() => setPasteFeedbackMessage(''), 3000);
+  };
+
+  const handleClearPasted = () => {
+    setFormServiceInput('');
+    setPasteFeedbackMessage('');
+  };
+
+  const handleRemoveOnePastedNumber = (numToRemove: string) => {
+    const parsed = parseExcelServiceNumbers(formServiceInput);
+    const filtered = parsed.filter(n => n !== numToRemove);
+    setFormServiceInput(filtered.join('\n'));
+  };
 
   const handleToggleSelectAllCableServices = () => {
     const nextSet = new Set(selectedServicesSet);
@@ -713,11 +1108,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       }
     }
 
-    // Merge manually typed services with checkbox selected services
-    const typedServices = formServiceInput
-      .split(/[\n,;\s]+/)
-      .map(s => s.trim().toUpperCase())
-      .filter(Boolean);
+    // Merge manually typed / pasted Excel services with checkbox selected services
+    const typedServices = parseExcelServiceNumbers(formServiceInput);
 
     const mergedServicesSet = new Set([...selectedServicesSet, ...typedServices]);
     const finalServices = Array.from(mergedServicesSet);
@@ -845,6 +1237,30 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               <span>{copiedSuccess ? 'Copiado' : 'Copiar'}</span>
             </button>
 
+            {/* Eliminar Todos los Trabajos */}
+            {tasks.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllModal(true)}
+                className="px-3 py-2 bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 hover:text-rose-100 text-xs font-bold rounded-xl border border-rose-500/40 transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                title="Eliminar todos los trabajos registrados"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Eliminar Todos</span>
+              </button>
+            )}
+
+            {/* Botón al lado de Agregar Trabajo para Ver Todas las Tareas */}
+            <button
+              type="button"
+              onClick={() => setShowAllTasksModal(true)}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-indigo-600/30 flex items-center space-x-2 cursor-pointer border border-indigo-400/40"
+              title="Ver ventana con todas las tareas registradas, totales, afectaciones y gestión"
+            >
+              <ListTodo className="w-4 h-4 text-indigo-200" />
+              <span>Ver Todas las Tareas ({tasks.length})</span>
+            </button>
+
             {/* New Task Button */}
             <button
               type="button"
@@ -856,6 +1272,23 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Mensaje de confirmación al eliminar todos los trabajos */}
+        {deleteAllSuccessMsg && (
+          <div className="p-3 bg-emerald-950/70 border border-emerald-500/50 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{deleteAllSuccessMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDeleteAllSuccessMsg('')}
+              className="text-emerald-400 hover:text-emerald-200 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* ------------------------------------------------------------- */}
         {/* RESUMEN VISUAL SUPERIOR (KPIS RÁPIDOS - MEJORA B) */}
@@ -1153,7 +1586,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       {/* TABLA PRINCIPAL DE TRABAJOS Y TAREAS */}
       {/* ------------------------------------------------------------- */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
-        {/* Table Toolbar with Small Excel Download Icon */}
+        {/* Table Toolbar with Small Excel Download Icon and Delete All Button */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <h3 className="text-base font-black text-white">
@@ -1164,7 +1597,20 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Botón para eliminar todos los trabajos con cartel de confirmación */}
+            {tasks.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllModal(true)}
+                className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 rounded-xl text-xs font-bold transition-all border border-rose-500/30 flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                title="Eliminar todos los trabajos pendientes de la tabla"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Eliminar Todos los Trabajos</span>
+              </button>
+            )}
+
             {/* Pequeño icono de descarga en Excel solicitado por el usuario */}
             <button
               type="button"
@@ -1181,7 +1627,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
         {/* ------------------------------------------------------------- */}
         {/* VISTA 1: DETALLADA (TABLA PLANA) */}
-        {/* Columnas requeridas: Servicio, Asociado, cable p, par p, cable s, par s, fecha reporte, grupo, demora en días, central telefónica, terminal dirección, afectaciones, tarea o trabajo */}
+        {/* Columnas: Servicio, Asociado, cable p, par p, cable s, par s, fecha reporte, grupo, demora en días, central telefónica, terminal, afectaciones, tarea o trabajo */}
         {/* ------------------------------------------------------------- */}
         {viewMode === 'flat' && (
           <div className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
@@ -1198,7 +1644,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                   <th className="py-3 px-3.5 text-slate-300">Grupo</th>
                   <th className="py-3 px-3 text-center text-amber-400">Demora (Días)</th>
                   <th className="py-3 px-3.5 text-slate-300">Central Telefónica</th>
-                  <th className="py-3 px-4 text-slate-300">Terminal Dirección</th>
+                  <th className="py-3 px-3.5 text-slate-300">Terminal</th>
                   <th className="py-3 px-3 text-center text-purple-400 font-bold">AFECTACIONES</th>
                   <th className="py-3 px-4 text-white font-black">Tarea o Trabajo</th>
                   <th className="py-3 px-3 text-center">Acciones</th>
@@ -1296,11 +1742,11 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                           {row.central}
                         </td>
 
-                        {/* 11. Terminal Dirección */}
-                        <td className="py-2.5 px-4 text-slate-300 max-w-xs truncate" title={row.terminalDireccion}>
+                        {/* 11. Terminal (obtenido de la columna TERMINAL del Excel) */}
+                        <td className="py-2.5 px-3.5 font-mono text-slate-300 max-w-xs truncate" title={row.terminal || row.terminalDireccion}>
                           <div className="flex items-center space-x-1.5 truncate">
                             <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                            <span className="truncate">{row.terminalDireccion}</span>
+                            <span className="truncate">{row.terminal || row.terminalDireccion || '-'}</span>
                           </div>
                         </td>
 
@@ -1469,6 +1915,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                               <th className="py-2.5 px-3">Grupo</th>
                               <th className="py-2.5 px-3 text-center text-amber-400">Demora</th>
                               <th className="py-2.5 px-4">Central</th>
+                              <th className="py-2.5 px-3 text-slate-300">Terminal</th>
                               <th className="py-2.5 px-3 text-center text-purple-400 font-bold">AFECTACIÓN</th>
                             </tr>
                           </thead>
@@ -1485,6 +1932,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                                 <td className="py-2 px-3 text-slate-300">{r.grupo}</td>
                                 <td className="py-2 px-3 text-center font-mono font-bold text-amber-400">{r.demoraEnDias}d</td>
                                 <td className="py-2 px-4 text-slate-300">{r.central}</td>
+                                <td className="py-2 px-3 font-mono text-slate-300 max-w-xs truncate" title={r.terminal || r.terminalDireccion}>{r.terminal || r.terminalDireccion || '-'}</td>
                                 <td className="py-2 px-3 text-center whitespace-nowrap">
                                   {r.afectacion && r.afectacion !== '-' ? (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
@@ -1508,6 +1956,444 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* VENTANA MODAL: TODAS LAS TAREAS (RESUMEN, AFECTACIONES Y GESTIÓN) */}
+      {/* ------------------------------------------------------------- */}
+      {showAllTasksModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-5xl text-white shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-2xl">
+                  <ListTodo className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white tracking-tight flex items-center space-x-2">
+                    <span>Todas las Tareas Registradas</span>
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      {tasks.length} {tasks.length === 1 ? 'tarea' : 'tareas'}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Resumen general de tareas, pertenencia a afectaciones, cables y opciones de actualización o eliminación por cumplimiento.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTasksModal(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Cerrar ventana"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Notification alert within modal */}
+            {taskFulfilledSuccessMsg && (
+              <div className="mx-5 mt-4 p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in shrink-0">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-semibold">{taskFulfilledSuccessMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTaskFulfilledSuccessMsg('')}
+                  className="text-emerald-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Modal Metrics Summary (Cantidad total, cuántas pertenecen a Afectaciones, cables) */}
+            <div className="p-5 pb-3 grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
+              <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-3.5">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block mb-1">
+                  Total de Tareas
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black text-white font-mono">{allTasksMetrics.total}</span>
+                  <span className="text-[11px] text-slate-500">registradas</span>
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  <span className="text-emerald-400 font-bold">{allTasksMetrics.completed}</span> cumplidas · <span className="text-amber-400 font-bold">{allTasksMetrics.pending}</span> pendientes
+                </div>
+              </div>
+
+              <div className="bg-purple-950/30 border border-purple-500/30 rounded-2xl p-3.5">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-purple-300 flex items-center space-x-1 mb-1">
+                  <AlertTriangle className="w-3 h-3 text-purple-400" />
+                  <span>En Afectaciones</span>
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black text-purple-300 font-mono">{allTasksMetrics.withAfectacion}</span>
+                  <span className="text-[11px] text-purple-400">
+                    {allTasksMetrics.total > 0 ? `(${Math.round((allTasksMetrics.withAfectacion / allTasksMetrics.total) * 100)}%)` : '0%'}
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] text-purple-300/80">
+                  Tareas con motivo de afectación
+                </div>
+              </div>
+
+              <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-3.5">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block mb-1">
+                  Sin Afectación
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black text-slate-300 font-mono">{allTasksMetrics.withoutAfectacion}</span>
+                  <span className="text-[11px] text-slate-500">ordinarias</span>
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  Mantenimiento y trabajos regulares
+                </div>
+              </div>
+
+              <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-3.5">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block mb-1">
+                  Cables & Servicios
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black text-amber-400 font-mono">{allTasksMetrics.uniqueCablesCount}</span>
+                  <span className="text-[11px] text-slate-500">cables</span>
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  <span className="text-cyan-400 font-bold">{allTasksMetrics.totalServices}</span> servicios asignados
+                </div>
+              </div>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="px-5 py-2 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar por cable, tarea, motivo..."
+                  value={modalSearchTerm}
+                  onChange={(e) => setModalSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+                {modalSearchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setModalSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-1.5 w-full sm:w-auto overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setModalFilterAfectacion('all')}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                    modalFilterAfectacion === 'all'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Todas ({allTasksMetrics.total})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalFilterAfectacion('with_afectacion')}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1 ${
+                    modalFilterAfectacion === 'with_afectacion'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-slate-800 text-purple-300 hover:text-white'
+                  }`}
+                >
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>En Afectaciones ({allTasksMetrics.withAfectacion})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalFilterAfectacion('without_afectacion')}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                    modalFilterAfectacion === 'without_afectacion'
+                      ? 'bg-slate-700 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Sin Afectación ({allTasksMetrics.withoutAfectacion})
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable Tasks Table */}
+            <div className="flex-1 overflow-y-auto px-5 py-2">
+              {tasks.length === 0 ? (
+                <div className="py-16 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 text-slate-500 mx-auto flex items-center justify-center">
+                    <ListTodo className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-white">No hay tareas registradas</h4>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Aún no ha creado ningún trabajo pendiente. Puede registrar uno nuevo utilizando el botón "Agregar Trabajo".
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAllTasksModal(false);
+                      handleOpenAddModal();
+                    }}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-all shadow-md inline-flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>Agregar Trabajo Ahora</span>
+                  </button>
+                </div>
+              ) : modalFilteredTasks.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-500">
+                  No se encontraron tareas que coincidan con la búsqueda o filtro aplicado.
+                </div>
+              ) : (
+                <div className="border border-slate-800 rounded-2xl overflow-hidden shadow-inner">
+                  <table className="w-full text-xs text-left text-slate-300">
+                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px] tracking-wider border-b border-slate-800 sticky top-0 z-10">
+                      <tr>
+                        <th className="py-2.5 px-3 text-center">N°</th>
+                        <th className="py-2.5 px-3">Cable</th>
+                        <th className="py-2.5 px-4">Tarea / Trabajo</th>
+                        <th className="py-2.5 px-3 text-center">Servicios</th>
+                        <th className="py-2.5 px-3 text-center">Afectación</th>
+                        <th className="py-2.5 px-3 text-center">Estado</th>
+                        <th className="py-2.5 px-4 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                      {modalFilteredTasks.map((t, index) => {
+                        const isCompleted = t.status === 'completed';
+                        const isInProgress = t.status === 'in_progress';
+                        return (
+                          <tr
+                            key={t.id}
+                            className={`hover:bg-slate-800/40 transition-colors ${
+                              isCompleted ? 'bg-emerald-950/10 opacity-80' : ''
+                            }`}
+                          >
+                            {/* N° */}
+                            <td className="py-3 px-3 text-center font-mono text-slate-500 text-[11px]">
+                              {index + 1}
+                            </td>
+
+                            {/* Cable */}
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span className="inline-flex items-center space-x-1 font-mono font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-lg text-xs">
+                                <Cable className="w-3 h-3" />
+                                <span>{t.cable}</span>
+                              </span>
+                            </td>
+
+                            {/* Tarea o Trabajo */}
+                            <td className="py-3 px-4">
+                              <div className="space-y-0.5 max-w-sm">
+                                <div className={`font-bold text-white text-xs ${isCompleted ? 'line-through text-slate-400' : ''}`}>
+                                  {t.taskName}
+                                </div>
+                                {t.terminalDireccion && (
+                                  <div className="text-[11px] text-slate-400 flex items-center space-x-1 truncate" title={t.terminalDireccion}>
+                                    <MapPin className="w-2.5 h-2.5 text-rose-400 shrink-0" />
+                                    <span className="truncate">Terminal: {t.terminalDireccion}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Cantidad de Servicios */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-200 font-mono font-bold text-[11px]">
+                                <Users className="w-3 h-3 text-cyan-400" />
+                                <span>{t.serviceNumbers?.length || 0}</span>
+                              </span>
+                            </td>
+
+                            {/* Afectación */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              {t.hasAfectacion ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                  <AlertTriangle className="w-2.5 h-2.5 mr-1 text-purple-400 shrink-0" />
+                                  <span>{t.afectacionMotivo || 'Afectación'}</span>
+                                  {t.afectacionFechaInicio && (
+                                    <span className="ml-1 opacity-75">({t.afectacionFechaInicio})</span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 text-[11px] font-mono">No</span>
+                              )}
+                            </td>
+
+                            {/* Estado */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              {isCompleted ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  <CheckCircle2 className="w-2.5 h-2.5 mr-1 text-emerald-400" />
+                                  <span>Cumplida</span>
+                                </span>
+                              ) : isInProgress ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                  <Clock className="w-2.5 h-2.5 mr-1 text-cyan-400" />
+                                  <span>En Progreso</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  <span>Pendiente</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Acciones: Actualizar o Eliminar porque ya se cumplió */}
+                            <td className="py-3 px-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end space-x-1.5">
+                                {/* Botón para Actualizar */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditFromSummaryModal(t)}
+                                  className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-amber-500/30 flex items-center space-x-1 cursor-pointer"
+                                  title="Actualizar datos de esta tarea o trabajo"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Actualizar</span>
+                                </button>
+
+                                {/* Botón alternar Cumplida */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleCompleteTask(t)}
+                                  className={`p-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                                    isCompleted
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/30'
+                                      : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
+                                  }`}
+                                  title={isCompleted ? "Marcar como pendiente" : "Marcar como cumplida"}
+                                >
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                </button>
+
+                                {/* Botón para Eliminar porque ya se cumplió */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteFulfilledTask(t)}
+                                  className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-100 rounded-xl text-xs font-bold transition-all border border-rose-500/30 flex items-center space-x-1 cursor-pointer"
+                                  title="Eliminar esta tarea porque ya se cumplió el trabajo"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                  <span>Eliminar (Cumplida)</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-950/60 shrink-0">
+              <span className="text-xs text-slate-400">
+                Mostrando {modalFilteredTasks.length} de {tasks.length} trabajos pendientes
+              </span>
+              <div className="flex items-center space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAllTasksModal(false);
+                    handleOpenAddModal();
+                  }}
+                  className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>Nuevo Trabajo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAllTasksModal(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* CARTEL DE CONFIRMACIÓN DE SEGURIDAD: ELIMINAR TODOS LOS TRABAJOS */}
+      {/* ------------------------------------------------------------- */}
+      {showDeleteAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="bg-slate-900 border-2 border-rose-500/50 rounded-3xl p-6 w-full max-w-lg text-white shadow-2xl space-y-5">
+            <div className="flex items-start space-x-4">
+              <div className="p-3.5 bg-rose-500/20 text-rose-400 border border-rose-500/40 rounded-2xl shrink-0">
+                <AlertTriangle className="w-7 h-7 text-rose-400" />
+              </div>
+              <div className="space-y-1">
+                <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full tracking-wider font-mono">
+                  Confirmación de Seguridad
+                </span>
+                <h3 className="text-lg font-black text-white tracking-tight">
+                  ¿Eliminar todos los trabajos registrados?
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Está a punto de eliminar permanentemente <strong className="text-rose-300">{tasks.length} {tasks.length === 1 ? 'trabajo registrado' : 'trabajos registrados'}</strong> de la tabla. Esta acción no se puede deshacer.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-2 text-xs text-slate-300">
+              <div className="flex items-center space-x-2 text-amber-300 font-bold">
+                <Info className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Información importante:</span>
+              </div>
+              <ul className="list-disc list-inside space-y-1 text-slate-400 pl-1 text-[11px]">
+                <li>Se eliminarán todas las tareas creadas y sus números de servicio asociados.</li>
+                <li>Los datos de su archivo Excel cargado en la aplicación permanecerán intactos.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllModal(false)}
+                disabled={isDeletingAll}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteAll}
+                disabled={isDeletingAll}
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-black transition-all shadow-lg shadow-rose-600/30 flex items-center space-x-2 cursor-pointer"
+              >
+                {isDeletingAll ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Sí, eliminar todos los trabajos</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* MODAL PARA AGREGAR / EDITAR TRABAJO PENDIENTE */}
@@ -1560,6 +2446,25 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                       <option key={c} value={c} />
                     ))}
                   </datalist>
+
+                  {/* Sugerencia de Cable si los números pegados coinciden con uno en el reporte */}
+                  {suggestedCableFromPasted && formCable !== suggestedCableFromPasted.cable && (
+                    <div className="flex items-center justify-between p-2 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-[11px] text-emerald-300 mt-1.5">
+                      <div className="flex items-center space-x-1.5 truncate">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span className="truncate">
+                          Cable detectado en reporte: <strong>{suggestedCableFromPasted.cable}</strong> ({suggestedCableFromPasted.count} servicios)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFormCable(suggestedCableFromPasted.cable)}
+                        className="ml-2 px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[10px] transition-colors cursor-pointer shrink-0"
+                      >
+                        Asignar
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -1595,15 +2500,15 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                 />
               </div>
 
-              {/* Terminal / Dirección */}
+              {/* Terminal */}
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <MapPin className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Terminal / Dirección (Opcional)</span>
+                  <span>Terminal (Opcional)</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: Terminal 04 · Av. Principal cruce con Calle 2"
+                  placeholder="Ej: T-04, 12, Terminal 04 (o se busca automáticamente en la columna TERMINAL del Excel)"
                   value={formTerminalDir}
                   onChange={(e) => setFormTerminalDir(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
@@ -1693,17 +2598,19 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               </div>
 
               {/* Servicios Específicos de este Cable */}
-              <div className="space-y-2 border-t border-slate-800 pt-3">
+              <div className="space-y-3 border-t border-slate-800 pt-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-white flex items-center space-x-1.5">
                     <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Servicios Afectados ({selectedServicesSet.size} seleccionados)</span>
+                    <span>
+                      Servicios Afectados ({totalCombinedServicesCount} en total)
+                    </span>
                   </label>
                   {cableAvailableServices.length > 0 && (
                     <button
                       type="button"
                       onClick={handleToggleSelectAllCableServices}
-                      className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 transition-colors"
+                      className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
                     >
                       {cableAvailableServices.every(s => selectedServicesSet.has(s.servicio.toUpperCase()))
                         ? 'Deseleccionar todos'
@@ -1715,9 +2622,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                 {/* Cable Services Checkbox List from Excel */}
                 {cableAvailableServices.length > 0 && (
                   <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 max-h-36 overflow-y-auto space-y-1.5">
-                    <span className="text-[10px] text-slate-400 uppercase font-mono block mb-1">
-                      Servicios detectados en Excel para cable "{formCable}":
-                    </span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono block">
+                        Servicios detectados en Excel para cable "{formCable}":
+                      </span>
+                      <span className="text-[10px] text-cyan-400 font-mono">
+                        {selectedServicesSet.size} de {cableAvailableServices.length} seleccionados
+                      </span>
+                    </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {cableAvailableServices.map(srv => {
                         const isChecked = selectedServicesSet.has(srv.servicio.toUpperCase());
@@ -1744,18 +2656,114 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                   </div>
                 )}
 
-                {/* Manual or Pasted Service Numbers Input */}
-                <div className="space-y-1">
-                  <span className="text-[11px] text-slate-400 block">
-                    O pegue números de servicio adicionales (separados por coma o saltos de línea):
-                  </span>
+                {/* Pegado Inteligente de Columna de Excel */}
+                <div className="space-y-2 bg-slate-950/60 border border-slate-800 rounded-2xl p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2">
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                      <span className="text-xs font-bold text-slate-200">
+                        Pegar columna de números desde Excel
+                      </span>
+                      {parsedPastedServices.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                          {parsedPastedServices.length} detectados
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Botones de acción rápida */}
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={handlePasteFromClipboard}
+                        className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold flex items-center space-x-1 transition-colors cursor-pointer"
+                        title="Pegar lo copiado de la columna de Excel"
+                      >
+                        <Clipboard className="w-3 h-3" />
+                        <span>Pegar Portapapeles</span>
+                      </button>
+                      {parsedPastedServices.length > 0 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleCleanAndFormatPasted}
+                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-medium transition-colors cursor-pointer"
+                            title="Limpiar y ordenar números en una sola columna"
+                          >
+                            Formatear
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleClearPasted}
+                            className="px-2 py-1 bg-slate-800 hover:bg-red-950 text-slate-400 hover:text-red-300 rounded-lg text-[10px] font-medium transition-colors cursor-pointer"
+                            title="Vaciar recuadro"
+                          >
+                            Vaciar
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400">
+                    Copie una columna de números en su Excel y péguela aquí (Ctrl + V). El sistema ignora encabezados ("Servicio", "Teléfono"), comillas y saltos de fila automáticamente.
+                  </p>
+
                   <textarea
-                    rows={2}
-                    placeholder="Ej: 0212000001, 0212000002, 0212000003..."
+                    rows={3}
+                    placeholder="0212000001&#10;0212000002&#10;0212000003..."
                     value={formServiceInput}
                     onChange={(e) => setFormServiceInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white font-mono focus:outline-none focus:border-cyan-500 resize-none"
+                    onPaste={handlePasteInTextarea}
+                    className="w-full bg-slate-900 border border-slate-700/80 rounded-xl p-2.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500 min-h-[75px] max-h-44 resize-y"
                   />
+
+                  {pasteFeedbackMessage && (
+                    <div className="flex items-center space-x-1.5 text-xs text-emerald-400 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{pasteFeedbackMessage}</span>
+                    </div>
+                  )}
+
+                  {/* Vista previa con chips de números pegados */}
+                  {parsedPastedServices.length > 0 && (
+                    <div className="space-y-1.5 pt-1.5 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Vista previa de números pegados ({parsedPastedServices.length}):</span>
+                        {matchedServicesInExcelCount > 0 && (
+                          <span className="text-emerald-400 font-medium">
+                            ✓ {matchedServicesInExcelCount} coinciden en el reporte consolidado
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 bg-slate-900/60 rounded-xl border border-slate-800">
+                        {parsedPastedServices.map((srv, idx) => {
+                          const inReport = excelServicesMap.has(srv.toUpperCase());
+                          return (
+                            <span
+                              key={`${srv}-${idx}`}
+                              className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono border ${
+                                inReport
+                                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                                  : 'bg-slate-800/80 border-slate-700 text-slate-300'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${inReport ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                              <span>{srv}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveOnePastedNumber(srv)}
+                                className="hover:text-red-400 ml-0.5 text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
+                                title="Quitar este número"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
