@@ -132,7 +132,7 @@ export interface CustomTableSchema {
   data: Record<string, any>[]; // Processed rows
 }
 
-import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult } from './types/ipCablesTypes';
+import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult, CablePendingTask } from './types/ipCablesTypes';
 import { PrintedRecord } from './utils/ipCablesStorage';
 
 export interface SystemConfigBackup {
@@ -146,6 +146,7 @@ export interface SystemConfigBackup {
   reportSettings?: ReportSettings;
   ipZones?: ZoneConfig[];
   ipCableRules?: CableClassificationRules;
+  cablePendingTasks?: CablePendingTask[];
   wordReportProfiles?: WordReportProfile[];
   customTableDefinitions?: Array<{
     id: string;
@@ -184,6 +185,7 @@ export interface SystemDataBackup {
   reportSettings?: ReportSettings;
   ipZones?: ZoneConfig[];
   ipCableRules?: CableClassificationRules;
+  cablePendingTasks?: CablePendingTask[];
   wordReportProfiles?: WordReportProfile[];
   ipParsedData?: IpCableExcelParseResult;
   ipPrintedServices?: Record<string, PrintedRecord>;

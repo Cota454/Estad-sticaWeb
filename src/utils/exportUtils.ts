@@ -13,7 +13,7 @@ import {
   SystemHistoryBackup
 } from '../types';
 import { getTodayStr, formatDateLong } from './dateUtils';
-import { loadZones, loadCableRules, loadParsedIpData, loadPrintedServices } from './ipCablesStorage';
+import { loadZones, loadCableRules, loadParsedIpData, loadPrintedServices, loadCablePendingTasks } from './ipCablesStorage';
 import { loadReportSettings } from './settingsUtils';
 import { loadWordReportProfiles } from './wordProfileUtils';
 
@@ -62,6 +62,7 @@ export function downloadConfigBackup(
     reportSettings: loadReportSettings(),
     ipZones: loadZones(),
     ipCableRules: loadCableRules(),
+    cablePendingTasks: loadCablePendingTasks(),
     wordReportProfiles: loadWordReportProfiles(),
     customTableDefinitions: customTables?.map(t => ({
       id: t.id,
@@ -127,6 +128,7 @@ export function downloadJSONBackup(
     reportSettings: loadReportSettings(),
     ipZones: loadZones(),
     ipCableRules: loadCableRules(),
+    cablePendingTasks: loadCablePendingTasks(),
     wordReportProfiles: loadWordReportProfiles(),
     ipParsedData: loadParsedIpData() || undefined,
     ipPrintedServices: loadPrintedServices()
@@ -147,6 +149,7 @@ export interface ParsedBackupResult {
     hasSettings: boolean;
     hasZones: boolean;
     hasRules: boolean;
+    cablePendingTasksCount: number;
     hasParsedIp: boolean;
     printedServicesCount: number;
   };
@@ -185,6 +188,7 @@ export function parseJSONBackupFile(file: File): Promise<ParsedBackupResult> {
           reportSettings: parsed.reportSettings,
           ipZones: parsed.ipZones,
           ipCableRules: parsed.ipCableRules,
+          cablePendingTasks: parsed.cablePendingTasks,
           wordReportProfiles: parsed.wordReportProfiles,
           ipParsedData: parsed.ipParsedData,
           ipPrintedServices: parsed.ipPrintedServices
@@ -198,6 +202,7 @@ export function parseJSONBackupFile(file: File): Promise<ParsedBackupResult> {
           hasSettings: Boolean(normalizedData.reportSettings),
           hasZones: Boolean(normalizedData.ipZones && normalizedData.ipZones.length > 0),
           hasRules: Boolean(normalizedData.ipCableRules),
+          cablePendingTasksCount: Array.isArray(normalizedData.cablePendingTasks) ? normalizedData.cablePendingTasks.length : 0,
           hasParsedIp: Boolean(normalizedData.ipParsedData && normalizedData.ipParsedData.consolidatedRows?.length > 0),
           printedServicesCount: normalizedData.ipPrintedServices ? Object.keys(normalizedData.ipPrintedServices).length : 0
         };
@@ -210,6 +215,7 @@ export function parseJSONBackupFile(file: File): Promise<ParsedBackupResult> {
           summary.repairRecordsCount > 0 ||
           summary.hasZones ||
           summary.hasRules ||
+          summary.cablePendingTasksCount > 0 ||
           summary.hasParsedIp;
 
         if (!hasContent) {

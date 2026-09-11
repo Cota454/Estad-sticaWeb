@@ -1,4 +1,4 @@
-import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult } from '../types/ipCablesTypes';
+import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult, CablePendingTask } from '../types/ipCablesTypes';
 
 const ZONES_STORAGE_KEY = 'telecomstat_ip_zones_v1';
 const CABLE_RULES_STORAGE_KEY = 'telecomstat_cable_rules_v1';
@@ -170,5 +170,58 @@ export function markServiceAsUnprinted(servicio: string): Record<string, Printed
     savePrintedServices(current);
   }
   return current;
+}
+
+// ==========================================
+// TRABAJOS PENDIENTES POR CABLE
+// ==========================================
+const CABLE_TASKS_STORAGE_KEY = 'telecomstat_cable_pending_tasks_v1';
+
+export const DEFAULT_CABLE_TASKS: CablePendingTask[] = [
+  {
+    id: 'task-demo-1',
+    cable: 'CABLE-01',
+    taskName: 'Reparación de empalme en cámara principal por filtración de agua',
+    terminalDireccion: 'Terminal 04 · Av. Norte con Calle 3',
+    serviceNumbers: ['0212000001', '0212000002', '0212000003'],
+    status: 'pending',
+    priority: 'high',
+    createdAt: new Date().toISOString(),
+    hasAfectacion: true,
+    afectacionMotivo: 'Huracán',
+    afectacionFechaInicio: '2024-08-01',
+    afectacionFechaFin: '2026-12-31'
+  },
+  {
+    id: 'task-demo-2',
+    cable: 'CR-101',
+    taskName: 'Sustitución de tramo aéreo 50m dañado por caída de rama',
+    terminalDireccion: 'Terminal 12 · Calle Principal Sector Centro',
+    serviceNumbers: ['0212000005', '0212000006'],
+    status: 'in_progress',
+    priority: 'urgent',
+    createdAt: new Date().toISOString()
+  }
+];
+
+export function loadCablePendingTasks(): CablePendingTask[] {
+  try {
+    const raw = localStorage.getItem(CABLE_TASKS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.error('Error loading cable pending tasks from localStorage', e);
+  }
+  return DEFAULT_CABLE_TASKS;
+}
+
+export function saveCablePendingTasks(tasks: CablePendingTask[]): void {
+  try {
+    localStorage.setItem(CABLE_TASKS_STORAGE_KEY, JSON.stringify(tasks));
+  } catch (e) {
+    console.error('Error saving cable pending tasks to localStorage', e);
+  }
 }
 

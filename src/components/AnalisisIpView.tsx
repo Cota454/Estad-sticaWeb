@@ -29,11 +29,13 @@ import {
   EyeOff,
   Phone,
   Zap,
-  Binary
+  Binary,
+  Wrench
 } from 'lucide-react';
 
 import { ExecutiveReportModal } from './ExecutiveReportModal';
 import { FloatingReportFAB } from './FloatingReportFAB';
+import { CablePendingTasksView } from './CablePendingTasksView';
 
 import {
   Central,
@@ -163,7 +165,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   onUpdateCurrentUser
 }) => {
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'matrices' | 'ip_cables' | 'print_reports' | 'cable_settings' | 'backup'>('matrices');
+  const [activeTab, setActiveTab] = useState<'matrices' | 'ip_cables' | 'print_reports' | 'cable_settings' | 'backup' | 'cable_tasks'>('matrices');
 
 
   // Loaded Excel State & Cable Rules & Zones State
@@ -1132,6 +1134,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             >
               <Cloud className="w-3.5 h-3.5 text-purple-400" />
               <span>5. Respaldos Drive</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('cable_tasks')}
+              className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'cable_tasks'
+                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30 ring-2 ring-amber-400/30'
+                  : 'bg-slate-800 text-amber-300 hover:bg-slate-700'
+              }`}
+            >
+              <Wrench className="w-3.5 h-3.5 text-amber-400" />
+              <span>6. Trabajos Pendientes</span>
             </button>
           </div>
         </div>
@@ -2426,6 +2440,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             <p className="text-xs text-slate-400">Por favor, inicie sesión en la plataforma para acceder al gestor de respaldos de Google Drive.</p>
           </div>
         )
+      )}
+
+      {/* PESTAÑA 6: TRABAJOS PENDIENTES */}
+      {activeTab === 'cable_tasks' && (
+        <CablePendingTasksView
+          excelData={excelData}
+          centrales={centrales}
+          workGroups={workGroups}
+        />
       )}
 
       {/* ZONE MANAGEMENT MODAL */}

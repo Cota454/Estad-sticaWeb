@@ -55,3 +55,41 @@ export interface IpCableExcelParseResult {
   parseDate: string;
   fileName: string;
 }
+
+export interface CablePendingTask {
+  id: string;
+  cable: string;                  // Cable específico (ej. CABLE-01, CR-101, etc.)
+  taskName: string;               // Tarea o Trabajo por el cual está pendiente
+  terminalDireccion?: string;     // Terminal / Dirección (opcional)
+  serviceNumbers: string[];       // Lista de números de servicio específicos asignados
+  createdAt: string;              // ISO date string
+  updatedAt?: string;             // ISO date string
+  status?: 'pending' | 'in_progress' | 'completed';
+  notes?: string;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+
+  // Casilla opcional de Afectación con rango de fechas
+  hasAfectacion?: boolean;
+  afectacionMotivo?: string;      // ej: "Huracán", "Vandalismo", "Inundación"
+  afectacionFechaInicio?: string; // YYYY-MM-DD
+  afectacionFechaFin?: string;    // YYYY-MM-DD
+}
+
+export interface CableTaskServiceDetailRow {
+  id: string;
+  taskId: string;
+  taskName: string;
+  servicio: string;
+  asociado: string;
+  cableP: string;
+  parP: string;
+  cableS: string;
+  parS: string;
+  fechaReporte: string;
+  grupo: string;
+  demoraEnDias: number;
+  central: string;
+  terminalDireccion: string;
+  afectacion: string;             // Columna AFECTACIONES
+  status: 'pending' | 'in_progress' | 'completed';
+}

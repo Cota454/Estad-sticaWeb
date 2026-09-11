@@ -28,7 +28,7 @@ import { GoogleDriveBackupView } from './components/GoogleDriveBackupView';
 import { AjustesView } from './components/AjustesView';
 import { ExportReportModal } from './components/ExportReportModal';
 import { getTodayStr, getPastDateStr } from './utils/dateUtils';
-import { saveZones, saveCableRules, saveParsedIpData, savePrintedServices } from './utils/ipCablesStorage';
+import { saveZones, saveCableRules, saveParsedIpData, savePrintedServices, saveCablePendingTasks } from './utils/ipCablesStorage';
 import { loadReportSettings, saveReportSettings } from './utils/settingsUtils';
 import { saveWordReportProfiles } from './utils/wordProfileUtils';
 import { ReportSettings } from './types';
@@ -233,6 +233,9 @@ export default function App() {
       }
       if (backup.ipCableRules) {
         saveCableRules(backup.ipCableRules);
+      }
+      if (backup.cablePendingTasks && Array.isArray(backup.cablePendingTasks)) {
+        saveCablePendingTasks(backup.cablePendingTasks);
       }
       if (backup.wordReportProfiles && Array.isArray(backup.wordReportProfiles)) {
         saveWordReportProfiles(backup.wordReportProfiles);
