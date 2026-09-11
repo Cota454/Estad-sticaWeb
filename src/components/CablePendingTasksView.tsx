@@ -31,7 +31,8 @@ import {
   Hash,
   RefreshCw,
   ListTodo,
-  CheckCheck
+  CheckCheck,
+  Upload
 } from 'lucide-react';
 
 import {
@@ -130,12 +131,16 @@ interface CablePendingTasksViewProps {
   excelData: IpCableExcelParseResult | null;
   centrales?: Central[];
   workGroups?: WorkGroup[];
+  onFileUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  isParsing?: boolean;
 }
 
 export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   excelData,
   centrales = [],
-  workGroups = []
+  workGroups = [],
+  onFileUpload,
+  isParsing = false
 }) => {
   // Tasks state from localStorage
   const [tasks, setTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
@@ -382,6 +387,15 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           map.set(noLeadingZero, row);
         }
       }
+
+      // También mapear por columna ASOCIADO / TELEFONO si viene en el Excel
+      const raw = row.rawRowData || {};
+      const asoc = (getExcelRawValue(raw, ['ASOCIADO', 'TELEFONO ASOCIADO', 'TELÉFONO ASOCIADO', 'TELEFONO', 'TELÉFONO', 'ABONADO']) || '').toString().trim().toUpperCase();
+      if (asoc && asoc !== '-') {
+        if (!map.has(asoc)) map.set(asoc, row);
+        const asocDigits = asoc.replace(/\D/g, '');
+        if (asocDigits && !map.has(asocDigits)) map.set(asocDigits, row);
+      }
     });
     return map;
   }, [excelData]);
@@ -433,129 +447,193 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
   // -------------------------------------------------------------
   // Denormalize Tasks into Full Detail Service Rows
-  // Todos los datos se buscan en el excel que sube el usuario
+  // CRÍTICO: En la tabla solo se muestran los que están reportados en el Excel.
+  // El resto se omite por completo (no mostrarlo).
+  // Cada vez que se suba un nuevo Excel, esta tabla se actualiza automáticamente.
   // -------------------------------------------------------------
   const allDetailRows = useMemo<CableTaskServiceDetailRow[]>(() => {
     const rows: CableTaskServiceDetailRow[] = [];
+    if (!excelData || !excelData.consolidatedRows || excelData.consolidatedRows.length === 0) {
+      return rows;
+    }
 
     tasks.forEach(task => {
-      const services = task.serviceNumbers && task.serviceNumbers.length > 0
-        ? task.serviceNumbers
-        : ['SIN_SERVICIO'];
+      const hasSpecificServices = Array.isArray(task.serviceNumbers) && task.serviceNumbers.length > 0;
 
-      services.forEach((srvNum, idx) => {
-        const sKey = (srvNum || '').trim().toUpperCase();
-        let matchedRow = excelServicesMap.get(sKey);
-        if (!matchedRow) {
-          const digits = sKey.replace(/\D/g, '');
-          if (digits) {
-            matchedRow = excelServicesMap.get(digits) || excelServicesMap.get(digits.replace(/^0+/, ''));
-          }
-        }
+      if (hasSpecificServices) {
+        task.serviceNumbers.forEach((srvNum, idx) => {
+          const sKey = (srvNum || '').toString().trim().toUpperCase();
+          if (!sKey || sKey === 'SIN_SERVICIO') return;
 
-        const rowId = `${task.id}-${sKey}-${idx}`;
-        const raw = matchedRow?.rawRowData || {};
-
-        // 1. Asociado: del Excel subido
-        const associated = matchedRow
-          ? (getExcelRawValue(raw, ['ASOCIADO', 'TELEFONO ASOCIADO', 'TELÉFONO ASOCIADO', 'TELEFONO', 'TELÉFONO', 'ABONADO']) || '-')
-          : '-';
-
-        // 2. Cable P: del Excel subido
-        const cableP = matchedRow
-          ? (matchedRow.cableP || getExcelRawValue(raw, ['CABLE P', 'CABLE_P', 'CABLE PRIMARIO', 'CABLE_PRIMARIO']) || '-')
-          : task.cable || '-';
-
-        // 3. Par P: del Excel subido
-        const parP = matchedRow
-          ? (matchedRow.parP || getExcelRawValue(raw, ['PAR P', 'PAR_P', 'PAR PRIMARIO', 'PAR_PRIMARIO']) || '-')
-          : '-';
-
-        // 4. Cable S: del Excel subido
-        const cableS = matchedRow
-          ? (matchedRow.cableS || getExcelRawValue(raw, ['CABLE S', 'CABLE_S', 'CABLE SECUNDARIO', 'CABLE_SECUNDARIO']) || '-')
-          : '-';
-
-        // 5. Par S: del Excel subido
-        const parS = matchedRow
-          ? (matchedRow.parS || getExcelRawValue(raw, ['PAR S', 'PAR_S', 'PAR SECUNDARIO', 'PAR_SECUNDARIO']) || '-')
-          : '-';
-
-        // 6. Fecha Reporte: del Excel subido
-        const fechaReporte = matchedRow
-          ? (matchedRow.fechaReporte || getExcelRawValue(raw, ['FECHA REPORTE', 'FECHA DE REPORTE', 'FECHA']) || '-')
-          : task.createdAt.slice(0, 10);
-
-        // 7. Grupo: del Excel subido
-        const grupo = matchedRow
-          ? (matchedRow.grupo || getExcelRawValue(raw, ['GRUPO', 'GRUPO DE TRABAJO', 'GRUPO_TRABAJO']) || '-')
-          : '-';
-
-        // 8. Demora en Días: calculado con la fecha del Excel
-        const demoraEnDias = matchedRow ? getDemoraDays(matchedRow) : 0;
-
-        // 9. Central Telefónica: del Excel subido
-        const central = matchedRow
-          ? (matchedRow.central || getExcelRawValue(raw, ['CENTRAL TELEFONICA', 'CENTRAL TELEFÓNICA', 'CENTRAL']) || '-')
-          : '-';
-
-        // 10. Terminal: los datos están en el Excel en la columna llamada TERMINAL
-        let terminalVal = '';
-        if (matchedRow) {
-          terminalVal = getExcelRawValue(raw, ['TERMINAL', 'TERM', 'CAJA TERMINAL', 'CAJA']);
-        }
-        if (!terminalVal && task.terminalDireccion) {
-          terminalVal = task.terminalDireccion;
-        }
-        if (!terminalVal) {
-          terminalVal = '-';
-        }
-
-        // Afectaciones logic
-        let afectacion = '-';
-        if (task.hasAfectacion && task.afectacionMotivo) {
-          const rowDateStr = (matchedRow?.fechaReporte || fechaReporte || '').trim().slice(0, 10);
-          const start = task.afectacionFechaInicio || '';
-          const end = task.afectacionFechaFin || '';
-
-          let matchesRange = true;
-          if (start && end) {
-            matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr >= start && rowDateStr <= end);
-          } else if (start) {
-            matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr >= start);
-          } else if (end) {
-            matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr <= end);
+          let matchedRow = excelServicesMap.get(sKey);
+          if (!matchedRow) {
+            const digits = sKey.replace(/\D/g, '');
+            if (digits) {
+              matchedRow = excelServicesMap.get(digits) || excelServicesMap.get(digits.replace(/^0+/, ''));
+            }
           }
 
-          if (matchesRange) {
-            afectacion = task.afectacionMotivo;
+          // REGLA SOLICITADA POR EL USUARIO:
+          // "En la tabla solo me vas a mostrar los que están reportados el resto debes de omitirlo, no mostrarlo."
+          if (!matchedRow) {
+            return;
           }
-        }
 
-        rows.push({
-          id: rowId,
-          taskId: task.id,
-          taskName: task.taskName,
-          servicio: srvNum === 'SIN_SERVICIO' ? '(Sin servicios asignados)' : srvNum,
-          asociado: String(associated),
-          cableP: String(cableP),
-          parP: String(parP),
-          cableS: String(cableS),
-          parS: String(parS),
-          fechaReporte: String(fechaReporte),
-          grupo: String(grupo),
-          demoraEnDias: typeof demoraEnDias === 'number' ? demoraEnDias : 0,
-          central: String(central),
-          terminal: terminalVal,
-          terminalDireccion: terminalVal,
-          afectacion: afectacion,
-          status: task.status || 'pending'
+          const rowId = `${task.id}-${sKey}-${idx}`;
+          const raw = matchedRow.rawRowData || {};
+
+          // 1. Asociado: del Excel subido
+          const associated = getExcelRawValue(raw, ['ASOCIADO', 'TELEFONO ASOCIADO', 'TELÉFONO ASOCIADO', 'TELEFONO', 'TELÉFONO', 'ABONADO']) || '-';
+
+          // 2. Cable P: del Excel subido
+          const cableP = matchedRow.cableP || getExcelRawValue(raw, ['CABLE P', 'CABLE_P', 'CABLE PRIMARIO', 'CABLE_PRIMARIO']) || task.cable || '-';
+
+          // 3. Par P: del Excel subido
+          const parP = matchedRow.parP || getExcelRawValue(raw, ['PAR P', 'PAR_P', 'PAR PRIMARIO', 'PAR_PRIMARIO']) || '-';
+
+          // 4. Cable S: del Excel subido
+          const cableS = matchedRow.cableS || getExcelRawValue(raw, ['CABLE S', 'CABLE_S', 'CABLE SECUNDARIO', 'CABLE_SECUNDARIO']) || '-';
+
+          // 5. Par S: del Excel subido
+          const parS = matchedRow.parS || getExcelRawValue(raw, ['PAR S', 'PAR_S', 'PAR SECUNDARIO', 'PAR_SECUNDARIO']) || '-';
+
+          // 6. Fecha Reporte: del Excel subido
+          const fechaReporte = matchedRow.fechaReporte || getExcelRawValue(raw, ['FECHA REPORTE', 'FECHA DE REPORTE', 'FECHA']) || '-';
+
+          // 7. Grupo: del Excel subido
+          const grupo = matchedRow.grupo || getExcelRawValue(raw, ['GRUPO', 'GRUPO DE TRABAJO', 'GRUPO_TRABAJO']) || '-';
+
+          // 8. Demora en Días: calculado con la fecha del Excel
+          const demoraEnDias = getDemoraDays(matchedRow);
+
+          // 9. Central Telefónica: del Excel subido
+          const central = matchedRow.central || getExcelRawValue(raw, ['CENTRAL TELEFONICA', 'CENTRAL TELEFÓNICA', 'CENTRAL']) || '-';
+
+          // 10. Terminal: los datos están en el Excel en la columna llamada TERMINAL
+          let terminalVal = getExcelRawValue(raw, ['TERMINAL', 'TERM', 'CAJA TERMINAL', 'CAJA']);
+          if (!terminalVal && task.terminalDireccion) {
+            terminalVal = task.terminalDireccion;
+          }
+          if (!terminalVal) {
+            terminalVal = '-';
+          }
+
+          // Afectaciones logic
+          let afectacion = '-';
+          if (task.hasAfectacion && task.afectacionMotivo) {
+            const rowDateStr = (matchedRow.fechaReporte || fechaReporte || '').trim().slice(0, 10);
+            const start = task.afectacionFechaInicio || '';
+            const end = task.afectacionFechaFin || '';
+
+            let matchesRange = true;
+            if (start && end) {
+              matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr >= start && rowDateStr <= end);
+            } else if (start) {
+              matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr >= start);
+            } else if (end) {
+              matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr <= end);
+            }
+
+            if (matchesRange) {
+              afectacion = task.afectacionMotivo;
+            }
+          }
+
+          rows.push({
+            id: rowId,
+            taskId: task.id,
+            taskName: task.taskName,
+            servicio: matchedRow.servicio || srvNum,
+            asociado: String(associated),
+            cableP: String(cableP),
+            parP: String(parP),
+            cableS: String(cableS),
+            parS: String(parS),
+            fechaReporte: String(fechaReporte),
+            grupo: String(grupo),
+            demoraEnDias: typeof demoraEnDias === 'number' ? demoraEnDias : 0,
+            central: String(central),
+            terminal: terminalVal,
+            terminalDireccion: terminalVal,
+            afectacion: afectacion,
+            status: task.status || 'pending'
+          });
         });
-      });
+      } else if (task.cable && task.cable.trim()) {
+        // Si no se asignaron números individuales, buscar los servicios reportados en el Excel para este cable
+        const cLower = task.cable.toLowerCase().trim();
+        excelData.consolidatedRows.forEach((matchedRow, idx) => {
+          const matchP = matchedRow.cableP && matchedRow.cableP.toLowerCase().includes(cLower);
+          const matchS = matchedRow.cableS && matchedRow.cableS.toLowerCase().includes(cLower);
+          const matchC = matchedRow.cable && matchedRow.cable.toLowerCase().includes(cLower);
+          if (matchP || matchS || matchC) {
+            const rowId = `${task.id}-${matchedRow.servicio}-${idx}`;
+            const raw = matchedRow.rawRowData || {};
+
+            const associated = getExcelRawValue(raw, ['ASOCIADO', 'TELEFONO ASOCIADO', 'TELÉFONO ASOCIADO', 'TELEFONO', 'TELÉFONO', 'ABONADO']) || '-';
+            const cableP = matchedRow.cableP || getExcelRawValue(raw, ['CABLE P', 'CABLE_P', 'CABLE PRIMARIO', 'CABLE_PRIMARIO']) || task.cable;
+            const parP = matchedRow.parP || getExcelRawValue(raw, ['PAR P', 'PAR_P', 'PAR PRIMARIO', 'PAR_PRIMARIO']) || '-';
+            const cableS = matchedRow.cableS || getExcelRawValue(raw, ['CABLE S', 'CABLE_S', 'CABLE SECUNDARIO', 'CABLE_SECUNDARIO']) || '-';
+            const parS = matchedRow.parS || getExcelRawValue(raw, ['PAR S', 'PAR_S', 'PAR SECUNDARIO', 'PAR_SECUNDARIO']) || '-';
+            const fechaReporte = matchedRow.fechaReporte || getExcelRawValue(raw, ['FECHA REPORTE', 'FECHA DE REPORTE', 'FECHA']) || '-';
+            const grupo = matchedRow.grupo || getExcelRawValue(raw, ['GRUPO', 'GRUPO DE TRABAJO', 'GRUPO_TRABAJO']) || '-';
+            const demoraEnDias = getDemoraDays(matchedRow);
+            const central = matchedRow.central || getExcelRawValue(raw, ['CENTRAL TELEFONICA', 'CENTRAL TELEFÓNICA', 'CENTRAL']) || '-';
+
+            let terminalVal = getExcelRawValue(raw, ['TERMINAL', 'TERM', 'CAJA TERMINAL', 'CAJA']);
+            if (!terminalVal && task.terminalDireccion) {
+              terminalVal = task.terminalDireccion;
+            }
+            if (!terminalVal) {
+              terminalVal = '-';
+            }
+
+            let afectacion = '-';
+            if (task.hasAfectacion && task.afectacionMotivo) {
+              const rowDateStr = (matchedRow.fechaReporte || fechaReporte || '').trim().slice(0, 10);
+              const start = task.afectacionFechaInicio || '';
+              const end = task.afectacionFechaFin || '';
+
+              let matchesRange = true;
+              if (start && end) {
+                matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr >= start && rowDateStr <= end);
+              } else if (start) {
+                matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr >= start);
+              } else if (end) {
+                matchesRange = Boolean(rowDateStr && rowDateStr !== '-' && rowDateStr <= end);
+              }
+
+              if (matchesRange) {
+                afectacion = task.afectacionMotivo;
+              }
+            }
+
+            rows.push({
+              id: rowId,
+              taskId: task.id,
+              taskName: task.taskName,
+              servicio: matchedRow.servicio,
+              asociado: String(associated),
+              cableP: String(cableP),
+              parP: String(parP),
+              cableS: String(cableS),
+              parS: String(parS),
+              fechaReporte: String(fechaReporte),
+              grupo: String(grupo),
+              demoraEnDias: typeof demoraEnDias === 'number' ? demoraEnDias : 0,
+              central: String(central),
+              terminal: terminalVal,
+              terminalDireccion: terminalVal,
+              afectacion: afectacion,
+              status: task.status || 'pending'
+            });
+          }
+        });
+      }
     });
 
     return rows;
-  }, [tasks, excelServicesMap]);
+  }, [tasks, excelServicesMap, excelData]);
 
   // -------------------------------------------------------------
   // Mejora C: Búsqueda Contextual por Servicio (Task Context Search)
@@ -658,15 +736,19 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
     const completedTasks = tasks.filter(t => t.status === 'completed').length;
 
-    // Count unique services in tasks
+    // Servicios reportados activos (exclusivamente los que aparecen en la tabla desde el Excel)
+    const reportedServicesSet = new Set<string>();
     const allServicesSet = new Set<string>();
     const cableImpactMap: Record<string, number> = {};
 
+    allDetailRows.forEach(r => {
+      reportedServicesSet.add(r.servicio);
+      const c = r.cableP || 'SIN CABLE';
+      cableImpactMap[c] = (cableImpactMap[c] || 0) + 1;
+    });
+
     tasks.forEach(t => {
-      const srvs = t.serviceNumbers || [];
-      srvs.forEach(s => allServicesSet.add(s));
-      const c = t.cable || 'SIN CABLE';
-      cableImpactMap[c] = (cableImpactMap[c] || 0) + (srvs.length || 1);
+      (t.serviceNumbers || []).forEach(s => allServicesSet.add(s));
     });
 
     let topImpactCable = '-';
@@ -692,13 +774,15 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       pendingTasks,
       inProgressTasks,
       completedTasks,
-      totalServicesAffected: allServicesSet.size,
+      totalServicesAffected: reportedServicesSet.size,
+      totalServicesReported: reportedServicesSet.size,
+      totalServicesAssigned: allServicesSet.size,
       topImpactCable,
       topImpactCount,
       maxDemora,
       oldestService
     };
-  }, [tasks, filteredRows]);
+  }, [tasks, allDetailRows, filteredRows]);
 
   // -------------------------------------------------------------
   // Grouped Tasks Map for Acordeón View (Mejora D)
@@ -1306,11 +1390,11 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
           <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Servicios Afectados
+              Servicios Reportados Activos
             </span>
             <div className="flex items-baseline space-x-2">
-              <span className="text-2xl font-black font-mono text-blue-400">{kpis.totalServicesAffected}</span>
-              <span className="text-[11px] text-slate-400">retenidos</span>
+              <span className="text-2xl font-black font-mono text-emerald-400">{kpis.totalServicesReported}</span>
+              <span className="text-[11px] text-slate-400">en Excel activo</span>
             </div>
           </div>
 
@@ -1335,6 +1419,53 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               <span className="text-[10px] text-slate-400 font-mono truncate">{kpis.oldestService !== '-' ? kpis.oldestService : ''}</span>
             </div>
           </div>
+        </div>
+
+        {/* Banner de Sincronización Reactiva con Excel */}
+        <div className="p-3.5 bg-slate-950/90 border border-slate-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center space-x-3">
+            <div className={`p-2.5 rounded-xl border shrink-0 ${
+              excelData ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+            }`}>
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-extrabold text-white">Sincronización con Reporte de Averías:</span>
+                {excelData ? (
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] px-2 py-0.5 rounded-md font-mono font-bold">
+                    {excelData.fileName}
+                  </span>
+                ) : (
+                  <span className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] px-2 py-0.5 rounded-md font-bold">
+                    Sin archivo Excel cargado
+                  </span>
+                )}
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2 py-0.5 rounded-md font-bold">
+                  Solo servicios reportados
+                </span>
+              </div>
+              <p className="text-slate-400 text-[11px] leading-relaxed">
+                {excelData
+                  ? `Mostrando exclusivamente los servicios que están reportados en el archivo Excel (${allDetailRows.length} en total). Los no reportados se omiten automáticamente. Al subir un nuevo Excel, la tabla se actualiza de inmediato.`
+                  : 'Cargue el archivo Excel para sincronizar y ver únicamente los servicios reportados en la tabla.'}
+              </p>
+            </div>
+          </div>
+
+          {onFileUpload && (
+            <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-2 shrink-0 self-start md:self-auto shadow-sm">
+              {isParsing ? <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
+              <span>{isParsing ? 'Procesando Excel...' : 'Cargar / Actualizar Excel'}</span>
+              <input
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                onChange={onFileUpload}
+                disabled={isParsing}
+                className="hidden"
+              />
+            </label>
+          )}
         </div>
       </div>
 
@@ -1590,10 +1721,10 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <h3 className="text-base font-black text-white">
-              {viewMode === 'flat' ? 'Detalle de Servicios por Trabajo Pendiente' : 'Tareas Pendientes Agrupadas'}
+              {viewMode === 'flat' ? 'Detalle de Servicios Reportados por Trabajo' : 'Tareas Pendientes Agrupadas'}
             </h3>
-            <span className="bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold">
-              {filteredRows.length} registros
+            <span className="bg-emerald-950 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold">
+              {filteredRows.length} reportados
             </span>
           </div>
 
@@ -1654,11 +1785,18 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                 {filteredRows.length === 0 ? (
                   <tr>
                     <td colSpan={14} className="py-12 text-center text-slate-500 italic space-y-2">
-                      <p className="text-sm">No se encontraron trabajos o servicios que coincidan con los filtros.</p>
+                      <p className="text-sm font-semibold text-slate-300">
+                        {!excelData
+                          ? 'No hay archivo Excel cargado. Suba el archivo Excel para ver los servicios reportados.'
+                          : 'No se encontraron servicios reportados en el archivo Excel actual para los trabajos o filtros seleccionados.'}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        (La tabla solo muestra los servicios que se encuentran reportados en el Excel activo; el resto se omite automáticamente).
+                      </p>
                       <button
                         type="button"
                         onClick={handleOpenAddModal}
-                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-xl border border-slate-700 transition-colors"
+                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-xl border border-slate-700 transition-colors cursor-pointer"
                       >
                         Crear Nuevo Trabajo Pendiente
                       </button>
@@ -2207,12 +2345,37 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                               </div>
                             </td>
 
-                            {/* Cantidad de Servicios */}
+                            {/* Cantidad de Servicios (Reportados vs Asignados) */}
                             <td className="py-3 px-3 text-center whitespace-nowrap">
-                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-200 font-mono font-bold text-[11px]">
-                                <Users className="w-3 h-3 text-cyan-400" />
-                                <span>{t.serviceNumbers?.length || 0}</span>
-                              </span>
+                              {(() => {
+                                const reportedCount = (t.serviceNumbers || []).filter(s => {
+                                  const sKey = (s || '').toString().trim().toUpperCase();
+                                  if (!sKey) return false;
+                                  if (excelServicesMap.has(sKey)) return true;
+                                  const digits = sKey.replace(/\D/g, '');
+                                  if (digits && (excelServicesMap.has(digits) || excelServicesMap.has(digits.replace(/^0+/, '')))) return true;
+                                  return false;
+                                }).length;
+                                const totalCount = t.serviceNumbers?.length || 0;
+
+                                return (
+                                  <div className="inline-flex flex-col items-center">
+                                    <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full border font-mono font-bold text-[11px] ${
+                                      reportedCount > 0
+                                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                                        : 'bg-slate-800/80 border-slate-700 text-slate-400'
+                                    }`}>
+                                      <Users className={`w-3 h-3 ${reportedCount > 0 ? 'text-emerald-400' : 'text-slate-400'}`} />
+                                      <span>{reportedCount} reportados</span>
+                                    </span>
+                                    {totalCount > reportedCount && (
+                                      <span className="text-[10px] text-slate-500 font-mono mt-0.5" title={`${totalCount - reportedCount} servicios no aparecen reportados en el Excel actual y han sido omitidos de la tabla`}>
+                                        de {totalCount} ({totalCount - reportedCount} omitidos)
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
 
                             {/* Afectación */}

@@ -2448,6 +2448,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           excelData={excelData}
           centrales={centrales}
           workGroups={workGroups}
+          onFileUpload={handleFileUpload}
+          isParsing={isParsing}
         />
       )}
 
