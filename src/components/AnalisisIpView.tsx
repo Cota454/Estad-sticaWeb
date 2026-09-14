@@ -145,6 +145,33 @@ export function matchDemoraFilter(days: number, filter: string): boolean {
   return true;
 }
 
+export interface CableMatrixRowItem {
+  id: string; // unique identifier `${central}:::${cableName}`
+  central: string;
+  cableName: string;
+  patterns?: string[];
+}
+
+/**
+ * Extracts a clean representative cable name for a consolidated service row
+ */
+export const getCableForItem = (item: IpCableRow): string => {
+  if (item.cableP && item.cableP.trim()) {
+    const cleanP = cleanCableName(item.cableP.split('/')[0]).trim();
+    if (cleanP && cleanP !== 'SIN CABLE') return cleanP;
+  }
+  if (item.cable && item.cable.trim()) {
+    const firstPart = item.cable.split(/[\/,;]+/)[0];
+    const cleanC = cleanCableName(firstPart).trim();
+    if (cleanC && cleanC !== 'SIN CABLE') return cleanC;
+  }
+  if (item.cableS && item.cableS.trim()) {
+    const cleanS = cleanCableName(item.cableS.split('/')[0]).trim();
+    if (cleanS && cleanS !== 'SIN CABLE') return cleanS;
+  }
+  return 'SIN CABLE';
+};
+
 interface AnalisisIpViewProps {
 
   onBackToHub: () => void;
@@ -677,6 +704,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     title: string;
     subtitle: string;
     matrixType: 'centrales' | 'zonas' | 'cables';
+    rowCentral?: string;
     rowName?: string;
     colName?: string;
   } | null>(null);
@@ -809,13 +837,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             if (!matchedZone || matchedZone.name !== rowName) return false;
           }
         } else if (matrixType === 'cables') {
+          if (selectedCellFilter.rowCentral) {
+            const itemCent = (item.central || '').trim().toUpperCase();
+            const targetCent = selectedCellFilter.rowCentral.trim().toUpperCase();
+            const centralParts = itemCent.split('/').map(p => p.trim()).filter(Boolean);
+            const matchCent = centralParts.includes(targetCent) || itemCent === targetCent;
+            if (!matchCent) return false;
+          }
           if (selectedNetworkTypeFilter === 'flexible') {
             const matchFlex = (item.flexibleAssignedName && item.flexibleAssignedName.toUpperCase() === rowName.toUpperCase()) ||
               (item.networkTypeLabel && item.networkTypeLabel.toUpperCase() === rowName.toUpperCase());
             if (!matchFlex) return false;
           } else {
-            const matchCable = matchCableInItemExact(item, rowName);
-            if (!matchCable) return false;
+            if (rowName === 'SIN CABLE') {
+              const itemCable = getCableForItem(item);
+              if (itemCable !== 'SIN CABLE') return false;
+            } else {
+              const matchCable = matchCableInItemExact(item, rowName) || getCableForItem(item) === rowName;
+              if (!matchCable) return false;
+            }
           }
         }
       }
@@ -879,7 +919,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       return;
     }
 
-    const { matrixType, rowName, colName } = selectedCellFilter;
+    const { matrixType, rowName, colName, rowCentral } = selectedCellFilter;
 
     const sanitize = (val: string) =>
       val
@@ -896,7 +936,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       } else if (matrixType === 'centrales') {
         fileName = `Servicios_Central_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
       } else {
-        fileName = `Servicios_Cable_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
+        if (rowCentral) {
+          fileName = `Servicios_Central_${sanitize(rowCentral)}_Cable_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
+        } else {
+          fileName = `Servicios_Cable_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
+        }
       }
     } else if (rowName) {
       if (matrixType === 'zonas') {
@@ -904,15 +948,21 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       } else if (matrixType === 'centrales') {
         fileName = `Servicios_Total_Central_${sanitize(rowName)}.xlsx`;
       } else {
-        fileName = `Servicios_Total_Cable_${sanitize(rowName)}.xlsx`;
+        if (rowCentral) {
+          fileName = `Servicios_Total_Central_${sanitize(rowCentral)}_Cable_${sanitize(rowName)}.xlsx`;
+        } else {
+          fileName = `Servicios_Total_Cable_${sanitize(rowName)}.xlsx`;
+        }
       }
     } else if (colName) {
       fileName = `Servicios_Total_Grupo_${sanitize(colName)}.xlsx`;
     } else {
       if (matrixType === 'zonas') {
         fileName = `Servicios_Total_General_Zonas.xlsx`;
-      } else {
+      } else if (matrixType === 'centrales') {
         fileName = `Servicios_Total_General_Centrales.xlsx`;
+      } else {
+        fileName = `Servicios_Total_General_Cables.xlsx`;
       }
     }
 
@@ -994,15 +1044,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   };
 
   // Matrix Cables vs GRUPO (Handles both Standard Cable Matrix and Strict Red Flexible Assigned Name Matrix)
+  // Each service in filteredIpCablesRows is accounted for once, ensuring grandTotal === filteredIpCablesRows.length
   const matrixCablesData = useMemo(() => {
     if (!filteredIpCablesRows.length && selectedNetworkTypeFilter !== 'flexible') {
       return {
         isFlexibleMode: false,
-        rows: [],
-        columns: [],
-        cellMap: {},
-        rowTotals: {},
-        colTotals: {},
+        rows: [] as CableMatrixRowItem[],
+        columns: [] as string[],
+        cellMap: {} as Record<string, Record<string, number>>,
+        rowTotals: {} as Record<string, number>,
+        colTotals: {} as Record<string, number>,
         grandTotal: 0,
         assignedRulesInfo: new Map<string, string[]>()
       };
@@ -1019,7 +1070,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     });
     const colsList = Array.from(groupsSet).sort();
 
-    // Mode A: Strict Red Flexible Mode (Groups by Assigned Name and sums each pattern)
+    // Mode A: Strict Red Flexible Mode (Groups by Central and Assigned Name)
     if (selectedNetworkTypeFilter === 'flexible') {
       const flexRules = cableRules.flexibleRules || [];
       const assignedRulesInfo = new Map<string, string[]>(); // assignedName -> array of patterns
@@ -1038,44 +1089,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       });
 
-      // Ensure only assigned names that exist in filtered items appear when filtered
-      const activeFlexibleNames = new Set<string>();
-      filteredIpCablesRows.forEach(item => {
-        let targetAssignedName = item.flexibleAssignedName;
-        if (!targetAssignedName) {
-          for (const [name, pats] of assignedRulesInfo.entries()) {
-            if (pats.some(p => matchCableInItemExact(item, p))) {
-              targetAssignedName = name;
-              break;
-            }
-          }
-        }
-        if (!targetAssignedName) {
-          targetAssignedName = item.networkTypeLabel || 'Red Flexible General';
-        }
-        if (targetAssignedName) {
-          activeFlexibleNames.add(targetAssignedName);
-        }
-      });
-
-      const rowsList = selectedCentralFilter !== 'all' || cableSearchTerm.trim() !== ''
-        ? Array.from(activeFlexibleNames)
-        : (activeFlexibleNames.size > 0 ? Array.from(activeFlexibleNames) : Array.from(assignedRulesInfo.keys()));
-
+      const rowMap = new Map<string, CableMatrixRowItem>();
       const cellMap: Record<string, Record<string, number>> = {};
       const rowTotals: Record<string, number> = {};
       const colTotals: Record<string, number> = {};
       let grandTotal = 0;
 
-      rowsList.forEach(r => {
-        cellMap[r] = {};
-        rowTotals[r] = 0;
-        colsList.forEach(c => { cellMap[r][c] = 0; });
-      });
       colsList.forEach(c => { colTotals[c] = 0; });
 
-      // Group rows strictly by Assigned Name; sum equals sum of each pattern
       filteredIpCablesRows.forEach(item => {
+        const central = (item.central || 'CENTRAL GENERAL').trim().toUpperCase();
         let targetAssignedName = item.flexibleAssignedName;
 
         if (!targetAssignedName) {
@@ -1088,35 +1111,42 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
 
         if (!targetAssignedName) {
-          targetAssignedName = item.networkTypeLabel || rowsList[0] || 'Red Flexible General';
+          targetAssignedName = item.networkTypeLabel || 'Red Flexible General';
         }
 
-        if (!cellMap[targetAssignedName]) {
-          cellMap[targetAssignedName] = {};
-          rowTotals[targetAssignedName] = 0;
-          if (!rowsList.includes(targetAssignedName)) rowsList.push(targetAssignedName);
-          colsList.forEach(c => { cellMap[targetAssignedName][c] = 0; });
+        const rowId = `${central}:::${targetAssignedName}`;
+        if (!rowMap.has(rowId)) {
+          rowMap.set(rowId, {
+            id: rowId,
+            central,
+            cableName: targetAssignedName,
+            patterns: assignedRulesInfo.get(targetAssignedName) || []
+          });
+          cellMap[rowId] = {};
+          rowTotals[rowId] = 0;
+          colsList.forEach(c => { cellMap[rowId][c] = 0; });
         }
 
-        const groupsInItem = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim());
-        groupsInItem.forEach(g => {
-          if (cellMap[targetAssignedName][g] === undefined) cellMap[targetAssignedName][g] = 0;
-          if (colTotals[g] === undefined) colTotals[g] = 0;
+        const grp = (item.grupo || 'GRUPO GENERAL').split('/')[0].trim();
+        if (!colsList.includes(grp)) {
+          colsList.push(grp);
+          colTotals[grp] = 0;
+        }
 
-          cellMap[targetAssignedName][g] += 1;
-          rowTotals[targetAssignedName] += 1;
-          colTotals[g] += 1;
-          grandTotal += 1;
-        });
+        cellMap[rowId][grp] = (cellMap[rowId][grp] || 0) + 1;
+        rowTotals[rowId] = (rowTotals[rowId] || 0) + 1;
+        colTotals[grp] = (colTotals[grp] || 0) + 1;
+        grandTotal += 1;
       });
 
-      const sortedRowsList = [...rowsList].sort((a, b) => {
+      const rowsList = Array.from(rowMap.values());
+      const sortedRowsList = rowsList.sort((a, b) => {
         if (cableSortOrder === 'desc') {
-          return (rowTotals[b] || 0) - (rowTotals[a] || 0) || a.localeCompare(b);
+          return (rowTotals[b.id] || 0) - (rowTotals[a.id] || 0) || a.central.localeCompare(b.central) || a.cableName.localeCompare(b.cableName);
         } else if (cableSortOrder === 'asc') {
-          return (rowTotals[a] || 0) - (rowTotals[b] || 0) || a.localeCompare(b);
+          return (rowTotals[a.id] || 0) - (rowTotals[b.id] || 0) || a.central.localeCompare(b.central) || a.cableName.localeCompare(b.cableName);
         } else {
-          return a.localeCompare(b);
+          return a.central.localeCompare(b.central) || a.cableName.localeCompare(b.cableName);
         }
       });
 
@@ -1132,73 +1162,51 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       };
     }
 
-    // Mode B: Standard Cable Matrix
-    const cablesSet = new Set<string>();
-    const isSearchingCable = cableSearchMode === 'cable' && cableSearchTerm.trim() !== '';
-    const targetCableQuery = cableSearchTerm.trim().toUpperCase();
-
-    filteredIpCablesRows.forEach(item => {
-      if (item.cable) {
-        item.cable.split(/[\/,;]+/).forEach(c => {
-          const clean = cleanCableName(c.replace(/\s*\([^)]*\)/g, '')).trim();
-          if (clean && clean !== 'SIN CABLE') {
-            if (!isSearchingCable || isCableExactMatch(clean, targetCableQuery)) {
-              cablesSet.add(clean);
-            }
-          }
-        });
-      }
-    });
-
-    const rowsList = Array.from(cablesSet);
+    // Mode B: Standard Cable Matrix (Groups by Central and Cable)
+    const rowMap = new Map<string, CableMatrixRowItem>();
     const cellMap: Record<string, Record<string, number>> = {};
     const rowTotals: Record<string, number> = {};
     const colTotals: Record<string, number> = {};
     let grandTotal = 0;
 
-    rowsList.forEach(r => {
-      cellMap[r] = {};
-      rowTotals[r] = 0;
-      colsList.forEach(c => { cellMap[r][c] = 0; });
-    });
-
     colsList.forEach(c => { colTotals[c] = 0; });
 
     filteredIpCablesRows.forEach(item => {
-      const cablesInItem = (item.cable || 'CABLE GENERAL').split(/[\/,;]+/).map(c => cleanCableName(c.replace(/\s*\([^)]*\)/g, '')).trim()).filter(Boolean);
-      const groupsInItem = (item.grupo || 'GRUPO GENERAL').split('/').map(g => g.trim()).filter(Boolean);
+      const central = (item.central || 'CENTRAL GENERAL').trim().toUpperCase();
+      const cableName = getCableForItem(item);
+      const rowId = `${central}:::${cableName}`;
 
-      cablesInItem.forEach(c => {
-        if (isSearchingCable && !isCableExactMatch(c, targetCableQuery)) {
-          return;
-        }
-
-        groupsInItem.forEach(g => {
-          if (!cellMap[c]) {
-            cellMap[c] = {};
-            rowTotals[c] = 0;
-            if (!rowsList.includes(c)) rowsList.push(c);
-          }
-          if (!colsList.includes(g)) {
-            colsList.push(g);
-            colTotals[g] = 0;
-          }
-
-          cellMap[c][g] = (cellMap[c][g] || 0) + 1;
-          rowTotals[c] = (rowTotals[c] || 0) + 1;
-          colTotals[g] = (colTotals[g] || 0) + 1;
-          grandTotal += 1;
+      if (!rowMap.has(rowId)) {
+        rowMap.set(rowId, {
+          id: rowId,
+          central,
+          cableName
         });
-      });
+        cellMap[rowId] = {};
+        rowTotals[rowId] = 0;
+        colsList.forEach(c => { cellMap[rowId][c] = 0; });
+      }
+
+      const grp = (item.grupo || 'GRUPO GENERAL').split('/')[0].trim();
+      if (!colsList.includes(grp)) {
+        colsList.push(grp);
+        colTotals[grp] = 0;
+      }
+
+      cellMap[rowId][grp] = (cellMap[rowId][grp] || 0) + 1;
+      rowTotals[rowId] = (rowTotals[rowId] || 0) + 1;
+      colTotals[grp] = (colTotals[grp] || 0) + 1;
+      grandTotal += 1;
     });
 
-    const sortedRowsList = [...rowsList].sort((a, b) => {
+    const rowsList = Array.from(rowMap.values());
+    const sortedRowsList = rowsList.sort((a, b) => {
       if (cableSortOrder === 'desc') {
-        return (rowTotals[b] || 0) - (rowTotals[a] || 0) || a.localeCompare(b);
+        return (rowTotals[b.id] || 0) - (rowTotals[a.id] || 0) || a.central.localeCompare(b.central) || a.cableName.localeCompare(b.cableName);
       } else if (cableSortOrder === 'asc') {
-        return (rowTotals[a] || 0) - (rowTotals[b] || 0) || a.localeCompare(b);
+        return (rowTotals[a.id] || 0) - (rowTotals[b.id] || 0) || a.central.localeCompare(b.central) || a.cableName.localeCompare(b.cableName);
       } else {
-        return a.localeCompare(b);
+        return a.central.localeCompare(b.central) || a.cableName.localeCompare(b.cableName);
       }
     });
 
@@ -1212,7 +1220,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       grandTotal,
       assignedRulesInfo: new Map<string, string[]>()
     };
-  }, [filteredIpCablesRows, cableSortOrder, selectedNetworkTypeFilter, cableRules.flexibleRules, excelData?.uniqueGroups, cableSearchMode, cableSearchTerm]);
+  }, [filteredIpCablesRows, cableSortOrder, selectedNetworkTypeFilter, cableRules.flexibleRules, excelData?.uniqueGroups]);
 
   // Copy Headers & Rows for Matrix Centrales x Grupos
   const copyCentralesHeaders = useMemo(() => {
@@ -1256,42 +1264,134 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return [...baseRows, totalRow];
   }, [matrixZonasData]);
 
-  // Copy Headers & Rows for Matrix Cables x Grupos
+  // Copy Headers & Rows for Matrix Cables x Grupos (Includes Central Telefónica)
   const copyCablesHeaders = useMemo(() => {
     const headerTitle = selectedNetworkTypeFilter === 'flexible' ? 'Nombre Asignado (Red Flexible)' : 'Nombre de Cable';
-    return [headerTitle, ...matrixCablesData.columns, 'Total General'];
+    return ['Central Telefónica', headerTitle, ...matrixCablesData.columns, 'Total General'];
   }, [matrixCablesData.columns, selectedNetworkTypeFilter]);
 
   const copyCablesRows = useMemo(() => {
     const baseRows = matrixCablesData.rows.map(r => [
-      r,
-      ...matrixCablesData.columns.map(c => matrixCablesData.cellMap[r]?.[c] || 0),
-      matrixCablesData.rowTotals[r] || 0
+      r.central,
+      r.cableName,
+      ...matrixCablesData.columns.map(c => matrixCablesData.cellMap[r.id]?.[c] || 0),
+      matrixCablesData.rowTotals[r.id] || 0
     ]);
     const totalRowLabel = selectedNetworkTypeFilter === 'flexible' ? 'TOTAL GENERAL RED FLEXIBLE' : 'TOTAL GENERAL CABLES';
     const totalRow = [
       totalRowLabel,
+      '',
       ...matrixCablesData.columns.map(c => matrixCablesData.colTotals[c] || 0),
       matrixCablesData.grandTotal
     ];
     return [...baseRows, totalRow];
   }, [matrixCablesData, selectedNetworkTypeFilter]);
 
+  // Handler to export the Tab 2 IP Cables table to styled Excel (.xlsx)
+  const handleDownloadCablesMatrixExcel = () => {
+    if (!excelData || matrixCablesData.rows.length === 0) {
+      alert('No hay datos disponibles en la tabla de IP Cables para exportar.');
+      return;
+    }
+
+    const sanitize = (val: string) =>
+      val
+        .trim()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9_\-]/g, '_')
+        .replace(/_+/g, '_');
+
+    let fileName = 'Matriz_IP_Cables.xlsx';
+    if (selectedCentralFilter !== 'all') {
+      fileName = `Matriz_IP_Cables_Central_${sanitize(selectedCentralFilter)}.xlsx`;
+    } else if (selectedNetworkTypeFilter === 'flexible') {
+      fileName = 'Matriz_IP_Red_Flexible.xlsx';
+    } else if (selectedNetworkTypeFilter !== 'all') {
+      fileName = `Matriz_IP_Cables_${sanitize(selectedNetworkTypeFilter)}.xlsx`;
+    }
+
+    const cableColTitle = selectedNetworkTypeFilter === 'flexible' ? 'Nombre Asignado (Red Flexible)' : 'Nombre de Cable';
+
+    const exportData = matrixCablesData.rows.map(row => {
+      const rowObj: Record<string, any> = {
+        'Central Telefónica': row.central,
+        [cableColTitle]: row.cableName
+      };
+
+      matrixCablesData.columns.forEach(col => {
+        rowObj[col] = matrixCablesData.cellMap[row.id]?.[col] || 0;
+      });
+
+      rowObj['Total General'] = matrixCablesData.rowTotals[row.id] || 0;
+      return rowObj;
+    });
+
+    // Summary / Total General Row
+    const totalRowObj: Record<string, any> = {
+      'Central Telefónica': 'TOTAL GENERAL',
+      [cableColTitle]: ''
+    };
+    matrixCablesData.columns.forEach(col => {
+      totalRowObj[col] = matrixCablesData.colTotals[col] || 0;
+    });
+    totalRowObj['Total General'] = matrixCablesData.grandTotal;
+    exportData.push(totalRowObj);
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+
+    // Header styling
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '065F46' } }, // Emerald 800
+          font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    // Last row (TOTAL GENERAL) styling
+    const lastR = range.e.r;
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastR, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '0F172A' } }, // Slate 900
+          font: { bold: true, color: { rgb: '34D399' }, sz: 11 }, // Emerald 400
+          alignment: { horizontal: C <= 1 ? 'left' : 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    // Responsive Column Widths
+    const colWidths = [
+      { wch: 22 }, // Central Telefónica
+      { wch: 26 }, // Nombre de Cable
+      ...matrixCablesData.columns.map(c => ({ wch: Math.max(c.length + 4, 12) })),
+      { wch: 15 } // Total General
+    ];
+    worksheet['!cols'] = colWidths;
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'IP Cables');
+    XLSX.writeFile(workbook, fileName);
+  };
+
   const filteredCableGroups = useMemo(() => {
-    return matrixCablesData.rows.map(rowName => {
-      const rowTotal = matrixCablesData.rowTotals[rowName] || 0;
-      const sampleItem = filteredIpCablesRows.find(item => 
-        (selectedNetworkTypeFilter === 'flexible' && (item.flexibleAssignedName === rowName || item.networkTypeLabel === rowName)) ||
-        (item.cable && item.cable.includes(rowName))
-      );
+    return matrixCablesData.rows.map(row => {
+      const rowTotal = matrixCablesData.rowTotals[row.id] || 0;
       return {
-        central: sampleItem?.central || (selectedNetworkTypeFilter === 'flexible' ? 'Varios / Red Flexible' : 'CENTRAL GENERAL'),
-        cableName: rowName,
-        networkTypeLabel: sampleItem?.networkTypeLabel || (selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible' : 'Flexible'),
+        central: row.central,
+        cableName: row.cableName,
+        networkTypeLabel: selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible' : 'Cable',
         itemsCount: rowTotal
       };
     });
-  }, [matrixCablesData, filteredIpCablesRows, selectedNetworkTypeFilter]);
+  }, [matrixCablesData, selectedNetworkTypeFilter]);
 
   return (
     <div className="space-y-6 font-sans animate-in fade-in duration-300">
@@ -2312,6 +2412,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   </button>
                 )}
                 <CopyTableButton headers={copyCablesHeaders} rows={copyCablesRows} label="Copiar Tabla" />
+                <button
+                  type="button"
+                  onClick={handleDownloadCablesMatrixExcel}
+                  className="flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-900/30 cursor-pointer active:scale-95"
+                  title="Descargar tabla completa de IP Cables en formato Excel (.xlsx)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Excel</span>
+                </button>
               </div>
             </div>
 
@@ -2500,27 +2609,41 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
           {/* Matrix Table */}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <span className="text-xs font-bold text-slate-400">
                 {selectedNetworkTypeFilter === 'flexible' ? (
                   <span>
-                    Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> nombres asignados de Red Flexible. El total de cada fila equivale a la suma de cada uno de sus patrones asociados.
+                    Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> registros de Red Flexible por Central.
                   </span>
                 ) : (
                   <span>
-                    Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> cables filtrados.
+                    Mostrando <strong className="text-white">{matrixCablesData.rows.length}</strong> cables agrupados por Central Telefónica. Total General: <strong className="text-emerald-400 font-mono text-sm">{matrixCablesData.grandTotal}</strong> servicios.
                   </span>
                 )}
               </span>
-              <span className="text-[11px] text-slate-500 italic">
-                * Haga clic en cualquier celda o total para inspeccionar el detalle de servicios.
-              </span>
+              <div className="flex items-center space-x-2.5">
+                <button
+                  type="button"
+                  onClick={handleDownloadCablesMatrixExcel}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-900/30 cursor-pointer active:scale-95 border border-emerald-400/40"
+                  title="Descargar tabla completa de IP Cables en archivo Excel (.xlsx)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Excel</span>
+                </button>
+                <span className="text-[11px] text-slate-500 italic hidden md:inline">
+                  * Haga clic en cualquier celda o total para inspeccionar el detalle de servicios.
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
               <table className="w-full text-xs text-left text-slate-300">
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
+                    <th className="py-3.5 px-4 font-black text-cyan-300">
+                      Central Telefónica
+                    </th>
                     <th className="py-3.5 px-4 font-black text-white">
                       {selectedNetworkTypeFilter === 'flexible' ? 'Nombre Asignado (Red Flexible)' : 'Nombre de Cable'}
                     </th>
@@ -2533,21 +2656,26 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {matrixCablesData.rows.length === 0 ? (
                     <tr>
-                      <td colSpan={matrixCablesData.columns.length + 2} className="py-8 text-center text-slate-500 italic">
+                      <td colSpan={matrixCablesData.columns.length + 3} className="py-8 text-center text-slate-500 italic">
                         {selectedNetworkTypeFilter === 'flexible' && (!cableRules.flexibleRules || cableRules.flexibleRules.length === 0)
                           ? 'No hay reglas de Red Flexible configuradas en la pestaña "4. Ajustes de Cables". Cree una regla para asociar patrones.'
                           : 'No se encontraron registros que coincidan con los filtros seleccionados.'}
                       </td>
                     </tr>
                   ) : (
-                    matrixCablesData.rows.map(rowKey => {
-                      const rowTotal = matrixCablesData.rowTotals[rowKey] || 0;
-                      const patternsList = selectedNetworkTypeFilter === 'flexible'
-                        ? matrixCablesData.assignedRulesInfo?.get(rowKey) || []
-                        : [];
+                    matrixCablesData.rows.map(row => {
+                      const rowTotal = matrixCablesData.rowTotals[row.id] || 0;
+                      const patternsList = row.patterns || [];
 
                       return (
-                        <tr key={rowKey} className="hover:bg-slate-800/50 transition-colors">
+                        <tr key={row.id} className="hover:bg-slate-800/50 transition-colors">
+                          {/* Columna Adicional: Central Telefónica a la que pertenece */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <span className="bg-slate-800/90 text-cyan-300 font-mono text-[11px] font-bold px-2.5 py-1 rounded-lg border border-slate-700/80 inline-block shadow-sm">
+                              {row.central}
+                            </span>
+                          </td>
+                          {/* Columna: Nombre de Cable */}
                           <td className="py-3.5 px-4">
                             <div className="flex flex-col space-y-0.5">
                               <button
@@ -2555,10 +2683,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 onClick={() => {
                                   if (rowTotal > 0) {
                                     setSelectedCellFilter({
-                                      title: rowKey,
+                                      title: `${row.cableName} (${row.central})`,
                                       subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible Asignada (Todos los Grupos)' : 'Cable (Todos los Grupos)',
                                       matrixType: 'cables',
-                                      rowName: rowKey
+                                      rowCentral: row.central,
+                                      rowName: row.cableName
                                     });
                                     setCellModalSearch('');
                                   }
@@ -2570,7 +2699,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 ) : (
                                   <Cable className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                                 )}
-                                <span>{rowKey}</span>
+                                <span>{row.cableName}</span>
                               </button>
 
                               {patternsList.length > 0 && (
@@ -2581,8 +2710,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                               )}
                             </div>
                           </td>
+                          {/* Columnas por Grupo */}
                           {matrixCablesData.columns.map(colName => {
-                            const val = matrixCablesData.cellMap[rowKey]?.[colName] || 0;
+                            const val = matrixCablesData.cellMap[row.id]?.[colName] || 0;
                             return (
                               <td key={colName} className="py-3.5 px-4 text-center font-mono">
                                 {val > 0 ? (
@@ -2590,10 +2720,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                     type="button"
                                     onClick={() => {
                                       setSelectedCellFilter({
-                                        title: `${rowKey} · ${colName}`,
+                                        title: `${row.cableName} · ${colName} (${row.central})`,
                                         subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Red Flexible Asignada' : 'Incidencias de Cable',
                                         matrixType: 'cables',
-                                        rowName: rowKey,
+                                        rowCentral: row.central,
+                                        rowName: row.cableName,
                                         colName: colName
                                       });
                                       setCellModalSearch('');
@@ -2608,16 +2739,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                               </td>
                             );
                           })}
+                          {/* Total General de la Fila */}
                           <td className="py-3.5 px-4 text-center font-mono font-black text-amber-400 text-sm bg-slate-900/40">
                             {rowTotal > 0 ? (
                               <button
                                 type="button"
                                 onClick={() => {
                                   setSelectedCellFilter({
-                                    title: rowKey,
+                                    title: `${row.cableName} (${row.central})`,
                                     subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Total Red Flexible Asignada' : 'Total Incidencias Cable',
                                     matrixType: 'cables',
-                                    rowName: rowKey
+                                    rowCentral: row.central,
+                                    rowName: row.cableName
                                   });
                                   setCellModalSearch('');
                                 }}
@@ -2636,8 +2769,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </tbody>
                 <tfoot className="bg-slate-900 font-black text-white border-t-2 border-slate-700">
                   <tr>
-                    <td className="py-3.5 px-4 uppercase text-[11px] text-slate-300 font-mono">
-                      {selectedNetworkTypeFilter === 'flexible' ? 'TOTAL GENERAL RED FLEXIBLE' : 'TOTAL CABLES FILTRADOS'}
+                    <td colSpan={2} className="py-3.5 px-4 uppercase text-[11px] text-slate-300 font-mono">
+                      {selectedNetworkTypeFilter === 'flexible' ? 'TOTAL GENERAL RED FLEXIBLE' : 'TOTAL GENERAL CABLES'}
                     </td>
                     {matrixCablesData.columns.map(colName => (
                       <td key={colName} className="py-3.5 px-4 text-center font-mono text-emerald-400 text-sm">
@@ -2645,7 +2778,23 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       </td>
                     ))}
                     <td className="py-3.5 px-4 text-center font-mono text-amber-400 text-base font-black bg-slate-950">
-                      {matrixCablesData.grandTotal}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (matrixCablesData.grandTotal > 0) {
+                            setSelectedCellFilter({
+                              title: 'Total General IP Cables',
+                              subtitle: selectedNetworkTypeFilter === 'flexible' ? 'Todos los registros de Red Flexible' : 'Todos los Cables y Centrales',
+                              matrixType: 'cables'
+                            });
+                            setCellModalSearch('');
+                          }
+                        }}
+                        className="hover:underline cursor-pointer"
+                        title="Ver todos los servicios de la tabla"
+                      >
+                        {matrixCablesData.grandTotal}
+                      </button>
                     </td>
                   </tr>
                 </tfoot>
