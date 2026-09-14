@@ -17,7 +17,8 @@ import {
   ArrowRight,
   Filter,
   PlusCircle,
-  Clock
+  Clock,
+  ShieldCheck
 } from 'lucide-react';
 import { CablePendingTask, IpCableRow } from '../types/ipCablesTypes';
 
@@ -26,7 +27,13 @@ interface CableBatchTasksImportModalProps {
   onClose: () => void;
   onImport: (
     updatedTasks: CablePendingTask[],
-    stats: { createdCount: number; mergedCount: number; totalServices: number }
+    stats: {
+      createdCount: number;
+      mergedCount: number;
+      totalServices: number;
+      skippedDuplicatesCount: number;
+      mergedServicesCount: number;
+    }
   ) => void;
   existingTasks: CablePendingTask[];
   excelServicesMap: Map<string, IpCableRow>;
@@ -52,6 +59,8 @@ export interface GroupedBatchTaskPreview {
   afectacionFechaFin?: string;
   cableSource: 'excel_row' | 'report_auto' | 'default';
   matchedExistingTask?: CablePendingTask;
+  duplicateServicesInBatchCount: number;
+  duplicateServicesWithExistingCount: number;
 }
 
 const EXCEL_HEADER_WORDS = new Set([
@@ -257,7 +266,7 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
       const groupKey = `${normTask.toUpperCase()}___${normCable}___${normAfec}`;
 
       if (!map.has(groupKey)) {
-        // Check if matches existing task
+        // Check if matches existing task (matching by taskName and cable, case-insensitive)
         const matched = existingTasks.find(
           t => t.taskName.trim().toUpperCase() === normTask.toUpperCase() &&
                t.cable.trim().toUpperCase() === normCable
@@ -273,13 +282,30 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
           afectacionFechaInicio: fechaInicio || undefined,
           afectacionFechaFin: fechaFin || undefined,
           cableSource,
-          matchedExistingTask: matched
+          matchedExistingTask: matched,
+          duplicateServicesInBatchCount: 0,
+          duplicateServicesWithExistingCount: 0
         });
       }
 
       const grp = map.get(groupKey)!;
-      if (!grp.services.includes(entry.service)) {
-        grp.services.push(entry.service);
+      const cleanService = entry.service.trim();
+
+      // Check if service already exists inside this grouped task in the batch
+      if (grp.services.includes(cleanService)) {
+        grp.duplicateServicesInBatchCount += 1;
+      } else {
+        grp.services.push(cleanService);
+
+        // If this group matches an existing task, check if the service is already present in that task
+        if (grp.matchedExistingTask && grp.matchedExistingTask.serviceNumbers) {
+          const alreadyInExisting = grp.matchedExistingTask.serviceNumbers.some(
+            s => s.trim().toUpperCase() === cleanService.toUpperCase()
+          );
+          if (alreadyInExisting) {
+            grp.duplicateServicesWithExistingCount += 1;
+          }
+        }
       }
     });
 
@@ -294,14 +320,28 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
     globalFechaFin
   ]);
 
-  // Overall batch statistics
+  // Overall batch statistics including deduplication metrics
   const batchStats = useMemo(() => {
     const totalLines = parsedEntries.length;
-    const uniqueServices = new Set(parsedEntries.map(e => e.service)).size;
+    const uniqueServices = new Set(parsedEntries.map(e => e.service.trim())).size;
     const tasksCount = groupedTasks.length;
     const withAfectacionCount = groupedTasks.filter(g => g.hasAfectacion).length;
     const toMergeCount = groupedTasks.filter(g => g.matchedExistingTask).length;
     const newTasksCount = tasksCount - toMergeCount;
+
+    // Total intra-batch duplicated service rows skipped
+    const batchDuplicateRowsSkipped = groupedTasks.reduce(
+      (acc, g) => acc + g.duplicateServicesInBatchCount,
+      0
+    );
+
+    // Total services that are already present in existing tasks being merged
+    const existingDuplicatesSkipped = groupedTasks.reduce(
+      (acc, g) => acc + (g.matchedExistingTask ? g.duplicateServicesWithExistingCount : 0),
+      0
+    );
+
+    const totalDuplicatesPrevented = batchDuplicateRowsSkipped + (mergeWithExisting ? existingDuplicatesSkipped : 0);
 
     return {
       totalLines,
@@ -309,9 +349,12 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
       tasksCount,
       withAfectacionCount,
       toMergeCount,
-      newTasksCount
+      newTasksCount,
+      batchDuplicateRowsSkipped,
+      existingDuplicatesSkipped,
+      totalDuplicatesPrevented
     };
-  }, [parsedEntries, groupedTasks]);
+  }, [parsedEntries, groupedTasks, mergeWithExisting]);
 
   // Filtered preview
   const filteredPreviewTasks = useMemo(() => {
@@ -362,20 +405,27 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
     let createdCount = 0;
     let mergedCount = 0;
     let totalServicesCount = 0;
+    let mergedServicesCount = 0;
 
     groupedTasks.forEach(grp => {
       totalServicesCount += grp.services.length;
 
       if (mergeWithExisting && grp.matchedExistingTask) {
-        // Merge into existing task
+        // Merge into existing task with strict Set deduplication
         updatedTasks = updatedTasks.map(t => {
           if (t.id === grp.matchedExistingTask!.id) {
-            const currentServices = t.serviceNumbers || [];
-            const unionSet = new Set([...currentServices, ...grp.services]);
+            const currentServices = (t.serviceNumbers || []).map(s => s.trim());
+            const currentUpperSet = new Set(currentServices.map(s => s.toUpperCase()));
+            
+            // Filter only truly new services
+            const newlyAdded = grp.services.filter(s => !currentUpperSet.has(s.trim().toUpperCase()));
+            mergedServicesCount += newlyAdded.length;
+
+            const combinedServices = [...currentServices, ...newlyAdded];
             mergedCount++;
             return {
               ...t,
-              serviceNumbers: Array.from(unionSet),
+              serviceNumbers: combinedServices,
               hasAfectacion: grp.hasAfectacion ? true : t.hasAfectacion,
               afectacionMotivo: grp.hasAfectacion ? (grp.afectacionMotivo || t.afectacionMotivo) : t.afectacionMotivo,
               afectacionFechaInicio: grp.afectacionFechaInicio || t.afectacionFechaInicio,
@@ -386,14 +436,15 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
           return t;
         });
       } else {
-        // Create new task
+        // Create new task ensuring deduplicated services
+        const uniqueTaskServices: string[] = Array.from(new Set<string>(grp.services.map(s => s.trim())));
         const newTask: CablePendingTask = {
           id: `task-batch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           cable: grp.cable,
           taskName: grp.taskName,
           status: 'pending',
           priority: defaultPriority,
-          serviceNumbers: grp.services,
+          serviceNumbers: uniqueTaskServices,
           hasAfectacion: grp.hasAfectacion,
           afectacionMotivo: grp.afectacionMotivo,
           afectacionFechaInicio: grp.afectacionFechaInicio,
@@ -408,7 +459,9 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
     onImport(updatedTasks, {
       createdCount,
       mergedCount,
-      totalServices: totalServicesCount
+      totalServices: totalServicesCount,
+      skippedDuplicatesCount: batchStats.totalDuplicatesPrevented,
+      mergedServicesCount
     });
 
     onClose();
@@ -630,7 +683,7 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
 
           {/* Tarjetas de Resumen KPI de la Carga Masiva */}
           {parsedEntries.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-2xl">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                   Filas Procesadas
@@ -662,6 +715,18 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
                       ({batchStats.toMergeCount} a fusionar)
                     </span>
                   )}
+                </div>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-2xl">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Duplicados Filtrados
+                </span>
+                <div className="flex items-center space-x-1 mt-0.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xl font-black font-mono text-emerald-300">
+                    {batchStats.totalDuplicatesPrevented}
+                  </span>
                 </div>
               </div>
 
@@ -753,6 +818,12 @@ export const CableBatchTasksImportModal: React.FC<CableBatchTasksImportModalProp
                             <Users className="w-3 h-3 text-emerald-400" />
                             <span>{grp.services.length}</span>
                           </span>
+                          {(grp.duplicateServicesInBatchCount > 0 || (mergeWithExisting && grp.duplicateServicesWithExistingCount > 0)) && (
+                            <div className="text-[10px] text-amber-400 font-mono mt-0.5 flex items-center justify-center space-x-0.5" title="Servicios repetidos omitidos automáticamente">
+                              <ShieldCheck className="w-2.5 h-2.5 text-emerald-400" />
+                              <span>-{grp.duplicateServicesInBatchCount + (mergeWithExisting ? grp.duplicateServicesWithExistingCount : 0)} dup</span>
+                            </div>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           {grp.hasAfectacion ? (

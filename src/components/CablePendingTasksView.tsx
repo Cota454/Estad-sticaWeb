@@ -201,12 +201,29 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   // Handler al confirmar la carga masiva desde Excel
   const handleBatchImportSuccess = (
     updatedTasks: CablePendingTask[],
-    stats: { createdCount: number; mergedCount: number; totalServices: number }
+    stats: {
+      createdCount: number;
+      mergedCount: number;
+      totalServices: number;
+      skippedDuplicatesCount?: number;
+      mergedServicesCount?: number;
+    }
   ) => {
     handleUpdateTasks(updatedTasks);
-    const msg = `¡Carga masiva completada exitosamente! Se procesaron ${stats.totalServices} servicios: ${stats.createdCount} tareas nuevas creadas${
-      stats.mergedCount > 0 ? ` y ${stats.mergedCount} tareas existentes consolidadas` : ''
-    }.`;
+    const parts = [
+      `¡Carga masiva completada! Se procesaron ${stats.totalServices} registros`
+    ];
+    if (stats.createdCount > 0) {
+      parts.push(`${stats.createdCount} tarea${stats.createdCount === 1 ? '' : 's'} nueva${stats.createdCount === 1 ? '' : 's'}`);
+    }
+    if (stats.mergedCount > 0) {
+      parts.push(`${stats.mergedCount} tarea${stats.mergedCount === 1 ? '' : 's'} consolidada${stats.mergedCount === 1 ? '' : 's'}`);
+    }
+    if (stats.skippedDuplicatesCount && stats.skippedDuplicatesCount > 0) {
+      parts.push(`${stats.skippedDuplicatesCount} filas repetidas filtradas`);
+    }
+
+    const msg = parts.join(' • ');
     setBatchSuccessMsg(msg);
     setTimeout(() => setBatchSuccessMsg(''), 7000);
   };
@@ -1239,22 +1256,48 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       });
       handleUpdateTasks(updated);
     } else {
-      // Create new
-      const newTask: CablePendingTask = {
-        id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        cable: formCable.trim(),
-        taskName: formTaskName.trim(),
-        terminalDireccion: formTerminalDir.trim() || undefined,
-        status: formStatus,
-        priority: formPriority,
-        serviceNumbers: finalServices,
-        hasAfectacion: formHasAfectacion,
-        afectacionMotivo: formHasAfectacion ? formAfectacionMotivo.trim() : undefined,
-        afectacionFechaInicio: formHasAfectacion ? formAfectacionFechaInicio || undefined : undefined,
-        afectacionFechaFin: formHasAfectacion ? formAfectacionFechaFin || undefined : undefined,
-        createdAt: new Date().toISOString()
-      };
-      handleUpdateTasks([newTask, ...tasks]);
+      // Create new: check if an identical task (same taskName and cable) already exists to offer seamless consolidation
+      const existingIdenticalTask = tasks.find(
+        t => t.taskName.trim().toUpperCase() === formTaskName.trim().toUpperCase() &&
+             t.cable.trim().toUpperCase() === formCable.trim().toUpperCase()
+      );
+
+      if (existingIdenticalTask) {
+        // Merge into existing task with deduplicated services
+        const existingServices = existingIdenticalTask.serviceNumbers || [];
+        const unionSet = new Set([...existingServices, ...finalServices]);
+        const updated = tasks.map(t => {
+          if (t.id === existingIdenticalTask.id) {
+            return {
+              ...t,
+              serviceNumbers: Array.from(unionSet),
+              hasAfectacion: formHasAfectacion ? true : t.hasAfectacion,
+              afectacionMotivo: formHasAfectacion ? formAfectacionMotivo.trim() : t.afectacionMotivo,
+              afectacionFechaInicio: formHasAfectacion ? (formAfectacionFechaInicio || t.afectacionFechaInicio) : t.afectacionFechaInicio,
+              afectacionFechaFin: formHasAfectacion ? (formAfectacionFechaFin || t.afectacionFechaFin) : t.afectacionFechaFin,
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return t;
+        });
+        handleUpdateTasks(updated);
+      } else {
+        const newTask: CablePendingTask = {
+          id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          cable: formCable.trim(),
+          taskName: formTaskName.trim(),
+          terminalDireccion: formTerminalDir.trim() || undefined,
+          status: formStatus,
+          priority: formPriority,
+          serviceNumbers: finalServices,
+          hasAfectacion: formHasAfectacion,
+          afectacionMotivo: formHasAfectacion ? formAfectacionMotivo.trim() : undefined,
+          afectacionFechaInicio: formHasAfectacion ? formAfectacionFechaInicio || undefined : undefined,
+          afectacionFechaFin: formHasAfectacion ? formAfectacionFechaFin || undefined : undefined,
+          createdAt: new Date().toISOString()
+        };
+        handleUpdateTasks([newTask, ...tasks]);
+      }
     }
 
     setIsModalOpen(false);

@@ -185,26 +185,60 @@ export function matchCableInItemExact(item: IpCableRow, targetPattern: string): 
 
 /**
  * Extracts the Terminal value from an item's rawRowData looking for Terminal column aliases.
+ * Handles uppercase, lowercase, with/without accent (TERMINAL, Terminal, Términal, etc.)
  */
 export function extractTerminalFromItem(item: IpCableRow): string {
-  if (!item.rawRowData) return '';
+  if (!item || !item.rawRowData) return '';
   const raw = item.rawRowData;
   const keys = Object.keys(raw);
   
-  // Direct match for "TERMINAL"
-  const directKey = keys.find(k => k.trim().toUpperCase() === 'TERMINAL');
-  if (directKey && raw[directKey] !== undefined && raw[directKey] !== null && String(raw[directKey]).trim() !== '') {
-    return String(raw[directKey]).trim();
+  // Direct exact match
+  const exactKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return norm === 'terminal' || norm === 'term' || norm === 'cajaterminal' || norm === 'caja';
+  });
+  if (exactKey && raw[exactKey] !== undefined && raw[exactKey] !== null && String(raw[exactKey]).trim() !== '') {
+    return String(raw[exactKey]).trim();
   }
 
-  // Alias matches
+  // Alias / partial matches
   const aliasKey = keys.find(k => {
-    const clean = k.trim().toUpperCase();
-    return clean === 'TERM' || clean.includes('TERMINAL') || clean === 'CAJA' || clean === 'CAJA TERMINAL';
+    const norm = normalizeHeader(k);
+    return norm.includes('terminal');
   });
 
   if (aliasKey && raw[aliasKey] !== undefined && raw[aliasKey] !== null && String(raw[aliasKey]).trim() !== '') {
     return String(raw[aliasKey]).trim();
+  }
+
+  return '';
+}
+
+/**
+ * Extracts the Dirección value from an item's rawRowData looking for Direccion column aliases.
+ * Handles uppercase, lowercase, with/without accent (DIRECCION, Dirección, etc.)
+ */
+export function extractDireccionFromItem(item: IpCableRow): string {
+  if (!item || !item.rawRowData) return '';
+  const raw = item.rawRowData;
+  const keys = Object.keys(raw);
+
+  // Exact normalized matches
+  const exactKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return norm === 'direccion' || norm === 'dir' || norm === 'domicilio' || norm === 'ubicacion';
+  });
+  if (exactKey && raw[exactKey] !== undefined && raw[exactKey] !== null && String(raw[exactKey]).trim() !== '') {
+    return String(raw[exactKey]).trim();
+  }
+
+  // Partial / alias matches
+  const partialKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return (norm.includes('direccion') || norm.includes('domicilio') || norm.includes('ubicacion')) && !norm.includes('ip');
+  });
+  if (partialKey && raw[partialKey] !== undefined && raw[partialKey] !== null && String(raw[partialKey]).trim() !== '') {
+    return String(raw[partialKey]).trim();
   }
 
   return '';
