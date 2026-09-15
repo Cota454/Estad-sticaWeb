@@ -35,6 +35,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
+import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
 
 import { ExecutiveReportModal } from './ExecutiveReportModal';
 import { FloatingReportFAB } from './FloatingReportFAB';
@@ -964,7 +965,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   }, [cellServicesList, cellModalQuickFilter, cellModalSearch, cableTasks]);
 
   // Handler to export cell drilldown modal table to styled Excel (.xlsx)
-  const handleDownloadCellModalExcel = () => {
+  const handleDownloadCellModalExcel = async () => {
     if (!selectedCellFilter || displayModalServices.length === 0) {
       alert('No hay servicios disponibles para exportar con los filtros actuales.');
       return;
@@ -1091,7 +1092,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Servicios');
-    XLSX.writeFile(workbook, fileName);
+    await saveXlsxWorkbook(workbook, fileName);
   };
 
   // Matrix Cables vs GRUPO (Handles both Standard Cable Matrix and Strict Red Flexible Assigned Name Matrix)
@@ -1339,7 +1340,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   }, [matrixCablesData, selectedNetworkTypeFilter]);
 
   // Handler to export the Tab 2 IP Cables table to styled Excel (.xlsx)
-  const handleDownloadCablesMatrixExcel = () => {
+  const handleDownloadCablesMatrixExcel = async () => {
     if (!excelData || matrixCablesData.rows.length === 0) {
       alert('No hay datos disponibles en la tabla de IP Cables para exportar.');
       return;
@@ -1429,7 +1430,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'IP Cables');
-    XLSX.writeFile(workbook, fileName);
+    await saveXlsxWorkbook(workbook, fileName);
   };
 
   const filteredCableGroups = useMemo(() => {

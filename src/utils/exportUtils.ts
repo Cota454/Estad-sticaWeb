@@ -16,6 +16,7 @@ import { getTodayStr, formatDateLong } from './dateUtils';
 import { loadZones, loadCableRules, loadParsedIpData, loadPrintedServices, loadCablePendingTasks } from './ipCablesStorage';
 import { loadReportSettings } from './settingsUtils';
 import { loadWordReportProfiles } from './wordProfileUtils';
+import { saveFileWithPickerOrFallback } from './fileDownloadHelper';
 
 function generateTimestampStr(): string {
   const now = new Date();
@@ -28,18 +29,16 @@ function generateTimestampStr(): string {
   return `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
 }
 
-function triggerFileDownload(filename: string, dataObject: any) {
+async function triggerFileDownload(filename: string, dataObject: any) {
   const jsonString = JSON.stringify(dataObject, null, 2);
   const blob = new Blob([jsonString], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  await saveFileWithPickerOrFallback({
+    blob,
+    suggestedName: filename,
+    fileTypeDescription: 'Copia de Seguridad JSON (*.json)',
+    mimeType: 'application/json',
+    extension: '.json'
+  });
 }
 
 /**

@@ -49,6 +49,7 @@ import {
 import { getDemoraDays } from './AnalisisIpView';
 import { CableBatchTasksImportModal } from './CableBatchTasksImportModal';
 import { CableAfectacionesModal } from './CableAfectacionesModal';
+import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
 
 // Palabras clave típicas de encabezados de columnas de Excel que se descartan automáticamente
 const EXCEL_HEADER_WORDS = new Set([
@@ -848,7 +849,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   // -------------------------------------------------------------
   // Excel Export with Styled Headers and Auto Columns
   // -------------------------------------------------------------
-  const handleExportToExcel = () => {
+  const handleExportToExcel = async () => {
     if (filteredRows.length === 0) {
       alert('No hay registros disponibles para exportar con los filtros actuales.');
       return;
@@ -906,8 +907,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Trabajos Pendientes');
 
-    const dateStr = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `trabajos_pendientes_cables_${dateStr}.xlsx`);
+    await saveXlsxWorkbook(workbook, 'trabajos_pendientes_cables');
   };
 
   // Copy TSV to Clipboard

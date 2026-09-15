@@ -22,6 +22,7 @@ import {
   findMatchingZoneForItem,
   optimizeAndSimplifyRows
 } from '../utils/ipCablesExcelParser';
+import { saveExcelHtmlTable, saveWordHtmlDoc } from '../utils/fileDownloadHelper';
 
 interface ExecutiveReportModalProps {
   isOpen: boolean;
@@ -633,31 +634,15 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
   };
 
   // Export to Word (.doc)
-  const handleExportWord = () => {
+  const handleExportWord = async () => {
     const htmlContent = generateFullHtml();
-    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${reportFileName}.doc`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    await saveWordHtmlDoc(htmlContent, reportFileName);
   };
 
   // Export to Excel (.xls HTML table format)
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     const htmlContent = generateFullHtml();
-    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/vnd.ms-excel;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${reportFileName}.xls`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    await saveExcelHtmlTable(htmlContent, reportFileName);
   };
 
   // Print Report
