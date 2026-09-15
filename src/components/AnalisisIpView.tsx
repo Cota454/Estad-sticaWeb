@@ -39,6 +39,7 @@ import * as XLSX from 'xlsx-js-style';
 import { ExecutiveReportModal } from './ExecutiveReportModal';
 import { FloatingReportFAB } from './FloatingReportFAB';
 import { CablePendingTasksView } from './CablePendingTasksView';
+import { CableAfectacionesModal } from './CableAfectacionesModal';
 
 import {
   Central,
@@ -57,7 +58,8 @@ import {
   IpCableExcelParseResult,
   IpCableRow,
   NetworkTypeCategory,
-  CablePendingTask
+  CablePendingTask,
+  CableAfectacion
 } from '../types/ipCablesTypes';
 
 import {
@@ -68,7 +70,9 @@ import {
   loadParsedIpData,
   saveParsedIpData,
   clearParsedIpData,
-  loadCablePendingTasks
+  loadCablePendingTasks,
+  loadCableAfectaciones,
+  resolveItemAfectacion
 } from '../utils/ipCablesStorage';
 
 import {
@@ -295,8 +299,55 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [matrixMonthFilter, setMatrixMonthFilter] = useState<string>('all');
   const [matrixYearFilter, setMatrixYearFilter] = useState<string>('all');
   const [matrixTelefonoFilter, setMatrixTelefonoFilter] = useState<TelefonoTypeFilter>('all');
+  const [matrixAfectacionFilter, setMatrixAfectacionFilter] = useState<string>('all');
+  const [cableAfectacionFilter, setCableAfectacionFilter] = useState<string>('all');
   const [isOptimized, setIsOptimized] = useState<boolean>(false);
   const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
+
+  // Synchronized state for independent Afectaciones & Cable Tasks
+  const [cableTasks, setCableTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
+  const [cableAfectaciones, setCableAfectaciones] = useState<CableAfectacion[]>(loadCableAfectaciones);
+
+  useEffect(() => {
+    const handleSync = () => {
+      setCableTasks(loadCablePendingTasks());
+      setCableAfectaciones(loadCableAfectaciones());
+    };
+    window.addEventListener('telecomstat_afectaciones_updated', handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('telecomstat_afectaciones_updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, []);
+
+  // Dynamic list of afectaciones for Hoja 1 and Hoja 2 dropdown filters
+  const availableAfectaciones = useMemo(() => {
+    const set = new Set<string>();
+    cableAfectaciones.forEach(a => {
+      if (a.motivo) set.add(a.motivo.trim());
+    });
+    cableTasks.forEach(t => {
+      if (t.hasAfectacion && t.afectacionMotivo) {
+        set.add(t.afectacionMotivo.trim());
+      }
+    });
+    if (excelData?.consolidatedRows) {
+      excelData.consolidatedRows.forEach(r => {
+        const res = resolveItemAfectacion(r, cableAfectaciones, cableTasks);
+        if (res.afectacion && res.afectacion !== '-') {
+          set.add(res.afectacion.trim());
+        }
+      });
+    }
+    return Array.from(set).sort();
+  }, [cableAfectaciones, cableTasks, excelData]);
+
+  const getItemAfectacion = (item: IpCableRow): string => {
+    return resolveItemAfectacion(item, cableAfectaciones, cableTasks).afectacion;
+  };
+
+  const [isAfectacionesModalOpen, setIsAfectacionesModalOpen] = useState<boolean>(false);
 
   // Handlers for Date Range Filter with strict validation (fecha inicial no puede ser mayor que la final)
   const handleMatrixStartDateChange = (val: string) => {
@@ -424,9 +475,23 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
+      // 6. Afectaciones Filter (Filtro independiente idéntico a Hoja 6)
+      if (matrixAfectacionFilter !== 'all') {
+        const itemAfec = getItemAfectacion(item);
+        if (matrixAfectacionFilter === 'con_afectacion') {
+          if (itemAfec === '-') return false;
+        } else if (matrixAfectacionFilter === 'sin_afectacion') {
+          if (itemAfec !== '-') return false;
+        } else {
+          if (itemAfec.trim().toLowerCase() !== matrixAfectacionFilter.trim().toLowerCase()) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter]);
+  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, cableAfectaciones, cableTasks]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -695,9 +760,23 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
+      // 5. Filter Afectaciones (Dropdown dinámico idéntico a Hoja 6)
+      if (cableAfectacionFilter !== 'all') {
+        const itemAfec = getItemAfectacion(item);
+        if (cableAfectacionFilter === 'con_afectacion') {
+          if (itemAfec === '-') return false;
+        } else if (cableAfectacionFilter === 'sin_afectacion') {
+          if (itemAfec !== '-') return false;
+        } else {
+          if (itemAfec.trim().toLowerCase() !== cableAfectacionFilter.trim().toLowerCase()) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [excelData, isOptimized, selectedCentralFilter, selectedNetworkTypeFilter, selectedMonthYearFilter, cableSearchTerm, cableSearchMode, matchedServiceInfo]);
+  }, [excelData, isOptimized, selectedCentralFilter, selectedNetworkTypeFilter, selectedMonthYearFilter, cableSearchTerm, cableSearchMode, matchedServiceInfo, cableAfectacionFilter, cableAfectaciones, cableTasks]);
 
   // Cell Click Modal State (Pestañas 1 y 2)
   const [selectedCellFilter, setSelectedCellFilter] = useState<{
@@ -709,13 +788,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     colName?: string;
   } | null>(null);
   const [cellModalSearch, setCellModalSearch] = useState<string>('');
-  const [cableTasks, setCableTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
   const [cellModalQuickFilter, setCellModalQuickFilter] = useState<'all' | 'with_task' | 'with_afectacion'>('all');
 
-  // Reload tasks and reset quick filter whenever cell drilldown modal opens
+  // Reload tasks and afectaciones, and reset quick filter whenever cell drilldown modal opens
   useEffect(() => {
     if (selectedCellFilter) {
       setCableTasks(loadCablePendingTasks());
+      setCableAfectaciones(loadCableAfectaciones());
       setCellModalQuickFilter('all');
       setCellModalSearch('');
     }
@@ -758,38 +837,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     const taskName = matchedTask ? matchedTask.taskName : '-';
-    let afectacion = '-';
-
-    if (matchedTask && matchedTask.hasAfectacion && matchedTask.afectacionMotivo) {
-      const rowDateStr = (item.fechaReporte || '').trim().slice(0, 10);
-      const start = matchedTask.afectacionFechaInicio || '';
-      const end = matchedTask.afectacionFechaFin || '';
-      let inRange = true;
-      if (start && end) {
-        inRange = Boolean(rowDateStr && rowDateStr >= start && rowDateStr <= end);
-      } else if (start) {
-        inRange = Boolean(rowDateStr && rowDateStr >= start);
-      } else if (end) {
-        inRange = Boolean(rowDateStr && rowDateStr <= end);
-      }
-      if (inRange) {
-        afectacion = matchedTask.afectacionMotivo;
-      }
-    }
-
-    // Fallback to Excel raw column AFECTACIONES if present in rawRowData
-    if (afectacion === '-') {
-      for (const k of Object.keys(raw)) {
-        const norm = k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-        if (norm.includes('afectacion')) {
-          const val = String(raw[k]).trim();
-          if (val && val !== '-') {
-            afectacion = val;
-            break;
-          }
-        }
-      }
-    }
+    
+    // Independent Afectación resolution (checks independent afectaciones first, then task, then raw excel)
+    const afecRes = resolveItemAfectacion(item, cableAfectaciones, cableTasks);
+    const afectacion = afecRes.afectacion;
 
     const terminal = extractTerminalFromItem(item) || (matchedTask?.terminalDireccion ? matchedTask.terminalDireccion : '-');
     const direccion = extractDireccionFromItem(item) || '-';
@@ -1502,6 +1553,20 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               <Wrench className="w-3.5 h-3.5 text-amber-400" />
               <span>6. Trabajos Pendientes</span>
             </button>
+
+            {/* Botón de Gestión de Afectaciones Independientes con Período de Fecha */}
+            <button
+              type="button"
+              onClick={() => setIsAfectacionesModalOpen(true)}
+              className="flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all bg-gradient-to-r from-purple-700 via-purple-600 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white shadow-lg shadow-purple-950/40 border border-purple-400/40 cursor-pointer"
+              title="Crear, actualizar o eliminar afectaciones con seguimiento por período de fecha"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-300" />
+              <span>Gestión de Afectaciones</span>
+              <span className="bg-purple-950/90 text-purple-200 text-[10px] px-2 py-0.5 rounded-full border border-purple-400/30 font-mono font-bold">
+                {cableAfectaciones.filter(a => a.activo !== false).length}
+              </span>
+            </button>
           </div>
         </div>
       </div>
@@ -1605,19 +1670,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <div>
                   <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
                     <span>Filtros de Análisis para Matrices</span>
-                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
+                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || isOptimized) && (
                       <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
                         {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
                       </span>
                     )}
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Optimice servicios cruzados (Teléfono/Asociado) y filtre por Rango de Fechas, Tipo de Teléfono, Demora, Mes y Año.
+                    Optimice servicios cruzados (Teléfono/Asociado) y filtre por Rango de Fechas, Tipo de Teléfono, Demora, Mes, Año y Afectaciones.
                   </p>
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || isOptimized) && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || isOptimized) && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
@@ -1627,6 +1692,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     setMatrixMonthFilter('all');
                     setMatrixYearFilter('all');
                     setMatrixTelefonoFilter('all');
+                    setMatrixAfectacionFilter('all');
                     setIsOptimized(false);
                   }}
                   className="flex items-center space-x-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer w-fit"
@@ -1846,7 +1912,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             </div>
 
             {/* Grid of Standard and Type Filters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 pt-1">
               {/* 1. Filtro Columna Teléfono (Teléfono vs TxD Dato) */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
@@ -1961,7 +2027,41 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </select>
               </div>
 
-              {/* 5. Ocultar Ceros Option */}
+              {/* 5. Afectaciones Filter (Desplegable dinámico idéntico a Hoja 6) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Afectaciones</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAfectacionesModalOpen(true)}
+                    className="text-[10px] font-bold text-purple-400 hover:text-purple-200 bg-purple-950/60 hover:bg-purple-900/80 px-2 py-0.5 rounded-lg border border-purple-500/40 transition-colors cursor-pointer"
+                    title="Crear, actualizar o eliminar afectaciones"
+                  >
+                    + Gestionar
+                  </button>
+                </div>
+                <select
+                  value={matrixAfectacionFilter}
+                  onChange={(e) => setMatrixAfectacionFilter(e.target.value)}
+                  className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
+                    matrixAfectacionFilter !== 'all'
+                      ? 'border-purple-500 text-purple-300 font-bold bg-purple-950/20'
+                      : 'border-slate-800 text-white focus:border-purple-500'
+                  }`}
+                >
+                  <option value="all">Todas las Afectaciones</option>
+                  <option value="con_afectacion">Con Afectación Registrada</option>
+                  <option value="sin_afectacion">Sin Afectación (-)</option>
+                  {availableAfectaciones.map(a => (
+                    <option key={a} value={a}>Motivo: {a}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 6. Ocultar Ceros Option */}
               <div className="space-y-1.5 flex flex-col justify-end">
                 <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
                   <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
@@ -2396,12 +2496,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
-                {(selectedCentralFilter !== 'all' || selectedNetworkTypeFilter !== 'all' || selectedMonthYearFilter !== 'all' || cableSearchTerm.trim() !== '') && (
+                {(selectedCentralFilter !== 'all' || selectedNetworkTypeFilter !== 'all' || selectedMonthYearFilter !== 'all' || cableAfectacionFilter !== 'all' || cableSearchTerm.trim() !== '') && (
                   <button
                     onClick={() => {
                       setSelectedCentralFilter('all');
                       setSelectedNetworkTypeFilter('all');
                       setSelectedMonthYearFilter('all');
+                      setCableAfectacionFilter('all');
                       setCableSearchTerm('');
                     }}
                     className="flex items-center space-x-1.5 px-3 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer"
@@ -2411,6 +2512,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <span>Restablecer</span>
                   </button>
                 )}
+                
+                {/* Botón Gestión de Afectaciones Independientes */}
+                <button
+                  type="button"
+                  onClick={() => setIsAfectacionesModalOpen(true)}
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 border border-purple-500/40 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-sm"
+                  title="Gestionar afectaciones independientes (globales, por cable, central o servicios)"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Afectaciones ({cableAfectaciones.filter(a => a.activo).length})</span>
+                </button>
+
                 <CopyTableButton headers={copyCablesHeaders} rows={copyCablesRows} label="Copiar Tabla" />
                 <button
                   type="button"
@@ -2425,7 +2538,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             </div>
 
             {/* Filter Controls Matrix */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
 
               {/* 1. Central Filter */}
               <div className="space-y-1.5">
@@ -2549,10 +2662,44 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </div>
               </div>
 
-              {/* 5. Sort Order Filter */}
+              {/* 5. Afectaciones Filter (Desplegable dinámico idéntico a Hoja 6) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider flex items-center space-x-1.5">
+                    <AlertTriangle className="w-3 h-3 text-purple-400" />
+                    <span>5. Afectaciones</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAfectacionesModalOpen(true)}
+                    className="text-[10px] font-bold text-purple-400 hover:text-purple-200 bg-purple-950/60 hover:bg-purple-900/80 px-2 py-0.5 rounded-lg border border-purple-500/40 transition-colors cursor-pointer"
+                    title="Crear, actualizar o eliminar afectaciones"
+                  >
+                    + Gestionar
+                  </button>
+                </div>
+                <select
+                  value={cableAfectacionFilter}
+                  onChange={(e) => setCableAfectacionFilter(e.target.value)}
+                  className={`w-full bg-slate-950 border text-xs rounded-xl p-2.5 font-bold focus:outline-none cursor-pointer ${
+                    cableAfectacionFilter !== 'all'
+                      ? 'border-purple-500 text-purple-300 bg-purple-950/20'
+                      : 'border-slate-800 text-white focus:border-emerald-500'
+                  }`}
+                >
+                  <option value="all">Todas las Afectaciones</option>
+                  <option value="con_afectacion">Con Afectación Registrada</option>
+                  <option value="sin_afectacion">Sin Afectación (-)</option>
+                  {availableAfectaciones.map(a => (
+                    <option key={a} value={a}>Motivo: {a}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 6. Sort Order Filter */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider block">
-                  5. Ordenar Totales
+                  6. Ordenar Totales
                 </label>
                 <select
                   value={cableSortOrder}
@@ -3130,6 +3277,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         zones={zones}
         isConsolidationActive={isOptimized}
       />
+
+      {/* Modal para Gestión de Afectaciones Independientes */}
+      {isAfectacionesModalOpen && (
+        <CableAfectacionesModal
+          isOpen={isAfectacionesModalOpen}
+          onClose={() => {
+            setIsAfectacionesModalOpen(false);
+            setCableAfectaciones(loadCableAfectaciones());
+          }}
+          afectaciones={cableAfectaciones}
+          excelData={excelData}
+        />
+      )}
 
     </div>
   );

@@ -48,6 +48,7 @@ import {
 } from '../utils/ipCablesStorage';
 import { getDemoraDays } from './AnalisisIpView';
 import { CableBatchTasksImportModal } from './CableBatchTasksImportModal';
+import { CableAfectacionesModal } from './CableAfectacionesModal';
 
 // Palabras clave típicas de encabezados de columnas de Excel que se descartan automáticamente
 const EXCEL_HEADER_WORDS = new Set([
@@ -197,6 +198,9 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   // Modal State para Carga Masiva desde Excel
   const [showBatchModal, setShowBatchModal] = useState<boolean>(false);
   const [batchSuccessMsg, setBatchSuccessMsg] = useState<string>('');
+
+  // Modal State para Gestión Independiente de Afectaciones
+  const [showAfectacionesModal, setShowAfectacionesModal] = useState<boolean>(false);
 
   // Handler al confirmar la carga masiva desde Excel
   const handleBatchImportSuccess = (
@@ -1404,6 +1408,17 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             >
               <ListTodo className="w-4 h-4 text-indigo-200" />
               <span>Ver Todas las Tareas ({tasks.length})</span>
+            </button>
+
+            {/* Botón para Gestión de Afectaciones Independientes con Período de Fecha */}
+            <button
+              type="button"
+              onClick={() => setShowAfectacionesModal(true)}
+              className="px-3.5 py-2 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-purple-950/40 flex items-center space-x-2 cursor-pointer border border-purple-400/40"
+              title="Crear, actualizar o eliminar afectaciones con seguimiento por período de fecha"
+            >
+              <AlertTriangle className="w-4 h-4 text-amber-300" />
+              <span>Gestión de Afectaciones</span>
             </button>
 
             {/* Botones de Agregar Trabajo y Carga Masiva (debajo) */}
@@ -3052,6 +3067,17 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
         excelServicesMap={excelServicesMap}
         availableCables={excelData?.uniqueCables || []}
       />
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL PARA GESTIÓN DE AFECTACIONES INDEPENDIENTES */}
+      {/* ------------------------------------------------------------- */}
+      {showAfectacionesModal && (
+        <CableAfectacionesModal
+          isOpen={showAfectacionesModal}
+          onClose={() => setShowAfectacionesModal(false)}
+          excelData={excelData}
+        />
+      )}
     </div>
   );
 };

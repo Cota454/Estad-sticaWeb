@@ -25,6 +25,8 @@ export type NetworkTypeCategory = 'all' | 'rigida' | 'flexible' | 'outdoor' | 'o
 export interface IpCableRow {
   id: string;
   servicio: string;           // Key for consolidation
+  telefono?: string;          // Alias for raw telefono
+  asociado?: string;          // Asociado service number if present
   central: string;            // Central Telefónica
   grupo: string;              // Grupo de Trabajo
   cable: string;              // Combined Cable
@@ -73,6 +75,29 @@ export interface CablePendingTask {
   afectacionMotivo?: string;      // ej: "Huracán", "Vandalismo", "Inundación"
   afectacionFechaInicio?: string; // YYYY-MM-DD
   afectacionFechaFin?: string;    // YYYY-MM-DD
+}
+
+/**
+ * Entidad independiente para Afectaciones en el 2do recuadro (Análisis de IP y Gestión de Cables).
+ * Permite aplicar afectaciones de forma autónoma:
+ * - A todo en general en el recuadro (scope: 'global')
+ * - A todo un cable (scope: 'cable')
+ * - A una central (scope: 'central')
+ * - A servicios específicos (scope: 'services')
+ */
+export interface CableAfectacion {
+  id: string;
+  motivo: string;                           // Motivo de la afectación (ej. Corte de FO, Robo de Cable, Huracán, Vandalismo)
+  scope: 'global' | 'cable' | 'central' | 'services'; // Ámbito de aplicación
+  cable?: string;                           // Cable específico si scope === 'cable'
+  central?: string;                         // Central específica si scope === 'central'
+  serviceNumbers?: string[];                // Números de servicio si scope === 'services'
+  fechaInicio?: string;                     // YYYY-MM-DD (opcional)
+  fechaFin?: string;                        // YYYY-MM-DD (opcional)
+  descripcion?: string;                     // Observaciones o detalles técnicos
+  activo?: boolean;                         // Indica si la afectación está activa (true por defecto)
+  createdAt: string;                        // ISO date string
+  updatedAt?: string;                       // ISO date string
 }
 
 export interface CableTaskServiceDetailRow {
