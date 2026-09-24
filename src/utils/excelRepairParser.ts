@@ -133,12 +133,15 @@ export function processRepairRowsWithMapping(
       return;
     }
 
-    // Deduplicate by ticket or service+central+date
+    // Deduplicate exact duplicate rows (same ticket/folio on same date with same clave)
+    const rawClaveLower = String(rawClave || '').trim().toLowerCase();
+    const rawDateLower = String(rawDate || '').trim().toLowerCase();
+    const rawTechLower = String(rawTech || '').trim().toLowerCase();
     const dedupKey = ticketLower
-      ? ticketLower
-      : `${serviceLower}_${centralLower}_${String(rawDate).trim().toLowerCase()}`;
+      ? `${ticketLower}_${rawDateLower}_${rawClaveLower}_${rawTechLower}`
+      : `${serviceLower}_${centralLower}_${rawDateLower}_${rawClaveLower}`;
     if (dedupKey && seenTicketsSet.has(dedupKey)) {
-      // Skip duplicate record
+      // Skip exact duplicate record
       return;
     }
     if (dedupKey) {

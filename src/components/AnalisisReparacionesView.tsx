@@ -9,7 +9,7 @@ import {
   Calendar, Upload, Download, Table, Layers, BarChart3, LineChart as LineChartIcon,
   AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
   Key, Save, ShieldAlert, RefreshCw, History, Database, AlertCircle, Sun, Moon,
-  FileSpreadsheet, AlertOctagon, UserX, ArrowRightCircle
+  FileSpreadsheet, AlertOctagon, UserX, ArrowRightCircle, RotateCcw
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -103,6 +103,11 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   const [incoherentTechFilter, setIncoherentTechFilter] = useState<string>('all');
   const [incoherentCentralFilter, setIncoherentCentralFilter] = useState<string>('all');
   const [incoherentSeverityFilter, setIncoherentSeverityFilter] = useState<'all' | 'high' | 'medium'>('all');
+  // Filtros específicos para la Tabla Ranking de Técnicos (Afectación al 1er Técnico):
+  // "mayor a menor, los 5 primeros, los 10 primeros, por Operario"
+  const [rankingSortOrder, setRankingSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [rankingLimit, setRankingLimit] = useState<'all' | 5 | 10>('all');
+  const [rankingOperarioFilter, setRankingOperarioFilter] = useState<string>('');
 
   const [repeatedMinCount, setRepeatedMinCount] = useState<number>(2);
   const [repeatedSearchTerm, setRepeatedSearchTerm] = useState<string>('');
@@ -147,9 +152,9 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
     existingRecords.forEach(r => {
       if (r.ticketCode) {
-        existingKeysSet.add(r.ticketCode.trim().toLowerCase());
+        existingKeysSet.add(`${r.ticketCode.trim().toLowerCase()}_${(r.date || '').trim()}_${(r.claveCode || '').trim().toLowerCase()}`);
       }
-      const comboKey = `${(r.serviceNumber || '').trim().toLowerCase()}_${(r.centralName || '').trim().toLowerCase()}_${(r.date || '').trim()}`;
+      const comboKey = `${(r.serviceNumber || '').trim().toLowerCase()}_${(r.centralName || '').trim().toLowerCase()}_${(r.date || '').trim()}_${(r.claveCode || '').trim().toLowerCase()}`;
       if (comboKey) {
         existingKeysSet.add(comboKey);
       }
@@ -159,8 +164,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     let skippedCount = 0;
 
     incomingRecords.forEach(rec => {
-      const tKey = rec.ticketCode ? rec.ticketCode.trim().toLowerCase() : '';
-      const cKey = `${(rec.serviceNumber || '').trim().toLowerCase()}_${(rec.centralName || '').trim().toLowerCase()}_${(rec.date || '').trim()}`;
+      const tKey = rec.ticketCode ? `${rec.ticketCode.trim().toLowerCase()}_${(rec.date || '').trim()}_${(rec.claveCode || '').trim().toLowerCase()}` : '';
+      const cKey = `${(rec.serviceNumber || '').trim().toLowerCase()}_${(rec.centralName || '').trim().toLowerCase()}_${(rec.date || '').trim()}_${(rec.claveCode || '').trim().toLowerCase()}`;
 
       const isDuplicate = (tKey && existingKeysSet.has(tKey)) || (cKey && existingKeysSet.has(cKey));
 
@@ -790,6 +795,15 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
     let list = Object.values(serviceMap).filter(item => item.count >= repeatedMinCount);
 
+    // Ensure repairs within each service are sorted chronologically by date
+    list.forEach(item => {
+      item.repairs.sort((a, b) => {
+        const dateA = a.date || a.reportDate || '';
+        const dateB = b.date || b.reportDate || '';
+        return dateA.localeCompare(dateB);
+      });
+    });
+
     if (repeatedCentralFilter !== 'all') {
       list = list.filter(item => Array.from(item.centralNames).some(c => c.toLowerCase().includes(repeatedCentralFilter.toLowerCase())));
     }
@@ -1134,13 +1148,15 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   };
 
   // Detect Incoherent Closures (Falsos Cierres)
-  const rawIncoherentEvents = useMemo(() => {
+  // 1. All events across all technicians - Used for Global Ranking, Summaries & Metrics:
+  // "El Ranking debe mostrar todos"
+  const allIncoherentEvents = useMemo(() => {
     return detectIncoherentEvents(
       repairRecords,
       incoherentConfig,
       repeatedDateFrom,
       repeatedDateTo,
-      incoherentTechFilter,
+      'all', // All technicians so full ranking is maintained
       incoherentCentralFilter,
       incoherentSearchTerm
     );
@@ -1149,20 +1165,72 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     incoherentConfig,
     repeatedDateFrom,
     repeatedDateTo,
-    incoherentTechFilter,
     incoherentCentralFilter,
     incoherentSearchTerm
   ]);
+
+  // 2. Events filtered by Technician for the Detailed Cases Table:
+  const rawIncoherentEvents = useMemo(() => {
+    if (incoherentTechFilter === 'all') return allIncoherentEvents;
+    return allIncoherentEvents.filter(
+      evt => evt.firstTech === incoherentTechFilter || evt.secondTech === incoherentTechFilter
+    );
+  }, [allIncoherentEvents, incoherentTechFilter]);
 
   const incoherentEvents = useMemo(() => {
     if (incoherentSeverityFilter === 'all') return rawIncoherentEvents;
     return rawIncoherentEvents.filter(e => e.severity === incoherentSeverityFilter);
   }, [rawIncoherentEvents, incoherentSeverityFilter]);
 
-  // Summarize impact on affected 1st technicians
-  const technicianIncoherenceSummaries = useMemo(() => {
-    return calculateTechnicianIncoherenceSummaries(rawIncoherentEvents, repairRecords);
-  }, [rawIncoherentEvents, repairRecords]);
+  // 3. Summarize impact on affected 1st technicians across ALL events:
+  // "El Ranking debe mostrar todos"
+  const allTechnicianIncoherenceSummaries = useMemo(() => {
+    return calculateTechnicianIncoherenceSummaries(allIncoherentEvents, repairRecords);
+  }, [allIncoherentEvents, repairRecords]);
+
+  // Backward compatibility alias
+  const technicianIncoherenceSummaries = allTechnicianIncoherenceSummaries;
+
+  // 4. Filtered Ranking according to user filters:
+  // "en esta tabla Ranking debe tener los siguientes Filtros : mayor a menor, los 5 primeros, los 10 primeros, por Operario"
+  const filteredRankingSummaries = useMemo(() => {
+    let list = [...allTechnicianIncoherenceSummaries];
+
+    // Filter by Operario if text search is provided
+    if (rankingOperarioFilter.trim()) {
+      const term = rankingOperarioFilter.toLowerCase().trim();
+      list = list.filter(t => t.technician.toLowerCase().includes(term));
+    }
+
+    // Sort: Mayor a Menor vs Menor a Mayor
+    list.sort((a, b) => {
+      if (rankingSortOrder === 'desc') {
+        return b.totalIncoherentClosures - a.totalIncoherentClosures;
+      } else {
+        return a.totalIncoherentClosures - b.totalIncoherentClosures;
+      }
+    });
+
+    // Limit: Los 5 primeros, Los 10 primeros, o Todos
+    if (rankingLimit === 5) {
+      return list.slice(0, 5);
+    } else if (rankingLimit === 10) {
+      return list.slice(0, 10);
+    }
+    return list;
+  }, [allTechnicianIncoherenceSummaries, rankingSortOrder, rankingLimit, rankingOperarioFilter]);
+
+  // Reset all filters in Incoherent Audit:
+  // "botón para eliminar el filtro o restablecer los ajustes porque cuando le doy Ver sus Casos después no tengo forma de restablecer y me vuelva a mostrar el ranking completo"
+  const handleResetIncoherentFilters = () => {
+    setIncoherentTechFilter('all');
+    setIncoherentCentralFilter('all');
+    setIncoherentSeverityFilter('all');
+    setIncoherentSearchTerm('');
+    setRankingSortOrder('desc');
+    setRankingLimit('all');
+    setRankingOperarioFilter('');
+  };
 
   // Export Incoherencias Excel
   const handleExportIncoherencias = async () => {
@@ -2749,6 +2817,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                     <th className="py-3 px-4 text-center">Reincidencias</th>
                     <th className="py-3 px-4">Central(es)</th>
                     <th className="py-3 px-4">Historial de Fechas</th>
+                    <th className="py-3 px-4">Historial de Claves</th>
                     <th className="py-3 px-4">Último Cable / Elemento</th>
                     <th className="py-3 px-4">Último Técnico</th>
                   </tr>
@@ -2756,7 +2825,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                 <tbody className="divide-y divide-slate-800 font-medium">
                   {repeatedServicesData.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400">
+                      <td colSpan={7} className="py-8 text-center text-slate-400">
                         <AlertCircle className="w-8 h-8 text-slate-500 mx-auto mb-2" />
                         <p className="font-bold text-sm text-slate-300">No se encontraron abonados reincidentes para este período</p>
                         <p className="text-xs text-slate-500 mt-1">
@@ -2776,7 +2845,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                           </span>
                         </td>
                         <td className="py-3 px-4 text-slate-300">{Array.from(item.centralNames).join(', ')}</td>
-                        <td className="py-3 px-4 font-mono text-[11px] text-indigo-300">{item.repairs.map(r => r.date).join(' | ')}</td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-indigo-300">{item.repairs.map(r => r.date || r.reportDate || '-').join(' | ')}</td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-amber-300 font-bold">{item.repairs.map(r => r.claveCode || '-').join(' | ')}</td>
                         <td className="py-3 px-4 text-slate-200">{item.latestCable}</td>
                         <td className="py-3 px-4 font-bold text-emerald-400">{item.latestTech}</td>
                       </tr>
@@ -2790,7 +2860,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                       <td className="py-3 px-4 text-center text-amber-400">
                         {repeatedServicesData.length} Abonados ({totalReincidenciasEvents} Eventos)
                       </td>
-                      <td colSpan={4} className="py-3 px-4 text-slate-400 text-right">
+                      <td colSpan={5} className="py-3 px-4 text-slate-400 text-right">
                         Período: <span className="font-mono text-indigo-300">{repeatedDateFrom || 'Inicio'}</span> al <span className="font-mono text-indigo-300">{repeatedDateTo || 'Hoy'}</span>
                       </td>
                     </tr>
@@ -2811,9 +2881,12 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
               <div className="bg-slate-900 border border-rose-500/30 rounded-3xl p-6 text-white space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="bg-rose-500/20 text-rose-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
                         AUDITORÍA DE CALIDAD OPERATIVA
+                      </span>
+                      <span className="bg-cyan-500/20 text-cyan-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono border border-cyan-500/30">
+                        MISMO SERVICIO + MISMO FOLIO
                       </span>
                       <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
                         VENTANA: ≤ {incoherentConfig.windowDays} DÍAS
@@ -2824,7 +2897,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                       <span>Auditoría de Cierres Incoherentes y Falsos Cierres por Clave</span>
                     </h2>
                     <p className="text-slate-400 text-xs mt-0.5">
-                      Identifica servicios donde el 1er técnico cerró con una clave y la siguiente visita en menos de {incoherentConfig.windowDays} días se cerró con otra clave discrepante, determinando la afectación al 1er técnico.
+                      Identifica visitas que tienen el <strong>mismo Servicio y el mismo Folio</strong> donde el 1er técnico cerró con una clave y la siguiente visita en menos de {incoherentConfig.windowDays} días se cerró con otra clave discrepante, determinando la afectación al 1er técnico.
                     </p>
                   </div>
 
@@ -2967,25 +3040,148 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                 </div>
 
                 {/* RANKING DE AFECTACIÓN AL 1ER TÉCNICO (IMPACTO OPERATIVO) */}
-                {technicianIncoherenceSummaries.length > 0 && (
-                  <div className="bg-slate-950/90 rounded-2xl border border-slate-800 p-4 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                      <div className="flex items-center space-x-2">
-                        <UserX className="w-4 h-4 text-amber-400" />
-                        <h4 className="text-xs font-black text-white uppercase tracking-wider">
-                          Ranking de Afectación al 1er Técnico (Cierres Refutados en ≤ {incoherentConfig.windowDays} días)
-                        </h4>
+                {allTechnicianIncoherenceSummaries.length > 0 && (
+                  <div className="bg-slate-950/90 rounded-3xl border border-slate-800 p-5 space-y-4 shadow-xl">
+                    {/* Header with Title and Reset Action */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <UserX className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                            Ranking de Afectación al 1er Técnico (Cierres Refutados en ≤ {incoherentConfig.windowDays} días)
+                          </h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Mostrando <strong className="text-white">{filteredRankingSummaries.length}</strong> de <strong className="text-white">{allTechnicianIncoherenceSummaries.length}</strong> operarios con discrepancias de cierre
+                          </p>
+                        </div>
                       </div>
-                      <span className="text-[11px] text-slate-400">
-                        {technicianIncoherenceSummaries.length} técnicos con discrepancias
-                      </span>
+
+                      {/* Botón para Eliminar Filtro / Restablecer Ajustes */}
+                      <button
+                        type="button"
+                        onClick={handleResetIncoherentFilters}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-bold transition-all flex items-center space-x-1.5 self-start sm:self-auto shadow-sm"
+                        title="Restablece todos los filtros de operario, orden y búsqueda"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Restablecer Ajustes / Ver Todos</span>
+                      </button>
                     </div>
 
-                    <div className="overflow-x-auto max-h-48 border border-slate-800/80 rounded-xl">
+                    {/* FILTROS REQUERIDOS DE LA TABLA RANKING:
+                        - Mayor a menor / Menor a mayor
+                        - Los 5 primeros
+                        - Los 10 primeros
+                        - Todos
+                        - Por Operario (búsqueda y selector)
+                    */}
+                    <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                      {/* Left: Orden (Mayor a Menor) & Cantidad (5, 10, Todos) */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        {/* Orden: Mayor a Menor vs Menor a Mayor */}
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-[11px] font-bold text-slate-400">Orden:</span>
+                          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setRankingSortOrder('desc')}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                                rankingSortOrder === 'desc'
+                                  ? 'bg-rose-600 text-white shadow-md'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Mayor a Menor (↓)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRankingSortOrder('asc')}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                                rankingSortOrder === 'asc'
+                                  ? 'bg-rose-600 text-white shadow-md'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Menor a Mayor (↑)
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Cantidad: Los 5 primeros, Los 10 primeros, Todos */}
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-[11px] font-bold text-slate-400">Mostrar:</span>
+                          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setRankingLimit('all')}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                                rankingLimit === 'all'
+                                  ? 'bg-indigo-600 text-white shadow-md'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Todos ({allTechnicianIncoherenceSummaries.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRankingLimit(5)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                                rankingLimit === 5
+                                  ? 'bg-indigo-600 text-white shadow-md'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Los 5 primeros
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRankingLimit(10)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                                rankingLimit === 10
+                                  ? 'bg-indigo-600 text-white shadow-md'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Los 10 primeros
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Filtro por Operario (Buscador instantáneo) */}
+                      <div className="flex items-center space-x-2 w-full sm:w-auto">
+                        <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap">Por Operario:</span>
+                        <div className="relative flex-1 sm:w-56">
+                          <input
+                            type="text"
+                            placeholder="Buscar por operario..."
+                            value={rankingOperarioFilter}
+                            onChange={(e) => setRankingOperarioFilter(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700/80 rounded-xl pl-8 pr-7 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+                          {rankingOperarioFilter && (
+                            <button
+                              type="button"
+                              onClick={() => setRankingOperarioFilter('')}
+                              className="absolute right-2 top-2 text-slate-400 hover:text-white text-xs"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ranking Table */}
+                    <div className="overflow-x-auto max-h-56 border border-slate-800/80 rounded-2xl">
                       <table className="w-full text-left text-xs text-slate-300">
                         <thead className="bg-slate-900 text-slate-400 font-bold uppercase text-[10px] sticky top-0 border-b border-slate-800">
                           <tr>
-                            <th className="py-2.5 px-3">Técnico 1 (Responsable Inicial)</th>
+                            <th className="py-2.5 px-3">#</th>
+                            <th className="py-2.5 px-3">Operario / Técnico 1 (Responsable Inicial)</th>
                             <th className="py-2.5 px-3 text-center">Cierres Refutados</th>
                             <th className="py-2.5 px-3 text-center">Tasa Refutación</th>
                             <th className="py-2.5 px-3">Claves que utilizó (1ª Visita)</th>
@@ -2994,55 +3190,114 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/70 font-medium">
-                          {technicianIncoherenceSummaries.map((tech) => (
-                            <tr key={tech.technician} className="hover:bg-slate-800/40 transition-colors">
-                              <td className="py-2 px-3 font-bold text-white flex items-center space-x-2">
-                                <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                                <span>{tech.technician}</span>
-                              </td>
-                              <td className="py-2 px-3 text-center font-black text-rose-400">
-                                {tech.totalIncoherentClosures}
-                              </td>
-                              <td className="py-2 px-3 text-center font-mono font-bold text-amber-400">
-                                {tech.refutationRate}%
-                              </td>
-                              <td className="py-2 px-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {tech.commonInitialClaves.slice(0, 3).map(c => (
-                                    <span key={c.clave} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
-                                      {c.clave} ({c.count})
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="py-2 px-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {tech.commonRefutedByClaves.slice(0, 3).map(c => (
-                                    <span key={c.clave} className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
-                                      {c.clave} ({c.count})
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="py-2 px-3 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => setIncoherentTechFilter(tech.technician)}
-                                  className="text-[11px] font-bold text-indigo-400 hover:text-indigo-200 underline"
-                                >
-                                  Ver sus casos
-                                </button>
+                          {filteredRankingSummaries.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="py-6 text-center text-slate-400 italic">
+                                No se encontraron operarios con el filtro actual ("{rankingOperarioFilter}").
                               </td>
                             </tr>
-                          ))}
+                          ) : (
+                            filteredRankingSummaries.map((tech, idx) => {
+                              const isSelected = incoherentTechFilter === tech.technician;
+                              return (
+                                <tr
+                                  key={tech.technician}
+                                  className={`transition-colors ${
+                                    isSelected
+                                      ? 'bg-indigo-950/40 border-l-4 border-indigo-400'
+                                      : 'hover:bg-slate-800/40'
+                                  }`}
+                                >
+                                  <td className="py-2 px-3 font-mono text-[10px] text-slate-500">{idx + 1}</td>
+                                  <td className="py-2 px-3 font-bold text-white flex items-center space-x-2">
+                                    <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-indigo-400 animate-pulse' : 'bg-rose-500'}`}></span>
+                                    <span>{tech.technician}</span>
+                                    {isSelected && (
+                                      <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-black border border-indigo-500/40">
+                                        Filtrando casos
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 text-center font-black text-rose-400">
+                                    {tech.totalIncoherentClosures}
+                                  </td>
+                                  <td className="py-2 px-3 text-center font-mono font-bold text-amber-400">
+                                    {tech.refutationRate}%
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {tech.commonInitialClaves.slice(0, 3).map(c => (
+                                        <span key={c.clave} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                                          {c.clave} ({c.count})
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {tech.commonRefutedByClaves.slice(0, 3).map(c => (
+                                        <span key={c.clave} className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                                          {c.clave} ({c.count})
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    {isSelected ? (
+                                      <div className="inline-flex items-center space-x-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setIncoherentTechFilter('all')}
+                                          className="text-[11px] font-black text-rose-400 hover:text-rose-300 underline"
+                                        >
+                                          Quitar filtro
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setIncoherentTechFilter(tech.technician)}
+                                        className="text-[11px] font-bold text-indigo-400 hover:text-indigo-200 underline"
+                                      >
+                                        Ver sus casos
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>
                   </div>
                 )}
 
+                {/* ACTIVE FILTER BANNER & RESET BUTTON (WHEN FILTERED BY TECHNICIAN OR SEARCH) */}
+                {incoherentTechFilter !== 'all' && (
+                  <div className="bg-gradient-to-r from-indigo-950/70 via-slate-900 to-indigo-950/70 border border-indigo-500/40 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                    <div className="flex items-center space-x-2.5">
+                      <span className="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                        <UserCheck className="w-4 h-4" />
+                      </span>
+                      <span className="text-xs text-white">
+                        Filtrando casos del operario: <strong className="text-amber-300 font-black text-sm">{incoherentTechFilter}</strong> ({rawIncoherentEvents.length} discrepancias encontradas)
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setIncoherentTechFilter('all')}
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 shadow-md shadow-rose-600/30"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Restablecer Filtro (Mostrar todos los casos)</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* FILTERS FOR THE DETAILED INCOHERENCE TABLE */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-2">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-400 mb-1">
                       Filtrar por Técnico:
@@ -3097,13 +3352,25 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                     <div className="relative">
                       <input
                         type="text"
-                        placeholder="Buscar por teléfono, folio o clave..."
+                        placeholder="Buscar teléfono, folio, clave..."
                         value={incoherentSearchTerm}
                         onChange={(e) => setIncoherentSearchTerm(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-white focus:border-rose-500"
                       />
                       <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
                     </div>
+                  </div>
+
+                  {/* Quick Reset All Filters Button */}
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={handleResetIncoherentFilters}
+                      className="w-full bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold transition-colors flex items-center justify-center space-x-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Restablecer Filtros</span>
+                    </button>
                   </div>
                 </div>
 
@@ -3113,7 +3380,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                     <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-800">
                       <tr>
                         <th className="py-3 px-3 text-slate-500">#</th>
-                        <th className="py-3 px-3">Servicio / Abonado</th>
+                        <th className="py-3 px-3">Servicio / Folio</th>
                         <th className="py-3 px-3">Central</th>
                         <th className="py-3 px-4 bg-amber-950/20 text-amber-300 border-l border-r border-amber-500/20">
                           1ª Visita (Responsable / Afectado)
@@ -3135,7 +3402,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                               No se encontraron cierres incoherentes con los filtros actuales
                             </p>
                             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                              No hubo discrepancias de claves dentro de los ≤ {incoherentConfig.windowDays} días. Puede ampliar el período de fechas o revisar la configuración de claves.
+                              No hubo discrepancias de claves para el mismo servicio y mismo folio dentro de los ≤ {incoherentConfig.windowDays} días. Puede ampliar el período de fechas o revisar la configuración de claves.
                             </p>
                           </td>
                         </tr>
@@ -3143,7 +3410,13 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                         incoherentEvents.map((evt, idx) => (
                           <tr key={evt.id} className="hover:bg-slate-800/50 transition-colors">
                             <td className="py-3 px-3 font-mono text-[10px] text-slate-500">{idx + 1}</td>
-                            <td className="py-3 px-3 font-black text-white font-mono">{evt.serviceNumber}</td>
+                            <td className="py-3 px-3">
+                              <div className="font-black text-white font-mono">{evt.serviceNumber}</div>
+                              <div className="mt-1 inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-mono text-[10px] font-bold">
+                                <span>Folio:</span>
+                                <span>{evt.folio || evt.firstTicket}</span>
+                              </div>
+                            </td>
                             <td className="py-3 px-3 text-slate-300">{evt.centralName}</td>
 
                             {/* 1st Visit Details */}

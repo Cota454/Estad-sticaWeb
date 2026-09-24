@@ -1,4 +1,4 @@
-import { RepairRecord, IncoherentAuditConfig, IncoherentEvent, IncoherentTechnicianSummary } from '../types';
+import { RepairRecord, IncoherentAuditConfig, IncoherentEvent, IncoherentTechnicianSummary, NonEffectiveMappingRule } from '../types';
 import { getStorageKey } from '../data/mockData';
 import { getIdbItem, setIdbItem } from './indexedDbStorage';
 import * as XLSX from 'xlsx-js-style';
@@ -8,7 +8,7 @@ const INCOHERENT_CONFIG_STORAGE_KEY = 'telecom_incoherent_audit_config_v1';
 
 export const DEFAULT_INCOHERENT_CONFIG: IncoherentAuditConfig = {
   windowDays: 30, // 30 días como solicitó el usuario
-  detectionMode: 'all_different', // 'all_different' | 'effective_vs_non_effective' | 'custom_rules'
+  detectionMode: 'effective_vs_non_effective', // 'all_different' | 'effective_vs_non_effective' | 'custom_rules'
   nonEffectiveClaves: [
     'C-01',
     'SIN FALLA',
@@ -31,7 +31,33 @@ export const DEFAULT_INCOHERENT_CONFIG: IncoherentAuditConfig = {
     'FALLA DE RED',
     'CENTRAL'
   ],
-  customPairs: []
+  customPairs: [],
+  nonEffectiveMappings: [
+    {
+      id: 'map_c01',
+      nonEffectiveClave: 'C-01',
+      effectiveClaves: ['C-02', 'C-03', 'C-04', 'C-05', 'C-06', 'PAR DAÑADO', 'CABLE ROTO', 'TERMINAL SULFATADA', 'FALLA DE RED', 'CENTRAL'],
+      description: 'C-01 (Sin Falla) refutado por Claves Efectivas / Falla Real'
+    },
+    {
+      id: 'map_sinfalla',
+      nonEffectiveClave: 'SIN FALLA',
+      effectiveClaves: ['C-02', 'C-03', 'C-04', 'C-05', 'PAR DAÑADO', 'CABLE ROTO', 'TERMINAL SULFATADA'],
+      description: 'Sin Falla refutado por Falla Real'
+    },
+    {
+      id: 'map_pruebasok',
+      nonEffectiveClave: 'PRUEBAS OK',
+      effectiveClaves: ['C-02', 'C-03', 'C-04', 'C-05', 'PAR DAÑADO', 'CABLE ROTO'],
+      description: 'Pruebas OK refutado por Falla Real'
+    },
+    {
+      id: 'map_okencasa',
+      nonEffectiveClave: 'OK EN CASA',
+      effectiveClaves: ['C-02', 'C-03', 'C-04', 'PAR DAÑADO', 'TERMINAL SULFATADA'],
+      description: 'OK En Casa refutado por Falla Real'
+    }
+  ]
 };
 
 export function loadIncoherentConfig(userEmail?: string): IncoherentAuditConfig {
@@ -45,7 +71,10 @@ export function loadIncoherentConfig(userEmail?: string): IncoherentAuditConfig 
       const parsed = JSON.parse(raw);
       return {
         ...DEFAULT_INCOHERENT_CONFIG,
-        ...parsed
+        ...parsed,
+        nonEffectiveMappings: (parsed.nonEffectiveMappings && parsed.nonEffectiveMappings.length > 0)
+          ? parsed.nonEffectiveMappings
+          : DEFAULT_INCOHERENT_CONFIG.nonEffectiveMappings
       };
     }
   } catch (e) {
@@ -123,7 +152,42 @@ function extractRowVal(record: RepairRecord, candidateKeys: string[], fallbackVa
 }
 
 /**
- * Computes all incoherent closure events (Falsos Cierres) across all repair records
+ * Extracts the Folio / Ticket for a repair record from rawRowData or ticketCode
+ */
+export function extractRecordFolio(record: RepairRecord): string {
+  const candidateKeys = [
+    'folio', 'ticket', 'folioticket', 'numfolio', 'nofolio', 'num_folio', 'no_folio',
+    'ot', 'orden', 'ordendetrabajo', 'orden_trabajo', 'reporte_folio', 'id_ticket', 'id'
+  ];
+  const fromRaw = extractRowVal(record, candidateKeys, '');
+  if (fromRaw && fromRaw !== '-' && fromRaw !== 'null' && fromRaw !== 'undefined') {
+    return fromRaw.trim();
+  }
+  if (record.ticketCode && record.ticketCode !== '-' && record.ticketCode.trim()) {
+    return record.ticketCode.trim();
+  }
+  return '';
+}
+
+/**
+ * Normalizes phone / subscriber string
+ */
+export function normalizeService(service?: string): string {
+  if (!service) return '';
+  return service.trim().toUpperCase().replace(/[\s\-_.]/g, '');
+}
+
+/**
+ * Normalizes folio string
+ */
+export function normalizeFolio(folio?: string): string {
+  if (!folio) return '';
+  return folio.trim().toUpperCase().replace(/\s+/g, '');
+}
+
+/**
+ * Computes all incoherent closure events (Falsos Cierres) across all repair records.
+ * CRITICAL REQUIREMENT: Must have the SAME Service AND the SAME Folio.
  */
 export function detectIncoherentEvents(
   records: RepairRecord[],
@@ -136,26 +200,35 @@ export function detectIncoherentEvents(
 ): IncoherentEvent[] {
   const windowDays = config.windowDays > 0 ? config.windowDays : 30;
 
-  // Group records by subscriber / service number
-  const serviceMap = new Map<string, RepairRecord[]>();
+  // Group records by BOTH subscriber (service number) AND folio
+  const serviceFolioMap = new Map<string, RepairRecord[]>();
 
   records.forEach(rec => {
     const sNum = (rec.serviceNumber || '').trim();
     if (!sNum) return;
-    if (!serviceMap.has(sNum)) {
-      serviceMap.set(sNum, []);
+
+    const folio = extractRecordFolio(rec);
+    if (!folio || folio === '-') return; // Must have both service and folio to audit
+
+    const normS = normalizeService(sNum);
+    const normF = normalizeFolio(folio);
+    if (!normS || !normF) return;
+
+    const groupKey = `${normS}:::${normF}`;
+    if (!serviceFolioMap.has(groupKey)) {
+      serviceFolioMap.set(groupKey, []);
     }
-    serviceMap.get(sNum)!.push(rec);
+    serviceFolioMap.get(groupKey)!.push(rec);
   });
 
   const incoherentEvents: IncoherentEvent[] = [];
 
-  serviceMap.forEach((subscriberVisits, sNum) => {
-    // Only analyze services visited 2 or more times
-    if (subscriberVisits.length < 2) return;
+  serviceFolioMap.forEach((folioVisits) => {
+    // Only analyze when there are 2 or more visits for the same Service and Folio
+    if (folioVisits.length < 2) return;
 
     // Sort chronologically by date
-    const sorted = [...subscriberVisits].sort((a, b) => {
+    const sorted = [...folioVisits].sort((a, b) => {
       const dateA = a.date || a.reportDate || '';
       const dateB = b.date || b.reportDate || '';
       return dateA.localeCompare(dateB);
@@ -191,30 +264,26 @@ export function detectIncoherentEvents(
         let incoherenceType = '';
         let severity: 'high' | 'medium' = 'medium';
 
-        if (config.detectionMode === 'all_different') {
-          if (clave1 !== clave2 && clave1 !== '' && clave2 !== '') {
-            isIncoherent = true;
-            const isNonEff1 = matchesClaveList(clave1, config.nonEffectiveClaves);
-            const isEff2 = matchesClaveList(clave2, config.effectiveClaves);
+        // 1. REGLAS DE ASIGNACIÓN: 1 Clave No Efectiva -> Múltiples Claves Efectivas Asignadas
+        // "si la 1ra visita es igual a la clave no efectiva y la 2da visita es igual a una de esas claves que se le asignó entonces tomarla como incoherencia"
+        const mappings = config.nonEffectiveMappings || [];
+        const matchedMapping = mappings.find(m => {
+          const normRuleNonEff = normalizeClave(m.nonEffectiveClave);
+          if (!normRuleNonEff) return false;
+          return normRuleNonEff === clave1 || clave1.startsWith(normRuleNonEff) || normRuleNonEff.startsWith(clave1);
+        });
 
-            if (isNonEff1 && isEff2) {
-              incoherenceType = `1ª Visita No Efectiva (${clave1}) ➔ 2ª Visita Falla Real (${clave2})`;
-              severity = 'high';
-            } else {
-              incoherenceType = `Discrepancia de Clave (${clave1} ➔ ${clave2})`;
-              severity = 'medium';
-            }
-          }
-        } else if (config.detectionMode === 'effective_vs_non_effective') {
-          const isNonEff1 = matchesClaveList(clave1, config.nonEffectiveClaves);
-          const isEff2 = matchesClaveList(clave2, config.effectiveClaves);
-
-          if (isNonEff1 && isEff2) {
+        if (matchedMapping && matchedMapping.effectiveClaves && matchedMapping.effectiveClaves.length > 0) {
+          const isSecondVisitAssigned = matchesClaveList(clave2, matchedMapping.effectiveClaves);
+          if (isSecondVisitAssigned) {
             isIncoherent = true;
-            incoherenceType = `Cierre No Efectivo (${clave1}) refutado por Cierre Efectivo (${clave2})`;
+            incoherenceType = matchedMapping.description || `1ª Visita No Efectiva (${clave1}) ➔ 2ª Visita Clave Efectiva Asignada (${clave2})`;
             severity = 'high';
           }
-        } else if (config.detectionMode === 'custom_rules') {
+        }
+
+        // 2. Reglas de Pares Personalizados (customPairs)
+        if (!isIncoherent && (config.detectionMode === 'custom_rules' || (config.customPairs && config.customPairs.length > 0))) {
           const matchedRule = config.customPairs.find(
             rule => normalizeClave(rule.fromClave) === clave1 && normalizeClave(rule.toClave) === clave2
           );
@@ -222,6 +291,34 @@ export function detectIncoherentEvents(
             isIncoherent = true;
             incoherenceType = matchedRule.description || `Incoherencia Regla: ${clave1} ➔ ${clave2}`;
             severity = 'high';
+          }
+        }
+
+        // 3. Modos Globales de Detección (si aún no coincidió con una regla de mapeo asignada)
+        if (!isIncoherent) {
+          if (config.detectionMode === 'all_different') {
+            if (clave1 !== clave2 && clave1 !== '' && clave2 !== '') {
+              isIncoherent = true;
+              const isNonEff1 = matchesClaveList(clave1, config.nonEffectiveClaves);
+              const isEff2 = matchesClaveList(clave2, config.effectiveClaves);
+
+              if (isNonEff1 && isEff2) {
+                incoherenceType = `1ª Visita No Efectiva (${clave1}) ➔ 2ª Visita Falla Real (${clave2})`;
+                severity = 'high';
+              } else {
+                incoherenceType = `Discrepancia de Clave (${clave1} ➔ ${clave2})`;
+                severity = 'medium';
+              }
+            }
+          } else if (config.detectionMode === 'effective_vs_non_effective') {
+            const isNonEff1 = matchesClaveList(clave1, config.nonEffectiveClaves);
+            const isEff2 = matchesClaveList(clave2, config.effectiveClaves);
+
+            if (isNonEff1 && isEff2) {
+              isIncoherent = true;
+              incoherenceType = `Cierre No Efectivo (${clave1}) refutado por Cierre Efectivo (${clave2})`;
+              severity = 'high';
+            }
           }
         }
 
@@ -244,11 +341,15 @@ export function detectIncoherentEvents(
             continue;
           }
 
+          const sNum = (visit1.serviceNumber || visit2.serviceNumber || '').trim();
+          const sharedFolio = extractRecordFolio(visit1) || extractRecordFolio(visit2);
+
           // Search term filter
           if (searchTerm) {
             const term = searchTerm.toLowerCase();
             const matchSearch =
               sNum.toLowerCase().includes(term) ||
+              sharedFolio.toLowerCase().includes(term) ||
               tech1.toLowerCase().includes(term) ||
               tech2.toLowerCase().includes(term) ||
               clave1.toLowerCase().includes(term) ||
@@ -261,9 +362,10 @@ export function detectIncoherentEvents(
           incoherentEvents.push({
             id: `inc_${visit1.id || i}_${visit2.id || j}`,
             serviceNumber: sNum,
+            folio: sharedFolio,
             centralName: central,
             firstRepairId: visit1.id || `rep_${i}`,
-            firstTicket: visit1.ticketCode || `FOL-${i + 1}`,
+            firstTicket: visit1.ticketCode || sharedFolio,
             firstDate: date1Str,
             firstReportDate: visit1.reportDate,
             firstTech: tech1,
@@ -272,7 +374,7 @@ export function detectIncoherentEvents(
             firstGrupo: visit1.grupo,
             firstRawRowData: visit1.rawRowData,
             secondRepairId: visit2.id || `rep_${j}`,
-            secondTicket: visit2.ticketCode || `FOL-${j + 1}`,
+            secondTicket: visit2.ticketCode || sharedFolio,
             secondDate: date2Str,
             secondReportDate: visit2.reportDate,
             secondTech: tech2,
@@ -395,14 +497,13 @@ export async function exportIncoherenciasExcel(
 
   const headers = [
     'No.',
-    'Teléfono',
+    'Teléfono / Servicio',
+    'Folio Compartido',
     'Central',
-    'Folio 1ª Visita',
     'Fecha 1ª Visita',
     'Técnico 1 (Responsable)',
     'Clave 1ª Visita',
     'Cable 1',
-    'Folio 2ª Visita',
     'Fecha 2ª Visita',
     'Técnico 2 (Auditor)',
     'Clave 2ª Visita',
@@ -414,7 +515,7 @@ export async function exportIncoherenciasExcel(
   ];
 
   const sheetData: any[][] = [];
-  sheetData.push([`AUDITORÍA DE CIERRES INCOHERENTES Y FALSOS CIERRES (Ventana: ≤ ${windowDays} Días)`]);
+  sheetData.push([`AUDITORÍA DE CIERRES INCOHERENTES Y FALSOS CIERRES (Mismo Servicio y Mismo Folio - Ventana: ≤ ${windowDays} Días)`]);
   sheetData.push([`Período: ${dateFrom || 'Inicio'} al ${dateTo || 'Hoy'} | Total Casos Incoherentes: ${events.length}`]);
   sheetData.push([]);
   sheetData.push(headers);
@@ -423,13 +524,12 @@ export async function exportIncoherenciasExcel(
     sheetData.push([
       idx + 1,
       evt.serviceNumber,
+      evt.folio || evt.firstTicket,
       evt.centralName,
-      evt.firstTicket,
       evt.firstDate,
       evt.firstTech,
       evt.firstClave,
       evt.firstCable || '-',
-      evt.secondTicket,
       evt.secondDate,
       evt.secondTech,
       evt.secondClave,

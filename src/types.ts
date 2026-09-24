@@ -285,17 +285,26 @@ export interface IncoherentClaveRule {
   description?: string;
 }
 
+export interface NonEffectiveMappingRule {
+  id: string;
+  nonEffectiveClave: string;       // Clave No Efectiva (1ª Visita)
+  effectiveClaves: string[];        // Varias Claves Efectivas asignadas (2ª Visita)
+  description?: string;
+}
+
 export interface IncoherentAuditConfig {
   windowDays: number; // default: 30 days
   detectionMode: IncoherenceDetectionMode;
   nonEffectiveClaves: string[]; // e.g. ['C-01', 'SIN FALLA', 'OK PRUEBAS']
   effectiveClaves: string[];    // e.g. ['C-02', 'C-03', 'C-04', 'PAR DAÑADO']
   customPairs: IncoherentClaveRule[];
+  nonEffectiveMappings?: NonEffectiveMappingRule[]; // Asignación 1 Clave No Efectiva -> Múltiples Claves Efectivas
 }
 
 export interface IncoherentEvent {
   id: string;
   serviceNumber: string;
+  folio?: string; // Folio compartido (mismo Servicio y mismo Folio)
   centralName: string;
   // 1st visit (First closure / Affected Technician)
   firstRepairId: string;
