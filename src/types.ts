@@ -94,6 +94,8 @@ export interface RepairRecord {
   technician: string;       // Brigada / Técnico
   issueType: string;        // Tipo de falla / descripción
   cable?: string;           // Columna Cable
+  terminal?: string;        // Columna Terminal / Caja de Dispersión
+  pair?: string;            // Columna Par (Primario / Secundario)
   grupo?: string;           // Columna Grupo
   claveCode?: string;       // Columna Clave
   status: 'resolved' | 'in_progress' | 'pending';
@@ -111,6 +113,8 @@ export interface RepairColumnMapping {
   ticketCol?: string;       // Excel column name for Ticket / Folio
   technicianCol?: string;   // Excel column name for Técnico / Brigada
   cableCol?: string;        // Excel column name for Cable
+  terminalCol?: string;     // Excel column name for Terminal / Caja
+  pairCol?: string;         // Excel column name for Par
   issueCol?: string;        // Fallback for Cable
   grupoCol?: string;        // Excel column name for Grupo
   statusCol?: string;       // Fallback for Grupo
@@ -343,5 +347,62 @@ export interface IncoherentTechnicianSummary {
   commonInitialClaves: { clave: string; count: number }[];
   commonRefutedByClaves: { clave: string; count: number }[];
   refutedByTechs: { technician: string; count: number }[];
+}
+
+export type PairMatchType = 'SAME_TERMINAL' | 'SIBLING_TERMINAL';
+export type PairIntervalPreset = '24h' | '48h' | '7d' | '15d' | '30d' | 'custom';
+export type PairSuspicionLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM';
+
+export interface PairCannibalizationEvent {
+  id: string;
+  centralName: string;
+  cable: string;
+  matchType: PairMatchType; // 'SAME_TERMINAL' (B2 = B2) | 'SIBLING_TERMINAL' (B2 vs B4, letra en común)
+  blockLetter: string;      // Letra del bloque/caja en común (ej. "B")
+  diffDays: number;         // Días entre la 1ª reparación y la 2ª reparación/avería
+  diffHoursEstimate?: number;
+  intervalCategory: string; // "24 Horas", "48 Horas", "Misma Semana (3-7d)", "Quincena (8-15d)", "Mes"
+  suspicionLevel: PairSuspicionLevel; // 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM
+  suspectedTechnician: string; // Operario de la 1ª intervención (sospechoso de haber intervenido la caja/par)
+  isSameTech: boolean;
+  description: string;
+
+  // Intervención 1 (El Servicio Reparado / Donante sospechoso)
+  firstRepairId: string;
+  firstTicket: string;
+  firstService: string;
+  firstDate: string;
+  firstTech: string;
+  firstTerminal: string;
+  firstPair?: string;
+  firstClave: string;
+  firstIssue?: string;
+  firstStatus?: string;
+  firstRawRowData?: Record<string, any>;
+
+  // Intervención 2 (El Servicio Interrumpido / Vecino Afectado)
+  secondRepairId: string;
+  secondTicket: string;
+  secondService: string;
+  secondDate: string;
+  secondTech: string;
+  secondTerminal: string;
+  secondPair?: string;
+  secondClave: string;
+  secondIssue?: string;
+  secondStatus?: string;
+  secondRawRowData?: Record<string, any>;
+}
+
+export interface TechnicianCollateralDamageSummary {
+  technician: string;
+  totalCollateralCases: number;     // Total de vecinos afectados tras su intervención
+  criticalCases: number;            // Afectaciones en <= 48h
+  highCases: number;                // Afectaciones en <= 7 días
+  sameTerminalCases: number;        // Mismo terminal exacto
+  siblingTerminalCases: number;     // Terminal hermano (misma letra)
+  mostAffectedCables: { cable: string; count: number }[];
+  mostAffectedTerminals: { terminal: string; count: number }[];
+  affectedServicesCount: number;
 }
 

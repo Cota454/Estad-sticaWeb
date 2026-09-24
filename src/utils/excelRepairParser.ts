@@ -114,6 +114,25 @@ export function processRepairRowsWithMapping(
     const rawTicket = mapping.ticketCol ? String(row[mapping.ticketCol] || '').trim() : '';
     const rawTech = mapping.technicianCol ? String(row[mapping.technicianCol] || '').trim() : '';
     const rawCable = mapping.cableCol ? String(row[mapping.cableCol] || '').trim() : (mapping.issueCol ? String(row[mapping.issueCol] || '').trim() : '');
+    
+    // Auto-detect or extract Terminal
+    let rawTerminal = mapping.terminalCol ? String(row[mapping.terminalCol] || '').trim() : '';
+    if (!rawTerminal) {
+      const termKey = Object.keys(row).find(k => /^(terminal|term|trm|caja|bloque|regleta|dispersion)/i.test(k.trim()));
+      if (termKey && row[termKey] !== undefined && row[termKey] !== null) {
+        rawTerminal = String(row[termKey]).trim();
+      }
+    }
+
+    // Auto-detect or extract Par
+    let rawPair = mapping.pairCol ? String(row[mapping.pairCol] || '').trim() : '';
+    if (!rawPair) {
+      const pairKey = Object.keys(row).find(k => /^(par|par_sec|par_prim|par_telefonico)/i.test(k.trim()));
+      if (pairKey && row[pairKey] !== undefined && row[pairKey] !== null) {
+        rawPair = String(row[pairKey]).trim();
+      }
+    }
+
     const rawGrupo = mapping.grupoCol ? String(row[mapping.grupoCol] || '').trim() : (mapping.statusCol ? String(row[mapping.statusCol] || '').trim() : '');
     const rawClave = mapping.claveCol ? String(row[mapping.claveCol] || '').trim() : '';
     const rawMttr = mapping.mttrCol ? row[mapping.mttrCol] : '';
@@ -200,6 +219,8 @@ export function processRepairRowsWithMapping(
       technician: rawTech || 'Brigada de Campo',
       issueType: rawCable || 'Avería General',
       cable: rawCable || 'Cable Principal',
+      terminal: rawTerminal || undefined,
+      pair: rawPair || undefined,
       grupo: rawGrupo || 'Planta Exterior',
       claveCode: rawClave || 'C-01',
       status,

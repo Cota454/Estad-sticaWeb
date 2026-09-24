@@ -9,7 +9,7 @@ import {
   Calendar, Upload, Download, Table, Layers, BarChart3, LineChart as LineChartIcon,
   AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
   Key, Save, ShieldAlert, RefreshCw, History, Database, AlertCircle, Sun, Moon,
-  FileSpreadsheet, AlertOctagon, UserX, ArrowRightCircle, RotateCcw
+  FileSpreadsheet, AlertOctagon, UserX, ArrowRightCircle, RotateCcw, Network
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -22,6 +22,7 @@ import {
   calculateTechnicianIncoherenceSummaries, exportIncoherenciasExcel, DEFAULT_INCOHERENT_CONFIG
 } from '../utils/incoherentAuditHelper';
 import { IncoherentClavesModal } from './IncoherentClavesModal';
+import { AuditoriaTerminalesParesView } from './AuditoriaTerminalesParesView';
 import { MONTH_NAMES_ES } from '../utils/dateUtils';
 import { filterReportsByMonthYear } from '../utils/statCalculations';
 import {
@@ -96,7 +97,7 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   const currentMonthKey = `${currentYearNum}-${currentMonthPadded}`;
 
   // Pestaña 5 (Servicios Reincidentes) Specific Filters
-  const [repeatedSubTab, setRepeatedSubTab] = useState<'list' | 'incoherence'>('list');
+  const [repeatedSubTab, setRepeatedSubTab] = useState<'list' | 'incoherence' | 'pair_cannibalization'>('list');
   const [incoherentConfig, setIncoherentConfig] = useState<IncoherentAuditConfig>(() => loadIncoherentConfig(currentUser?.email));
   const [isIncoherentModalOpen, setIsIncoherentModalOpen] = useState<boolean>(false);
   const [incoherentSearchTerm, setIncoherentSearchTerm] = useState<string>('');
@@ -219,6 +220,8 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
         ticketCol: findCol(['ticket', 'folio', 'orden', 'codigo', 'id']),
         technicianCol: findCol(['tecnico', 'brigada', 'contrata', 'personal']),
         cableCol: findCol(['cable', 'falla', 'averia', 'incidencia']),
+        terminalCol: findCol(['terminal', 'term', 'caja', 'bloque', 'trm', 'regleta', 'dispersion']),
+        pairCol: findCol(['par', 'pares', 'par_sec', 'par_prim', 'par_telefonico']),
         grupoCol: findCol(['grupo', 'estado', 'status', 'condicion', 'departamento']),
         claveCol: findCol(['clave', 'code', 'codigo', 'cierre', 'causa']),
         issueCol: findCol(['cable', 'falla', 'averia']),
@@ -2580,6 +2583,19 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                   {rawIncoherentEvents.length} Casos
                 </span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setRepeatedSubTab('pair_cannibalization')}
+                className={`flex items-center space-x-2 px-5 py-2.5 rounded-xl font-black text-xs transition-all ${
+                  repeatedSubTab === 'pair_cannibalization'
+                    ? 'bg-gradient-to-r from-rose-600 via-rose-700 to-indigo-600 text-white shadow-lg shadow-rose-600/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <Network className="w-4 h-4 text-cyan-300" />
+                <span>3. Auditoría de Terminales e Interrupciones (Canibalización de Pares)</span>
+              </button>
             </div>
 
             {/* Quick action: Open Clave Config modal from anywhere in tab 5 */}
@@ -3536,6 +3552,14 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
               </div>
             </div>
+          )}
+
+          {/* SUB-TAB 3: AUDITORÍA DE TERMINALES Y CANIBALIZACIÓN DE PARES */}
+          {repeatedSubTab === 'pair_cannibalization' && (
+            <AuditoriaTerminalesParesView
+              repairRecords={repairRecords}
+              isDarkMode={isDarkMode}
+            />
           )}
         </div>
       )}
