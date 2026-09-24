@@ -277,3 +277,62 @@ export interface ReportSettings {
   customConclusions: string;
 }
 
+export type IncoherenceDetectionMode = 'all_different' | 'effective_vs_non_effective' | 'custom_rules';
+
+export interface IncoherentClaveRule {
+  fromClave: string;
+  toClave: string;
+  description?: string;
+}
+
+export interface IncoherentAuditConfig {
+  windowDays: number; // default: 30 days
+  detectionMode: IncoherenceDetectionMode;
+  nonEffectiveClaves: string[]; // e.g. ['C-01', 'SIN FALLA', 'OK PRUEBAS']
+  effectiveClaves: string[];    // e.g. ['C-02', 'C-03', 'C-04', 'PAR DAÑADO']
+  customPairs: IncoherentClaveRule[];
+}
+
+export interface IncoherentEvent {
+  id: string;
+  serviceNumber: string;
+  centralName: string;
+  // 1st visit (First closure / Affected Technician)
+  firstRepairId: string;
+  firstTicket: string;
+  firstDate: string;
+  firstReportDate?: string;
+  firstTech: string;
+  firstClave: string;
+  firstCable?: string;
+  firstGrupo?: string;
+  firstRawRowData?: Record<string, any>;
+  // 2nd visit (Subsequent audit visit)
+  secondRepairId: string;
+  secondTicket: string;
+  secondDate: string;
+  secondReportDate?: string;
+  secondTech: string;
+  secondClave: string;
+  secondCable?: string;
+  secondGrupo?: string;
+  secondRawRowData?: Record<string, any>;
+  // Diff calculation
+  diffDays: number;
+  // Diagnostics
+  incoherenceType: string;
+  isSameTech: boolean;
+  affectedTech: string; // The 1st tech whose closure was contradicted
+  severity: 'high' | 'medium';
+}
+
+export interface IncoherentTechnicianSummary {
+  technician: string;
+  totalIncoherentClosures: number; // Number of times their 1st closure was refuted in <= 30 days
+  totalFirstVisits: number;        // Total initial visits recorded
+  refutationRate: number;          // % of initial visits that were refuted
+  commonInitialClaves: { clave: string; count: number }[];
+  commonRefutedByClaves: { clave: string; count: number }[];
+  refutedByTechs: { technician: string; count: number }[];
+}
+

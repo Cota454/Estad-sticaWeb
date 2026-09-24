@@ -1,4 +1,5 @@
 import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult, CablePendingTask, CableAfectacion, IpCableRow } from '../types/ipCablesTypes';
+import { getIdbItem, setIdbItem, deleteIdbItem } from './indexedDbStorage';
 
 const ZONES_STORAGE_KEY = 'telecomstat_ip_zones_v1';
 const CABLE_RULES_STORAGE_KEY = 'telecomstat_cable_rules_v1';
@@ -89,32 +90,76 @@ export function saveCableRules(rules: CableClassificationRules): void {
   }
 }
 
+let memoryCachedParsedIpData: IpCableExcelParseResult | null = null;
+
 export function loadParsedIpData(): IpCableExcelParseResult | null {
+  if (memoryCachedParsedIpData) {
+    return memoryCachedParsedIpData;
+  }
   try {
     const raw = localStorage.getItem(PARSED_DATA_STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      memoryCachedParsedIpData = JSON.parse(raw);
+      return memoryCachedParsedIpData;
     }
   } catch (e) {
-    console.error('Error loading parsed IP data from localStorage', e);
+    console.warn('Error loading parsed IP data from localStorage', e);
   }
   return null;
 }
 
-export function saveParsedIpData(data: IpCableExcelParseResult): void {
+/**
+ * Asynchronously loads parsed IP data from IndexedDB (ideal for large Excel files).
+ * Falls back to localStorage if IndexedDB is empty or not supported.
+ */
+export async function loadParsedIpDataAsync(): Promise<IpCableExcelParseResult | null> {
+  if (memoryCachedParsedIpData) {
+    return memoryCachedParsedIpData;
+  }
+
+  // 1. Try IndexedDB (handles gigabytes of data with zero quota errors)
+  try {
+    const idbData = await getIdbItem<IpCableExcelParseResult>(PARSED_DATA_STORAGE_KEY);
+    if (idbData && idbData.consolidatedRows && idbData.consolidatedRows.length > 0) {
+      memoryCachedParsedIpData = idbData;
+      return idbData;
+    }
+  } catch (e) {
+    console.warn('Error reading parsed IP data from IndexedDB:', e);
+  }
+
+  // 2. Fallback to localStorage
+  return loadParsedIpData();
+}
+
+/**
+ * Saves parsed IP data into both in-memory cache, IndexedDB (for unlimited permanent storage)
+ * and attempts localStorage (safely catching any 5MB QuotaExceededError).
+ */
+export async function saveParsedIpData(data: IpCableExcelParseResult): Promise<boolean> {
+  memoryCachedParsedIpData = data;
+
+  // Try saving to localStorage for instant synchronous reads if small
   try {
     localStorage.setItem(PARSED_DATA_STORAGE_KEY, JSON.stringify(data));
   } catch (e) {
-    console.error('Error saving parsed IP data to localStorage', e);
+    // QuotaExceededError is normal in browsers when Excel files exceed 5MB.
+    // Safely continue since IndexedDB stores the complete dataset reliably.
+    console.warn('localStorage quota exceeded for IP Excel data; IndexedDB will maintain permanent persistence:', e);
   }
+
+  // Save to IndexedDB permanently
+  return await setIdbItem(PARSED_DATA_STORAGE_KEY, data);
 }
 
-export function clearParsedIpData(): void {
+export async function clearParsedIpData(): Promise<boolean> {
+  memoryCachedParsedIpData = null;
   try {
     localStorage.removeItem(PARSED_DATA_STORAGE_KEY);
   } catch (e) {
-    console.error('Error clearing parsed IP data from localStorage', e);
+    console.warn('Error clearing parsed IP data from localStorage', e);
   }
+  return await deleteIdbItem(PARSED_DATA_STORAGE_KEY);
 }
 
 const PRINTED_SERVICES_STORAGE_KEY = 'telecomstat_printed_services_v1';

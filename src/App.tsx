@@ -345,14 +345,14 @@ export default function App() {
     if (newCentralesToAdd && newCentralesToAdd.length > 0) {
       updatedCentrales = [...updatedCentrales, ...newCentralesToAdd];
       setCentrales(updatedCentrales);
-      saveCentrales(updatedCentrales);
+      saveCentrales(updatedCentrales, currentUser?.email);
     }
 
     let updatedWorkGroups = [...workGroups];
     if (newWorkGroupsToAdd && newWorkGroupsToAdd.length > 0) {
       updatedWorkGroups = [...updatedWorkGroups, ...newWorkGroupsToAdd];
       setWorkGroups(updatedWorkGroups);
-      saveWorkGroups(updatedWorkGroups);
+      saveWorkGroups(updatedWorkGroups, currentUser?.email);
     }
 
     let finalReports = [...reports];
@@ -386,7 +386,7 @@ export default function App() {
     }
 
     setReports(finalReports);
-    saveReports(finalReports);
+    saveReports(finalReports, currentUser?.email);
     triggerAutoDriveBackup(updatedCentrales, updatedWorkGroups, finalReports);
   };
 
@@ -395,7 +395,7 @@ export default function App() {
     const updatedReports = [...filteredOut, ...reportsToSave];
 
     setReports(updatedReports);
-    saveReports(updatedReports);
+    saveReports(updatedReports, currentUser?.email);
     triggerAutoDriveBackup(centrales, workGroups, updatedReports);
   };
 

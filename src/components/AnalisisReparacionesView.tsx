@@ -8,9 +8,20 @@ import {
   Search, Filter, Sparkles, ArrowLeft, UserCheck, Building2,
   Calendar, Upload, Download, Table, Layers, BarChart3, LineChart as LineChartIcon,
   AreaChart as AreaChartIcon, Repeat, Plus, Trash2, Check, ArrowUp, ArrowDown,
-  Key, Save, ShieldAlert, RefreshCw, History, Database, AlertCircle, Sun, Moon
+  Key, Save, ShieldAlert, RefreshCw, History, Database, AlertCircle, Sun, Moon,
+  FileSpreadsheet, AlertOctagon, UserX, ArrowRightCircle
 } from 'lucide-react';
-import { Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema, UserProfile, SystemDataBackup } from '../types';
+import * as XLSX from 'xlsx-js-style';
+import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
+import {
+  Central, WorkGroup, DailyReport, RepairRecord, RepairColumnMapping, CustomTableSchema,
+  UserProfile, SystemDataBackup, IncoherentAuditConfig, IncoherentEvent, IncoherentTechnicianSummary
+} from '../types';
+import {
+  loadIncoherentConfig, saveIncoherentConfig, detectIncoherentEvents,
+  calculateTechnicianIncoherenceSummaries, exportIncoherenciasExcel, DEFAULT_INCOHERENT_CONFIG
+} from '../utils/incoherentAuditHelper';
+import { IncoherentClavesModal } from './IncoherentClavesModal';
 import { MONTH_NAMES_ES } from '../utils/dateUtils';
 import { filterReportsByMonthYear } from '../utils/statCalculations';
 import {
@@ -75,12 +86,33 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   const [chartType, setChartType] = useState<ChartType>('bar_grouped');
   const [showValuesOnBars, setShowValuesOnBars] = useState<boolean>(true);
 
+  // Client PC / Browser current date calculation
+  const currentYearNum = todayDate.getFullYear();
+  const currentMonthIdxNum = todayDate.getMonth(); // 0 to 11
+  const todayDayNum = todayDate.getDate();
+  const currentMonthPadded = String(currentMonthIdxNum + 1).padStart(2, '0');
+  const todayDateStr = `${currentYearNum}-${currentMonthPadded}-${String(todayDayNum).padStart(2, '0')}`;
+  const firstDayOfCurrentMonthStr = `${currentYearNum}-${currentMonthPadded}-01`;
+  const currentMonthKey = `${currentYearNum}-${currentMonthPadded}`;
+
   // Pestaña 5 (Servicios Reincidentes) Specific Filters
+  const [repeatedSubTab, setRepeatedSubTab] = useState<'list' | 'incoherence'>('list');
+  const [incoherentConfig, setIncoherentConfig] = useState<IncoherentAuditConfig>(() => loadIncoherentConfig(currentUser?.email));
+  const [isIncoherentModalOpen, setIsIncoherentModalOpen] = useState<boolean>(false);
+  const [incoherentSearchTerm, setIncoherentSearchTerm] = useState<string>('');
+  const [incoherentTechFilter, setIncoherentTechFilter] = useState<string>('all');
+  const [incoherentCentralFilter, setIncoherentCentralFilter] = useState<string>('all');
+  const [incoherentSeverityFilter, setIncoherentSeverityFilter] = useState<'all' | 'high' | 'medium'>('all');
+
   const [repeatedMinCount, setRepeatedMinCount] = useState<number>(2);
   const [repeatedSearchTerm, setRepeatedSearchTerm] = useState<string>('');
   const [repeatedCentralFilter, setRepeatedCentralFilter] = useState<string>('all');
   const [repeatedTechFilter, setRepeatedTechFilter] = useState<string>('all');
   const [repeatedSortOrder, setRepeatedSortOrder] = useState<SortOrder>('desc');
+  // New Date Interval & Month Filters for Pestaña 5 (Default: 1st of current month to today's date from PC)
+  const [repeatedDateFrom, setRepeatedDateFrom] = useState<string>(firstDayOfCurrentMonthStr);
+  const [repeatedDateTo, setRepeatedDateTo] = useState<string>(todayDateStr);
+  const [repeatedMonthFilter, setRepeatedMonthFilter] = useState<string>(currentMonthKey);
 
   // Pestaña 6 (Análisis de Claves) Filter
   const [keysCentralFilter, setKeysCentralFilter] = useState<string>('all');
@@ -640,7 +672,62 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     });
   }, [reports, repairRecords]);
 
-  // Pestaña 5: Repeated Services Analysis (Filtered by Technician, Month/Year, Search & Sort Order)
+  // Helper: List of unique months from records + current month
+  const availableMonthsForRepeated = useMemo(() => {
+    const monthMap = new Map<string, string>();
+    // Always include current month
+    monthMap.set(currentMonthKey, `${MONTH_NAMES_ES[currentMonthIdxNum]} ${currentYearNum} (Mes Actual)`);
+
+    repairRecords.forEach(r => {
+      const d = r.date || r.reportDate;
+      if (d && d.length >= 7) {
+        const ym = d.substring(0, 7);
+        if (!monthMap.has(ym)) {
+          const parts = ym.split('-');
+          const y = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10) - 1;
+          const mName = MONTH_NAMES_ES[m] || parts[1];
+          monthMap.set(ym, `${mName} ${y}${ym === currentMonthKey ? ' (Mes Actual)' : ''}`);
+        }
+      }
+    });
+
+    return Array.from(monthMap.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [repairRecords, currentMonthKey, currentMonthIdxNum, currentYearNum]);
+
+  // Handler for Month Filter dropdown
+  const handleMonthFilterChange = (mKey: string) => {
+    setRepeatedMonthFilter(mKey);
+    if (mKey === 'all') {
+      setRepeatedDateFrom('');
+      setRepeatedDateTo('');
+    } else if (mKey === 'current' || mKey === currentMonthKey) {
+      setRepeatedDateFrom(firstDayOfCurrentMonthStr);
+      setRepeatedDateTo(todayDateStr);
+    } else {
+      const [yStr, mStr] = mKey.split('-');
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      const start = `${yStr}-${mStr}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const end = `${yStr}-${mStr}-${String(lastDay).padStart(2, '0')}`;
+      setRepeatedDateFrom(start);
+      setRepeatedDateTo(end);
+    }
+  };
+
+  // List of all technicians present across repair records
+  const availableTechnicians = useMemo(() => {
+    const set = new Set<string>();
+    repairRecords.forEach(r => {
+      if (r.technician && r.technician.trim()) {
+        set.add(r.technician.trim());
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [repairRecords]);
+
+  // Pestaña 5: Repeated Services Analysis (Filtered by Date Interval / Month, Technician, Search & Sort Order)
   const repeatedServicesData = useMemo(() => {
     const serviceMap: Record<string, {
       serviceNumber: string;
@@ -658,15 +745,14 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       const sNum = (r.serviceNumber || '').trim();
       if (!sNum) return;
 
-      if (selectedYear !== -1 || selectedMonth !== -1) {
-        if (!r.date) return;
-        const parts = r.date.split('-');
-        if (parts.length === 3) {
-          const rYear = parseInt(parts[0], 10);
-          const rMonth = parseInt(parts[1], 10) - 1;
-          if (selectedYear !== -1 && rYear !== selectedYear) return;
-          if (selectedMonth !== -1 && rMonth !== selectedMonth) return;
-        }
+      // Filter by Date Interval (repeatedDateFrom to repeatedDateTo)
+      // Check repair date (r.date), fallback to reportDate
+      const recordDate = (r.date || r.reportDate || '').trim();
+      if (recordDate) {
+        if (repeatedDateFrom && recordDate < repeatedDateFrom) return;
+        if (repeatedDateTo && recordDate > repeatedDateTo) return;
+      } else {
+        if (repeatedDateFrom || repeatedDateTo) return;
       }
 
       if (repeatedTechFilter !== 'all' && r.technician !== repeatedTechFilter) {
@@ -679,9 +765,9 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           repairs: [],
           count: 0,
           centralNames: new Set(),
-          latestDate: r.date,
+          latestDate: r.date || r.reportDate || '',
           latestTech: r.technician,
-          latestCable: r.cable || r.issueType,
+          latestCable: r.cable || r.issueType || 'General',
           latestClave: r.claveCode || 'C-01',
           latestStatus: r.status
         };
@@ -689,13 +775,15 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
       serviceMap[sNum].repairs.push(r);
       serviceMap[sNum].count += 1;
-      serviceMap[sNum].centralNames.add(r.centralName);
+      if (r.centralName) {
+        serviceMap[sNum].centralNames.add(r.centralName);
+      }
 
-      if (r.date >= serviceMap[sNum].latestDate) {
+      if (r.date && r.date >= serviceMap[sNum].latestDate) {
         serviceMap[sNum].latestDate = r.date;
-        serviceMap[sNum].latestTech = r.technician;
-        serviceMap[sNum].latestCable = r.cable || r.issueType;
-        serviceMap[sNum].latestClave = r.claveCode || 'C-01';
+        serviceMap[sNum].latestTech = r.technician || serviceMap[sNum].latestTech;
+        serviceMap[sNum].latestCable = r.cable || r.issueType || serviceMap[sNum].latestCable;
+        serviceMap[sNum].latestClave = r.claveCode || serviceMap[sNum].latestClave;
         serviceMap[sNum].latestStatus = r.status;
       }
     });
@@ -722,7 +810,369 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
     });
 
     return list;
-  }, [repairRecords, selectedMonth, selectedYear, repeatedTechFilter, repeatedMinCount, repeatedCentralFilter, repeatedSearchTerm, repeatedSortOrder]);
+  }, [repairRecords, repeatedDateFrom, repeatedDateTo, repeatedTechFilter, repeatedMinCount, repeatedCentralFilter, repeatedSearchTerm, repeatedSortOrder]);
+
+  // Total count of reincidence events
+  const totalReincidenciasEvents = useMemo(() => {
+    return repeatedServicesData.reduce((acc, r) => acc + r.count, 0);
+  }, [repeatedServicesData]);
+
+  // Download Excel with all requested columns for Total Reincidencias
+  const handleExportReincidenciasExcel = async () => {
+    const exportRows: any[] = [];
+
+    // Helper to search across keys in rawRowData or record
+    const extractVal = (
+      record: RepairRecord,
+      keys: string[],
+      fallbackVal: string = '-'
+    ): string => {
+      if (record.rawRowData && typeof record.rawRowData === 'object') {
+        const rawKeys = Object.keys(record.rawRowData);
+        for (const targetKey of keys) {
+          const normTarget = targetKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const foundKey = rawKeys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normTarget);
+          if (foundKey && record.rawRowData[foundKey] !== undefined && record.rawRowData[foundKey] !== null) {
+            const val = String(record.rawRowData[foundKey]).trim();
+            if (val) return val;
+          }
+        }
+      }
+      return fallbackVal;
+    };
+
+    repeatedServicesData.forEach(serviceItem => {
+      // Sort repairs of this subscriber chronologically
+      const sortedRepairs = [...serviceItem.repairs].sort((a, b) => {
+        const dateA = a.reportDate || a.date || '';
+        const dateB = b.reportDate || b.date || '';
+        return dateA.localeCompare(dateB);
+      });
+
+      sortedRepairs.forEach((r) => {
+        // 1. Folio
+        const folio = extractVal(
+          r,
+          ['folio', 'ticket', 'folioticket', 'ot', 'orden', 'ordendetrabajo', 'id'],
+          r.ticketCode || '-'
+        );
+
+        // 2. Telefono
+        const telefono = extractVal(
+          r,
+          ['telefono', 'teléfono', 'tel', 'servicio', 'abonado', 'linea', 'línea', 'numero', 'número'],
+          r.serviceNumber || serviceItem.serviceNumber || '-'
+        );
+
+        // 3. Asociado
+        const asociado = extractVal(
+          r,
+          ['asociado', 'servicioasociado', 'telasociado', 'telefonoasociado', 'teléfonoasociado', 'numeroasociado', 'lineaasociada'],
+          '-'
+        );
+
+        // 4. Cable
+        const cable = extractVal(
+          r,
+          ['cable', 'cablep', 'cables', 'cableprincipal', 'cablesecundario', 'falla', 'averia'],
+          r.cable || r.issueType || '-'
+        );
+
+        // 5. Par
+        const par = extractVal(
+          r,
+          ['par', 'parp', 'pars', 'parprimario', 'parsecundario', 'paralimentador', 'pardistribucion'],
+          '-'
+        );
+
+        // 6. Fecha Reporte
+        const fechaReporte = extractVal(
+          r,
+          ['fechareporte', 'fechadereporte', 'freporte', 'fechaingreso', 'fechaapertura', 'fechasolicitud', 'reporte'],
+          r.reportDate || r.date || '-'
+        );
+
+        // 7. Clave
+        const clave = extractVal(
+          r,
+          ['clave', 'clavecode', 'codigo', 'código', 'causa', 'cierre', 'tipofalla', 'clavecierre'],
+          r.claveCode || '-'
+        );
+
+        // 8. Grupo
+        const grupo = extractVal(
+          r,
+          ['grupo', 'grupodetrabajo', 'brigada', 'area', 'departamento'],
+          r.grupo || '-'
+        );
+
+        // 10. Fecha Cierre
+        const fechaCierre = extractVal(
+          r,
+          ['fechacierre', 'fechadecierre', 'fcierre', 'fechareparacion', 'fechareparación', 'fechaatencion', 'fechaatención', 'cierre', 'fechaliquidacion'],
+          r.date || '-'
+        );
+
+        // 9. Demora en Días
+        let demora = extractVal(
+          r,
+          ['demoraendias', 'demoraendías', 'demorandias', 'demoradias', 'demoradías', 'demora', 'dias', 'días', 'duraciondias', 'tiempo'],
+          ''
+        );
+        if (!demora && fechaCierre !== '-' && fechaReporte !== '-') {
+          const tCierre = new Date(fechaCierre.replace(/-/g, '/')).getTime();
+          const tReporte = new Date(fechaReporte.replace(/-/g, '/')).getTime();
+          if (!isNaN(tCierre) && !isNaN(tReporte)) {
+            const diffDays = Math.max(0, Math.round((tCierre - tReporte) / (1000 * 60 * 60 * 24)));
+            demora = String(diffDays);
+          }
+        }
+        if (!demora) demora = '0';
+
+        // 11. Despachador
+        const despachador = extractVal(
+          r,
+          ['despachador', 'despacho', 'operador', 'controlador', 'despachadopor', 'despachotecnico'],
+          r.technician || '-'
+        );
+
+        // 12. Central Telefónica
+        const centralTelefonica = extractVal(
+          r,
+          ['centraltelefonica', 'centraltelefónica', 'central', 'cta', 'nodo', 'centraltel'],
+          r.centralName || '-'
+        );
+
+        // 13. Terminal
+        const terminal = extractVal(
+          r,
+          ['terminal', 'cajaterminal', 'caja', 'direccionterminal', 'distribuidor', 'borne'],
+          '-'
+        );
+
+        // 14. Dirección
+        const direccion = extractVal(
+          r,
+          ['direccion', 'dirección', 'domicilio', 'ubicacion', 'ubicación', 'calle', 'direccionabonado'],
+          '-'
+        );
+
+        exportRows.push({
+          'Folio': folio,
+          'Telefono': telefono,
+          'Asociado': asociado,
+          'Cable': cable,
+          'Par': par,
+          'Fecha Reporte': fechaReporte,
+          'Clave': clave,
+          'Grupo': grupo,
+          'Demora en Días': demora,
+          'Fecha Cierre': fechaCierre,
+          'Despachador': despachador,
+          'Central Telefónica': centralTelefonica,
+          'Terminal': terminal,
+          'Dirección': direccion
+        });
+      });
+    });
+
+    if (exportRows.length === 0) {
+      alert('No se encontraron reincidencias con los filtros de fecha y técnicos seleccionados.');
+      return;
+    }
+
+    // Exact headers ordered as requested:
+    // Folio, Telefono, Asociado, Cable, Par, Fecha Reporte, Clave, Grupo, Demora en Días, Fecha Cierre, Despachador, Central Telefónica, Terminal, Dirección
+    const headers = [
+      'Folio',
+      'Telefono',
+      'Asociado',
+      'Cable',
+      'Par',
+      'Fecha Reporte',
+      'Clave',
+      'Grupo',
+      'Demora en Días',
+      'Fecha Cierre',
+      'Despachador',
+      'Central Telefónica',
+      'Terminal',
+      'Dirección'
+    ];
+
+    const sheetData: any[][] = [];
+    sheetData.push([`REPORTE DE TOTAL DE REINCIDENCIAS (${repeatedDateFrom || 'Inicio'} al ${repeatedDateTo || 'Fin'})`]);
+    sheetData.push([`Total Servicios Reincidentes: ${repeatedServicesData.length} | Total Eventos de Reincidencia: ${exportRows.length}`]);
+    sheetData.push([]); // blank row
+    sheetData.push(headers);
+
+    exportRows.forEach(row => {
+      sheetData.push(headers.map(h => row[h]));
+    });
+
+    sheetData.push([]);
+    sheetData.push([
+      'TOTAL REINCIDENCIAS',
+      exportRows.length,
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      `Abonados Únicos: ${repeatedServicesData.length}`,
+      '-',
+      '-'
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+
+    worksheet['!cols'] = [
+      { wch: 18 }, // Folio
+      { wch: 16 }, // Telefono
+      { wch: 14 }, // Asociado
+      { wch: 24 }, // Cable
+      { wch: 12 }, // Par
+      { wch: 16 }, // Fecha Reporte
+      { wch: 12 }, // Clave
+      { wch: 20 }, // Grupo
+      { wch: 16 }, // Demora en Días
+      { wch: 16 }, // Fecha Cierre
+      { wch: 22 }, // Despachador
+      { wch: 24 }, // Central Telefónica
+      { wch: 14 }, // Terminal
+      { wch: 32 }  // Dirección
+    ];
+
+    if (worksheet['A1']) {
+      worksheet['A1'].s = {
+        font: { bold: true, sz: 14, color: { rgb: '1E293B' } }
+      };
+    }
+    if (worksheet['A2']) {
+      worksheet['A2'].s = {
+        font: { italic: true, sz: 10, color: { rgb: '64748B' } }
+      };
+    }
+
+    const headerRowIndex = 3;
+    const borderStyle = {
+      top: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      left: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      right: { style: 'thin', color: { rgb: 'CBD5E1' } }
+    };
+
+    headers.forEach((_, colIdx) => {
+      const cellRef = XLSX.utils.encode_cell({ r: headerRowIndex, c: colIdx });
+      if (worksheet[cellRef]) {
+        worksheet[cellRef].s = {
+          fill: { fgColor: { rgb: '1E293B' } },
+          font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+          border: borderStyle
+        };
+      }
+    });
+
+    for (let rIdx = 0; rIdx < exportRows.length; rIdx++) {
+      const sheetRow = headerRowIndex + 1 + rIdx;
+      const isEven = rIdx % 2 === 0;
+      const bgRgb = isEven ? 'FFFFFF' : 'F8FAFC';
+
+      headers.forEach((h, cIdx) => {
+        const cellRef = XLSX.utils.encode_cell({ r: sheetRow, c: cIdx });
+        if (worksheet[cellRef]) {
+          const isCenter = ['Folio', 'Telefono', 'Asociado', 'Par', 'Fecha Reporte', 'Clave', 'Demora en Días', 'Fecha Cierre', 'Terminal'].includes(h);
+          worksheet[cellRef].s = {
+            fill: { fgColor: { rgb: bgRgb } },
+            font: { sz: 10, color: { rgb: '0F172A' } },
+            alignment: { horizontal: isCenter ? 'center' : 'left', vertical: 'center' },
+            border: borderStyle
+          };
+        }
+      });
+    }
+
+    const totalRowIndex = headerRowIndex + 1 + exportRows.length + 1;
+    headers.forEach((_, cIdx) => {
+      const cellRef = XLSX.utils.encode_cell({ r: totalRowIndex, c: cIdx });
+      if (worksheet[cellRef]) {
+        worksheet[cellRef].s = {
+          fill: { fgColor: { rgb: 'FEF3C7' } },
+          font: { bold: true, sz: 11, color: { rgb: '92400E' } },
+          alignment: { horizontal: 'center', vertical: 'center' },
+          border: borderStyle
+        };
+      }
+    });
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Reincidencias');
+
+    const baseName = `Total_Reincidencias_${repeatedDateFrom || 'Inicio'}_al_${repeatedDateTo || 'Fin'}`;
+    await saveXlsxWorkbook(workbook, baseName);
+  };
+
+  // Unique claves from repairRecords for easy tagging in modal
+  const allUniqueClavesFromRecords = useMemo(() => {
+    const set = new Set<string>();
+    repairRecords.forEach(r => {
+      const c = (r.claveCode || '').trim();
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort();
+  }, [repairRecords]);
+
+  // Save new Incoherent Config
+  const handleSaveIncoherentConfig = (newConfig: IncoherentAuditConfig) => {
+    setIncoherentConfig(newConfig);
+    saveIncoherentConfig(newConfig, currentUser?.email);
+  };
+
+  // Detect Incoherent Closures (Falsos Cierres)
+  const rawIncoherentEvents = useMemo(() => {
+    return detectIncoherentEvents(
+      repairRecords,
+      incoherentConfig,
+      repeatedDateFrom,
+      repeatedDateTo,
+      incoherentTechFilter,
+      incoherentCentralFilter,
+      incoherentSearchTerm
+    );
+  }, [
+    repairRecords,
+    incoherentConfig,
+    repeatedDateFrom,
+    repeatedDateTo,
+    incoherentTechFilter,
+    incoherentCentralFilter,
+    incoherentSearchTerm
+  ]);
+
+  const incoherentEvents = useMemo(() => {
+    if (incoherentSeverityFilter === 'all') return rawIncoherentEvents;
+    return rawIncoherentEvents.filter(e => e.severity === incoherentSeverityFilter);
+  }, [rawIncoherentEvents, incoherentSeverityFilter]);
+
+  // Summarize impact on affected 1st technicians
+  const technicianIncoherenceSummaries = useMemo(() => {
+    return calculateTechnicianIncoherenceSummaries(rawIncoherentEvents, repairRecords);
+  }, [rawIncoherentEvents, repairRecords]);
+
+  // Export Incoherencias Excel
+  const handleExportIncoherencias = async () => {
+    await exportIncoherenciasExcel(
+      incoherentEvents,
+      incoherentConfig.windowDays,
+      repeatedDateFrom,
+      repeatedDateTo
+    );
+  };
 
   // Pestaña 6 (NUEVO DASHBOARD): Clave Analysis Dashboard (Matriz Clave vs Centrales & Clave vs Técnico)
   const claveAnalysisData = useMemo(() => {
@@ -2023,7 +2473,62 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
       {/* TAB 5: SERVICIOS REINCIDENTES (PESTAÑA NÚMERO 5 CON FILTROS MES/AÑO, ORDEN MAYOR/MENOR Y FILTRO POR TÉCNICO) */}
       {activeTab === 'repeated' && (
         <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
+
+          {/* SUB-TABS SELECTOR DENTRO DE PESTAÑA 5 */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-2 bg-slate-900 border border-slate-800 rounded-2xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setRepeatedSubTab('list')}
+                className={`flex items-center space-x-2 px-5 py-2.5 rounded-xl font-black text-xs transition-all ${
+                  repeatedSubTab === 'list'
+                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <Repeat className="w-4 h-4" />
+                <span>1. Listado General de Reincidentes</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  repeatedSubTab === 'list' ? 'bg-rose-700 text-white' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {repeatedServicesData.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRepeatedSubTab('incoherence')}
+                className={`flex items-center space-x-2 px-5 py-2.5 rounded-xl font-black text-xs transition-all ${
+                  repeatedSubTab === 'incoherence'
+                    ? 'bg-gradient-to-r from-rose-600 via-rose-700 to-amber-600 text-white shadow-lg shadow-rose-600/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <ShieldAlert className="w-4 h-4 text-amber-300" />
+                <span>2. Auditoría de Cierres Incoherentes (Falsos Cierres)</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  repeatedSubTab === 'incoherence' ? 'bg-amber-400 text-slate-950 font-black' : 'bg-rose-500/20 text-rose-300'
+                }`}>
+                  {rawIncoherentEvents.length} Casos
+                </span>
+              </button>
+            </div>
+
+            {/* Quick action: Open Clave Config modal from anywhere in tab 5 */}
+            <button
+              type="button"
+              onClick={() => setIsIncoherentModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center space-x-2"
+              title="Configurar ventana de días y clasificación de claves efectivas vs no efectivas"
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>Configurar Claves (Efectivas vs No Efectivas)</span>
+            </button>
+          </div>
+
+          {/* SUB-TAB 1: LISTADO GENERAL */}
+          {repeatedSubTab === 'list' && (
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <span className="bg-rose-500/20 text-rose-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
@@ -2038,11 +2543,132 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                 </p>
               </div>
 
-              <CopyTableButton
-                headers={['Servicio', 'Reincidencias', 'Centrales', 'Fechas', 'Último Cable', 'Último Técnico']}
-                rows={repeatedCopyRows}
-                label="Copiar Reincidentes"
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleExportReincidenciasExcel}
+                  disabled={repeatedServicesData.length === 0}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs px-4 py-2 rounded-xl transition-all shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center space-x-2"
+                  title="Descargar Excel con todas las columnas de reincidencias requeridas"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                  <span>Descargar Excel Reincidencias ({totalReincidenciasEvents})</span>
+                </button>
+
+                <CopyTableButton
+                  headers={['Servicio', 'Reincidencias', 'Centrales', 'Fechas', 'Último Cable', 'Último Técnico']}
+                  rows={repeatedCopyRows}
+                  label="Copiar Reincidentes"
+                />
+              </div>
+            </div>
+
+            {/* TAB 5 DATE INTERVAL & MONTH FILTERS (FILTRO POR INTERVALO DE FECHA Y FILTRO POR MESES) */}
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                <div className="flex items-center space-x-2">
+                  <Calendar className="w-4 h-4 text-rose-400" />
+                  <span className="text-xs font-black text-white uppercase tracking-wider">Período de Análisis de Reincidencias</span>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    ({repeatedDateFrom ? repeatedDateFrom : 'Inicio'} al {repeatedDateTo ? repeatedDateTo : 'Hoy'})
+                  </span>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={() => handleMonthFilterChange(currentMonthKey)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                      repeatedMonthFilter === currentMonthKey
+                        ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                    }`}
+                  >
+                    Mes Actual (1° a hoy)
+                  </button>
+                  <button
+                    onClick={() => {
+                      const d30 = new Date(todayDate);
+                      d30.setDate(d30.getDate() - 30);
+                      const y30 = d30.getFullYear();
+                      const m30 = String(d30.getMonth() + 1).padStart(2, '0');
+                      const day30 = String(d30.getDate()).padStart(2, '0');
+                      setRepeatedDateFrom(`${y30}-${m30}-${day30}`);
+                      setRepeatedDateTo(todayDateStr);
+                      setRepeatedMonthFilter('custom');
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-all"
+                  >
+                    Últimos 30 días
+                  </button>
+                  <button
+                    onClick={() => handleMonthFilterChange('all')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                      repeatedMonthFilter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                    }`}
+                  >
+                    Todo el Historial
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* 1. Month Filter */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                    Filtro por Mes:
+                  </label>
+                  <select
+                    value={repeatedMonthFilter}
+                    onChange={(e) => handleMonthFilterChange(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:border-rose-500 font-semibold"
+                  >
+                    <option value={currentMonthKey}>
+                      {MONTH_NAMES_ES[currentMonthIdxNum]} {currentYearNum} (Mes Actual: 1° a hoy)
+                    </option>
+                    {availableMonthsForRepeated.filter(([k]) => k !== currentMonthKey).map(([k, label]) => (
+                      <option key={k} value={k}>{label}</option>
+                    ))}
+                    <option value="all">Todos los meses (Sin restricción)</option>
+                    {repeatedMonthFilter === 'custom' && (
+                      <option value="custom">Personalizado (Rango manual)</option>
+                    )}
+                  </select>
+                </div>
+
+                {/* 2. Date Range: From */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                    Intervalo de Fecha - Desde:
+                  </label>
+                  <input
+                    type="date"
+                    value={repeatedDateFrom}
+                    onChange={(e) => {
+                      setRepeatedDateFrom(e.target.value);
+                      setRepeatedMonthFilter('custom');
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:border-rose-500 font-mono"
+                  />
+                </div>
+
+                {/* 3. Date Range: To */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                    Intervalo de Fecha - Hasta:
+                  </label>
+                  <input
+                    type="date"
+                    value={repeatedDateTo}
+                    onChange={(e) => {
+                      setRepeatedDateTo(e.target.value);
+                      setRepeatedMonthFilter('custom');
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:border-rose-500 font-mono"
+                  />
+                </div>
+              </div>
             </div>
 
             {/* TAB 5 SPECIFIC CONTROLS & FILTERS */}
@@ -2128,26 +2754,516 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 font-medium">
-                  {repeatedServicesData.map((item) => (
-                    <tr key={item.serviceNumber} className="hover:bg-slate-800/50 transition-colors">
-                      <td className="py-3 px-4 font-black text-white">{item.serviceNumber}</td>
-                      <td className="py-3 px-4 text-center font-bold">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-black ${
-                          item.count >= 3 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                        }`}>
-                          {item.count} veces
-                        </span>
+                  {repeatedServicesData.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-slate-400">
+                        <AlertCircle className="w-8 h-8 text-slate-500 mx-auto mb-2" />
+                        <p className="font-bold text-sm text-slate-300">No se encontraron abonados reincidentes para este período</p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Pruebe seleccionando "Todo el Historial" o ampliando el intervalo de fechas ({repeatedDateFrom || 'Inicio'} al {repeatedDateTo || 'Hoy'}).
+                        </p>
                       </td>
-                      <td className="py-3 px-4 text-slate-300">{Array.from(item.centralNames).join(', ')}</td>
-                      <td className="py-3 px-4 font-mono text-[11px] text-indigo-300">{item.repairs.map(r => r.date).join(' | ')}</td>
-                      <td className="py-3 px-4 text-slate-200">{item.latestCable}</td>
-                      <td className="py-3 px-4 font-bold text-emerald-400">{item.latestTech}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    repeatedServicesData.map((item) => (
+                      <tr key={item.serviceNumber} className="hover:bg-slate-800/50 transition-colors">
+                        <td className="py-3 px-4 font-black text-white">{item.serviceNumber}</td>
+                        <td className="py-3 px-4 text-center font-bold">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-black ${
+                            item.count >= 3 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          }`}>
+                            {item.count} veces
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-300">{Array.from(item.centralNames).join(', ')}</td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-indigo-300">{item.repairs.map(r => r.date).join(' | ')}</td>
+                        <td className="py-3 px-4 text-slate-200">{item.latestCable}</td>
+                        <td className="py-3 px-4 font-bold text-emerald-400">{item.latestTech}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
+                {repeatedServicesData.length > 0 && (
+                  <tfoot className="bg-slate-950 font-bold border-t border-slate-800 text-xs">
+                    <tr>
+                      <td className="py-3 px-4 text-white">TOTAL REINCIDENTES:</td>
+                      <td className="py-3 px-4 text-center text-amber-400">
+                        {repeatedServicesData.length} Abonados ({totalReincidenciasEvents} Eventos)
+                      </td>
+                      <td colSpan={4} className="py-3 px-4 text-slate-400 text-right">
+                        Período: <span className="font-mono text-indigo-300">{repeatedDateFrom || 'Inicio'}</span> al <span className="font-mono text-indigo-300">{repeatedDateTo || 'Hoy'}</span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* SUB-TAB 2: AUDITORÍA DE CIERRES INCOHERENTES (FALSOS CIERRES)              */}
+          {/* ========================================================================= */}
+          {repeatedSubTab === 'incoherence' && (
+            <div className="space-y-6">
+
+              {/* AUDIT HEADER CARD */}
+              <div className="bg-slate-900 border border-rose-500/30 rounded-3xl p-6 text-white space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="bg-rose-500/20 text-rose-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                        AUDITORÍA DE CALIDAD OPERATIVA
+                      </span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono">
+                        VENTANA: ≤ {incoherentConfig.windowDays} DÍAS
+                      </span>
+                    </div>
+                    <h2 className="text-lg font-black text-white mt-1 flex items-center space-x-2">
+                      <ShieldAlert className="w-5 h-5 text-rose-400" />
+                      <span>Auditoría de Cierres Incoherentes y Falsos Cierres por Clave</span>
+                    </h2>
+                    <p className="text-slate-400 text-xs mt-0.5">
+                      Identifica servicios donde el 1er técnico cerró con una clave y la siguiente visita en menos de {incoherentConfig.windowDays} días se cerró con otra clave discrepante, determinando la afectación al 1er técnico.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsIncoherentModalOpen(true)}
+                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs px-4 py-2 rounded-xl transition-all shadow-lg shadow-amber-500/20 border border-amber-300/40 flex items-center space-x-1.5"
+                    >
+                      <Key className="w-4 h-4" />
+                      <span>Configurar Claves (Efectivas / No Efectivas)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleExportIncoherencias}
+                      disabled={incoherentEvents.length === 0}
+                      className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs px-4 py-2 rounded-xl transition-all shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center space-x-2"
+                      title="Descargar Excel de auditoría detallada de cierres incoherentes"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                      <span>Descargar Excel Incoherencias ({incoherentEvents.length})</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Status Bar / Active Criteria */}
+                <div className="bg-slate-950/70 p-3.5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-slate-400">Criterio:</span>
+                      <span className="font-bold text-amber-300">
+                        {incoherentConfig.detectionMode === 'all_different'
+                          ? 'Cualquier cambio de Clave (Clave 1 ≠ Clave 2)'
+                          : incoherentConfig.detectionMode === 'effective_vs_non_effective'
+                          ? 'No Efectiva (1ª Visita) ➔ Efectiva / Falla Real (2ª Visita)'
+                          : 'Reglas de Pares Específicos'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-slate-400">Ventana:</span>
+                      <span className="font-mono font-bold text-rose-300">≤ {incoherentConfig.windowDays} días</span>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-slate-400">Período:</span>
+                      <span className="font-mono text-slate-300">{repeatedDateFrom || 'Inicio'} al {repeatedDateTo || 'Hoy'}</span>
+                    </div>
+                  </div>
+
+                  {/* Fast Window Switcher */}
+                  <div className="flex items-center space-x-1">
+                    <span className="text-[11px] text-slate-400 mr-1">Cambiar Ventana:</span>
+                    {[7, 15, 30, 45, 60].map(days => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => handleSaveIncoherentConfig({ ...incoherentConfig, windowDays: days })}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all ${
+                          incoherentConfig.windowDays === days
+                            ? 'bg-rose-600 text-white shadow-sm'
+                            : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        {days}d
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 4 AUDIT KPI CARDS */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                  {/* Card 1: Total Incoherencias */}
+                  <div className="bg-slate-950/80 p-4 rounded-2xl border border-rose-500/30 flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Cierres Incoherentes</p>
+                      <h3 className="text-2xl font-black text-rose-400 mt-1">{incoherentEvents.length}</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Casos en ≤ {incoherentConfig.windowDays} días
+                      </p>
+                    </div>
+                    <div className="p-3 bg-rose-500/10 text-rose-400 rounded-2xl border border-rose-500/20">
+                      <AlertOctagon className="w-6 h-6" />
+                    </div>
+                  </div>
+
+                  {/* Card 2: 1er Técnico Más Afectado */}
+                  <div className="bg-slate-950/80 p-4 rounded-2xl border border-amber-500/30 flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">1er Técnico Más Afectado</p>
+                      <h3 className="text-sm font-black text-amber-300 mt-1 truncate max-w-[160px]" title={technicianIncoherenceSummaries[0]?.technician || 'Ninguno'}>
+                        {technicianIncoherenceSummaries[0]?.technician || 'Sin incidencias'}
+                      </h3>
+                      <p className="text-[10px] text-amber-400/80 font-bold mt-0.5">
+                        {technicianIncoherenceSummaries[0]
+                          ? `${technicianIncoherenceSummaries[0].totalIncoherentClosures} cierres refutados (${technicianIncoherenceSummaries[0].refutationRate}%)`
+                          : '0 casos'}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-amber-500/10 text-amber-400 rounded-2xl border border-amber-500/20">
+                      <UserX className="w-6 h-6" />
+                    </div>
+                  </div>
+
+                  {/* Card 3: Discrepancias Críticas */}
+                  <div className="bg-slate-950/80 p-4 rounded-2xl border border-red-500/30 flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Discrepancias Críticas</p>
+                      <h3 className="text-2xl font-black text-red-400 mt-1">
+                        {incoherentEvents.filter(e => e.severity === 'high').length}
+                      </h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        No Efectiva ➔ Falla Real
+                      </p>
+                    </div>
+                    <div className="p-3 bg-red-500/10 text-red-400 rounded-2xl border border-red-500/20">
+                      <ShieldAlert className="w-6 h-6" />
+                    </div>
+                  </div>
+
+                  {/* Card 4: Promedio de Días de Reincidencia */}
+                  <div className="bg-slate-950/80 p-4 rounded-2xl border border-indigo-500/30 flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Reincidencia Promedio</p>
+                      <h3 className="text-2xl font-black text-indigo-400 mt-1">
+                        {incoherentEvents.length > 0
+                          ? (incoherentEvents.reduce((acc, e) => acc + e.diffDays, 0) / incoherentEvents.length).toFixed(1)
+                          : '0.0'}
+                        <span className="text-sm font-normal text-slate-400 ml-1">días</span>
+                      </h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Entre la 1ª y la 2ª visita
+                      </p>
+                    </div>
+                    <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-2xl border border-indigo-500/20">
+                      <Clock className="w-6 h-6" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* RANKING DE AFECTACIÓN AL 1ER TÉCNICO (IMPACTO OPERATIVO) */}
+                {technicianIncoherenceSummaries.length > 0 && (
+                  <div className="bg-slate-950/90 rounded-2xl border border-slate-800 p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                      <div className="flex items-center space-x-2">
+                        <UserX className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                          Ranking de Afectación al 1er Técnico (Cierres Refutados en ≤ {incoherentConfig.windowDays} días)
+                        </h4>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        {technicianIncoherenceSummaries.length} técnicos con discrepancias
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-48 border border-slate-800/80 rounded-xl">
+                      <table className="w-full text-left text-xs text-slate-300">
+                        <thead className="bg-slate-900 text-slate-400 font-bold uppercase text-[10px] sticky top-0 border-b border-slate-800">
+                          <tr>
+                            <th className="py-2.5 px-3">Técnico 1 (Responsable Inicial)</th>
+                            <th className="py-2.5 px-3 text-center">Cierres Refutados</th>
+                            <th className="py-2.5 px-3 text-center">Tasa Refutación</th>
+                            <th className="py-2.5 px-3">Claves que utilizó (1ª Visita)</th>
+                            <th className="py-2.5 px-3">Claves reales encontradas (2ª Visita)</th>
+                            <th className="py-2.5 px-3 text-right">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/70 font-medium">
+                          {technicianIncoherenceSummaries.map((tech) => (
+                            <tr key={tech.technician} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="py-2 px-3 font-bold text-white flex items-center space-x-2">
+                                <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                                <span>{tech.technician}</span>
+                              </td>
+                              <td className="py-2 px-3 text-center font-black text-rose-400">
+                                {tech.totalIncoherentClosures}
+                              </td>
+                              <td className="py-2 px-3 text-center font-mono font-bold text-amber-400">
+                                {tech.refutationRate}%
+                              </td>
+                              <td className="py-2 px-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {tech.commonInitialClaves.slice(0, 3).map(c => (
+                                    <span key={c.clave} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                                      {c.clave} ({c.count})
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-2 px-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {tech.commonRefutedByClaves.slice(0, 3).map(c => (
+                                    <span key={c.clave} className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                                      {c.clave} ({c.count})
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-2 px-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setIncoherentTechFilter(tech.technician)}
+                                  className="text-[11px] font-bold text-indigo-400 hover:text-indigo-200 underline"
+                                >
+                                  Ver sus casos
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* FILTERS FOR THE DETAILED INCOHERENCE TABLE */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                      Filtrar por Técnico:
+                    </label>
+                    <select
+                      value={incoherentTechFilter}
+                      onChange={(e) => setIncoherentTechFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-rose-500"
+                    >
+                      <option value="all">Todos los técnicos</option>
+                      {availableTechnicians.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                      Filtrar por Central:
+                    </label>
+                    <select
+                      value={incoherentCentralFilter}
+                      onChange={(e) => setIncoherentCentralFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-rose-500"
+                    >
+                      <option value="all">Todas las centrales</option>
+                      {centrales.map(c => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                      Nivel de Incoherencia:
+                    </label>
+                    <select
+                      value={incoherentSeverityFilter}
+                      onChange={(e) => setIncoherentSeverityFilter(e.target.value as any)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-rose-500"
+                    >
+                      <option value="all">Todas las discrepancias</option>
+                      <option value="high">Crítica: No Efectiva ➔ Falla Real</option>
+                      <option value="medium">Discrepancia Regular</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                      Buscar en Auditoría:
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Buscar por teléfono, folio o clave..."
+                        value={incoherentSearchTerm}
+                        onChange={(e) => setIncoherentSearchTerm(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-white focus:border-rose-500"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* COMPARATIVE AUDIT TABLE */}
+                <div className="overflow-x-auto border border-slate-800 rounded-2xl max-h-[600px]">
+                  <table className="w-full text-left text-xs text-slate-300">
+                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-800">
+                      <tr>
+                        <th className="py-3 px-3 text-slate-500">#</th>
+                        <th className="py-3 px-3">Servicio / Abonado</th>
+                        <th className="py-3 px-3">Central</th>
+                        <th className="py-3 px-4 bg-amber-950/20 text-amber-300 border-l border-r border-amber-500/20">
+                          1ª Visita (Responsable / Afectado)
+                        </th>
+                        <th className="py-3 px-4 bg-emerald-950/20 text-emerald-300 border-r border-emerald-500/20">
+                          2ª Visita (Auditoría / Reincidencia)
+                        </th>
+                        <th className="py-3 px-3 text-center">Intervalo</th>
+                        <th className="py-3 px-3">Diagnóstico Incoherencia</th>
+                        <th className="py-3 px-3">Afectación Operativa</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 font-medium">
+                      {incoherentEvents.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-12 text-center text-slate-400">
+                            <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2 opacity-80" />
+                            <p className="font-bold text-sm text-slate-200">
+                              No se encontraron cierres incoherentes con los filtros actuales
+                            </p>
+                            <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                              No hubo discrepancias de claves dentro de los ≤ {incoherentConfig.windowDays} días. Puede ampliar el período de fechas o revisar la configuración de claves.
+                            </p>
+                          </td>
+                        </tr>
+                      ) : (
+                        incoherentEvents.map((evt, idx) => (
+                          <tr key={evt.id} className="hover:bg-slate-800/50 transition-colors">
+                            <td className="py-3 px-3 font-mono text-[10px] text-slate-500">{idx + 1}</td>
+                            <td className="py-3 px-3 font-black text-white font-mono">{evt.serviceNumber}</td>
+                            <td className="py-3 px-3 text-slate-300">{evt.centralName}</td>
+
+                            {/* 1st Visit Details */}
+                            <td className="py-3 px-4 bg-amber-950/10 border-l border-r border-amber-500/20">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="font-bold text-amber-300">{evt.firstTech}</span>
+                                  <span className="text-[10px] font-mono text-slate-400">({evt.firstTicket})</span>
+                                </div>
+                                <div className="flex items-center space-x-2 text-[11px]">
+                                  <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-bold">
+                                    Clave: {evt.firstClave}
+                                  </span>
+                                  <span className="text-slate-400 font-mono text-[10px]">{evt.firstDate}</span>
+                                </div>
+                                {evt.firstCable && evt.firstCable !== '-' && (
+                                  <div className="text-[10px] text-slate-400 truncate max-w-[200px]" title={evt.firstCable}>
+                                    Cable: {evt.firstCable}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* 2nd Visit Details */}
+                            <td className="py-3 px-4 bg-emerald-950/10 border-r border-emerald-500/20">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="font-bold text-emerald-300">{evt.secondTech}</span>
+                                  <span className="text-[10px] font-mono text-slate-400">({evt.secondTicket})</span>
+                                </div>
+                                <div className="flex items-center space-x-2 text-[11px]">
+                                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-mono font-bold">
+                                    Clave: {evt.secondClave}
+                                  </span>
+                                  <span className="text-slate-400 font-mono text-[10px]">{evt.secondDate}</span>
+                                </div>
+                                {evt.secondCable && evt.secondCable !== '-' && (
+                                  <div className="text-[10px] text-slate-400 truncate max-w-[200px]" title={evt.secondCable}>
+                                    Cable: {evt.secondCable}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Difference in Days */}
+                            <td className="py-3 px-3 text-center">
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-black font-mono ${
+                                evt.diffDays <= 7
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              }`}>
+                                {evt.diffDays} {evt.diffDays === 1 ? 'día' : 'días'}
+                              </span>
+                            </td>
+
+                            {/* Incoherence Diagnostics */}
+                            <td className="py-3 px-3">
+                              <div className="space-y-0.5">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
+                                  evt.severity === 'high'
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                    : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                }`}>
+                                  {evt.incoherenceType}
+                                </span>
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  {evt.firstClave} ➔ {evt.secondClave}
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Impact / Verdict */}
+                            <td className="py-3 px-3">
+                              {evt.isSameTech ? (
+                                <div className="space-y-0.5">
+                                  <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    <span>Mismo Técnico</span>
+                                  </span>
+                                  <p className="text-[10px] text-slate-400">
+                                    Rectificó su propia clave en 2ª visita
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <span className="text-[11px] font-black text-rose-400 flex items-center gap-1">
+                                    <UserX className="w-3.5 h-3.5" />
+                                    <span>Afecta a: {evt.affectedTech}</span>
+                                  </span>
+                                  <p className="text-[10px] text-slate-400">
+                                    Refutado por {evt.secondTech}
+                                  </p>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {incoherentEvents.length > 0 && (
+                      <tfoot className="bg-slate-950 font-bold border-t border-slate-800 text-xs">
+                        <tr>
+                          <td colSpan={3} className="py-3 px-4 text-white">
+                            TOTAL CASOS INCOHERENTES:
+                          </td>
+                          <td colSpan={2} className="py-3 px-4 text-rose-400">
+                            {incoherentEvents.length} Discrepancias (Ventana: ≤ {incoherentConfig.windowDays} días)
+                          </td>
+                          <td colSpan={3} className="py-3 px-4 text-slate-400 text-right">
+                            Período: <span className="font-mono text-indigo-300">{repeatedDateFrom || 'Inicio'}</span> al <span className="font-mono text-indigo-300">{repeatedDateTo || 'Hoy'}</span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2767,6 +3883,15 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           })()}
         </div>
       )}
+
+      {/* MODAL DE CONFIGURACIÓN DE CLAVES INCOHERENTES */}
+      <IncoherentClavesModal
+        isOpen={isIncoherentModalOpen}
+        onClose={() => setIsIncoherentModalOpen(false)}
+        config={incoherentConfig}
+        onSaveConfig={handleSaveIncoherentConfig}
+        availableClavesFromData={allUniqueClavesFromRecords}
+      />
 
     </div>
   );

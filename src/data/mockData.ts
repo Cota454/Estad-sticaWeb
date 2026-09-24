@@ -1,5 +1,6 @@
 import { Central, WorkGroup, DailyReport, RepairRecord, CustomTableSchema, RepairColumnMapping } from '../types';
 import { getTodayStr } from '../utils/dateUtils';
+import { getIdbItem, setIdbItem } from '../utils/indexedDbStorage';
 
 export const INITIAL_WORK_GROUPS: WorkGroup[] = [
   {
@@ -217,7 +218,7 @@ const STORAGE_KEYS = {
   REPORTS: 'telecom_stat_reports_v1'
 };
 
-function getStorageKey(baseKey: string, email?: string): string {
+export function getStorageKey(baseKey: string, email?: string): string {
   if (!email) return baseKey;
   return `${baseKey}_${email.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
 }
@@ -225,7 +226,10 @@ function getStorageKey(baseKey: string, email?: string): string {
 export function loadCentrales(userEmail?: string): Central[] {
   try {
     const key = getStorageKey(STORAGE_KEYS.CENTRALES, userEmail);
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userEmail) {
+      raw = localStorage.getItem(STORAGE_KEYS.CENTRALES);
+    }
     if (!raw) {
       saveCentrales(INITIAL_CENTRALES, userEmail);
       return INITIAL_CENTRALES;
@@ -241,15 +245,26 @@ export function saveCentrales(centrales: Central[], userEmail?: string): void {
   try {
     const key = getStorageKey(STORAGE_KEYS.CENTRALES, userEmail);
     localStorage.setItem(key, JSON.stringify(centrales));
+    if (userEmail) {
+      localStorage.setItem(STORAGE_KEYS.CENTRALES, JSON.stringify(centrales));
+    }
   } catch (e) {
-    console.error('Failed to save centrales', e);
+    console.warn('Failed to save centrales to localStorage', e);
+  }
+  const idbKey = getStorageKey(STORAGE_KEYS.CENTRALES, userEmail);
+  setIdbItem(idbKey, centrales).catch(() => {});
+  if (userEmail) {
+    setIdbItem(STORAGE_KEYS.CENTRALES, centrales).catch(() => {});
   }
 }
 
 export function loadWorkGroups(userEmail?: string): WorkGroup[] {
   try {
     const key = getStorageKey(STORAGE_KEYS.WORK_GROUPS, userEmail);
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userEmail) {
+      raw = localStorage.getItem(STORAGE_KEYS.WORK_GROUPS);
+    }
     if (!raw) {
       saveWorkGroups(INITIAL_WORK_GROUPS, userEmail);
       return INITIAL_WORK_GROUPS;
@@ -265,15 +280,26 @@ export function saveWorkGroups(groups: WorkGroup[], userEmail?: string): void {
   try {
     const key = getStorageKey(STORAGE_KEYS.WORK_GROUPS, userEmail);
     localStorage.setItem(key, JSON.stringify(groups));
+    if (userEmail) {
+      localStorage.setItem(STORAGE_KEYS.WORK_GROUPS, JSON.stringify(groups));
+    }
   } catch (e) {
-    console.error('Failed to save workgroups', e);
+    console.warn('Failed to save workgroups to localStorage', e);
+  }
+  const idbKey = getStorageKey(STORAGE_KEYS.WORK_GROUPS, userEmail);
+  setIdbItem(idbKey, groups).catch(() => {});
+  if (userEmail) {
+    setIdbItem(STORAGE_KEYS.WORK_GROUPS, groups).catch(() => {});
   }
 }
 
 export function loadReports(userEmail?: string): DailyReport[] {
   try {
     const key = getStorageKey(STORAGE_KEYS.REPORTS, userEmail);
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userEmail) {
+      raw = localStorage.getItem(STORAGE_KEYS.REPORTS);
+    }
     if (!raw) {
       const seed = generateSeedDailyReports();
       saveReports(seed, userEmail);
@@ -291,8 +317,16 @@ export function saveReports(reports: DailyReport[], userEmail?: string): void {
   try {
     const key = getStorageKey(STORAGE_KEYS.REPORTS, userEmail);
     localStorage.setItem(key, JSON.stringify(reports));
+    if (userEmail) {
+      localStorage.setItem(STORAGE_KEYS.REPORTS, JSON.stringify(reports));
+    }
   } catch (e) {
-    console.error('Failed to save reports', e);
+    console.warn('Failed to save reports to localStorage (likely quota); IndexedDB will persist:', e);
+  }
+  const idbKey = getStorageKey(STORAGE_KEYS.REPORTS, userEmail);
+  setIdbItem(idbKey, reports).catch(() => {});
+  if (userEmail) {
+    setIdbItem(STORAGE_KEYS.REPORTS, reports).catch(() => {});
   }
 }
 
@@ -324,7 +358,10 @@ const CUSTOM_TABLES_KEY = 'telecom_custom_tables_v1';
 export function loadRepairRecords(userEmail?: string): RepairRecord[] {
   try {
     const key = getStorageKey(REPAIR_RECORDS_KEY, userEmail);
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userEmail) {
+      raw = localStorage.getItem(REPAIR_RECORDS_KEY);
+    }
     if (!raw) {
       saveRepairRecords(INITIAL_REPAIR_RECORDS, userEmail);
       return INITIAL_REPAIR_RECORDS;
@@ -339,15 +376,26 @@ export function saveRepairRecords(records: RepairRecord[], userEmail?: string): 
   try {
     const key = getStorageKey(REPAIR_RECORDS_KEY, userEmail);
     localStorage.setItem(key, JSON.stringify(records));
+    if (userEmail) {
+      localStorage.setItem(REPAIR_RECORDS_KEY, JSON.stringify(records));
+    }
   } catch (e) {
-    console.error('Failed to save repair records', e);
+    console.warn('Failed to save repair records to localStorage; IndexedDB will persist:', e);
+  }
+  const idbKey = getStorageKey(REPAIR_RECORDS_KEY, userEmail);
+  setIdbItem(idbKey, records).catch(() => {});
+  if (userEmail) {
+    setIdbItem(REPAIR_RECORDS_KEY, records).catch(() => {});
   }
 }
 
 export function loadCustomTables(userEmail?: string): CustomTableSchema[] {
   try {
     const key = getStorageKey(CUSTOM_TABLES_KEY, userEmail);
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userEmail) {
+      raw = localStorage.getItem(CUSTOM_TABLES_KEY);
+    }
     if (!raw) return [];
     return JSON.parse(raw);
   } catch (e) {
@@ -359,8 +407,16 @@ export function saveCustomTables(tables: CustomTableSchema[], userEmail?: string
   try {
     const key = getStorageKey(CUSTOM_TABLES_KEY, userEmail);
     localStorage.setItem(key, JSON.stringify(tables));
+    if (userEmail) {
+      localStorage.setItem(CUSTOM_TABLES_KEY, JSON.stringify(tables));
+    }
   } catch (e) {
-    console.error('Failed to save custom tables', e);
+    console.warn('Failed to save custom tables to localStorage', e);
+  }
+  const idbKey = getStorageKey(CUSTOM_TABLES_KEY, userEmail);
+  setIdbItem(idbKey, tables).catch(() => {});
+  if (userEmail) {
+    setIdbItem(CUSTOM_TABLES_KEY, tables).catch(() => {});
   }
 }
 
@@ -382,7 +438,10 @@ export function loadRepairColumnMapping(userEmail?: string): RepairColumnMapping
   };
   try {
     const key = getStorageKey(REPAIR_MAPPING_KEY, userEmail);
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userEmail) {
+      raw = localStorage.getItem(REPAIR_MAPPING_KEY);
+    }
     if (!raw) {
       return defaultMapping;
     }
@@ -396,8 +455,16 @@ export function saveRepairColumnMapping(mapping: RepairColumnMapping, userEmail?
   try {
     const key = getStorageKey(REPAIR_MAPPING_KEY, userEmail);
     localStorage.setItem(key, JSON.stringify(mapping));
+    if (userEmail) {
+      localStorage.setItem(REPAIR_MAPPING_KEY, JSON.stringify(mapping));
+    }
   } catch (e) {
-    console.error('Failed to save repair mapping', e);
+    console.warn('Failed to save repair mapping to localStorage', e);
+  }
+  const idbKey = getStorageKey(REPAIR_MAPPING_KEY, userEmail);
+  setIdbItem(idbKey, mapping).catch(() => {});
+  if (userEmail) {
+    setIdbItem(REPAIR_MAPPING_KEY, mapping).catch(() => {});
   }
 }
 

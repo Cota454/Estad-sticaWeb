@@ -69,6 +69,7 @@ import {
   loadCableRules,
   saveCableRules,
   loadParsedIpData,
+  loadParsedIpDataAsync,
   saveParsedIpData,
   clearParsedIpData,
   loadCablePendingTasks,
@@ -211,9 +212,33 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [cableRules, setCableRules] = useState<CableClassificationRules>(loadCableRules);
   const [zones, setZones] = useState<ZoneConfig[]>(loadZones);
   const [excelData, setExcelData] = useState<IpCableExcelParseResult | null>(() => {
-    const saved = loadParsedIpData();
-    return saved || generateSampleIpCablesData(loadCableRules());
+    return loadParsedIpData();
   });
+  const [isDataHydrated, setIsDataHydrated] = useState<boolean>(false);
+
+  // Hydrate full persistent Excel dataset from IndexedDB on component mount
+  useEffect(() => {
+    let isMounted = true;
+    loadParsedIpDataAsync().then(saved => {
+      if (isMounted) {
+        if (saved && saved.consolidatedRows && saved.consolidatedRows.length > 0) {
+          setExcelData(saved);
+        } else {
+          // If no user Excel has ever been uploaded or stored, initialize with sample data
+          setExcelData(prev => prev || generateSampleIpCablesData(loadCableRules()));
+        }
+        setIsDataHydrated(true);
+      }
+    }).catch(err => {
+      console.warn('Error loading async IP data from IndexedDB:', err);
+      if (isMounted) {
+        setExcelData(prev => prev || generateSampleIpCablesData(loadCableRules()));
+        setIsDataHydrated(true);
+      }
+    });
+
+    return () => { isMounted = false; };
+  }, []);
 
   const [isParsing, setIsParsing] = useState<boolean>(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -242,7 +267,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     try {
       const parsed = await parseIpCablesExcelFile(file, cableRules);
       setExcelData(parsed);
-      saveParsedIpData(parsed);
+      await saveParsedIpData(parsed);
     } catch (err: any) {
       console.error('Error al procesar archivo Excel:', err);
       setParseError(err?.message || 'Error al procesar el archivo Excel. Asegúrese de que tenga al menos 4 filas.');
@@ -1584,8 +1609,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               <div className="flex items-center space-x-2">
                 <span className="font-extrabold text-sm text-white">Cargar Archivo Excel de Datos</span>
                 {excelData && (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md text-[10px] font-bold">
-                    Cargado: {excelData.fileName}
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>Cargado: <strong>{excelData.fileName}</strong> • Guardado permanente</span>
                   </span>
                 )}
               </div>
