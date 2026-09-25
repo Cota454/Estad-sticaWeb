@@ -1008,6 +1008,87 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       .replace(/[:*?"<>|]/g, '')
       .replace(/\s+/g, ' ');
 
+  // Helper to extract the exact option chosen for Demora en Días filter
+  const getDemoraChosenOption = (filterVal: string, manualDate?: string): string | null => {
+    if (!filterVal || filterVal === 'all') return null;
+    switch (filterVal) {
+      case '0': return '0 días';
+      case '1': return '1 día';
+      case '2': return '2 días';
+      case '3': return '3 días';
+      case '4-30': return '4-30 días';
+      case '31-60': return '31-60 días';
+      case '61-90': return '61-90 días';
+      case '91-180': return '91-180 días';
+      case '181-365': return '181-365 días';
+      case '>365': return '+365 días';
+      case 'manual_date': return manualDate ? manualDate : null;
+      default: return filterVal.replace('>', '+');
+    }
+  };
+
+  // Helper to extract the exact option chosen for Mes filter
+  const getMonthChosenOption = (monthVal: string): string | null => {
+    if (!monthVal || monthVal === 'all') return null;
+    const monthNames: Record<string, string> = {
+      '1': 'Enero', '2': 'Febrero', '3': 'Marzo', '4': 'Abril',
+      '5': 'Mayo', '6': 'Junio', '7': 'Julio', '8': 'Agosto',
+      '9': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
+    };
+    return monthNames[monthVal] || monthVal;
+  };
+
+  // Helper to extract the exact option chosen for Columna Teléfono filter
+  const getTelefonoChosenOption = (telVal: string): string | null => {
+    if (!telVal || telVal === 'all') return null;
+    if (telVal === 'telefono') return 'Teléfono';
+    if (telVal === 'txd_dato') return 'TxD Dato';
+    return telVal;
+  };
+
+  // Helper to extract the exact option chosen for Afectaciones filter
+  const getAfectacionChosenOption = (afectVal: string): string | null => {
+    if (!afectVal || afectVal === 'all') return null;
+    if (afectVal === 'con_afectacion') return 'Con Afectación';
+    if (afectVal === 'sin_afectacion') return 'Sin Afectación';
+    return afectVal;
+  };
+
+  // Collect all active filter options selected by the user in Tab 1
+  const getTab1ActiveFilterOptions = (): string[] => {
+    const options: string[] = [];
+
+    const demora = getDemoraChosenOption(matrixDemoraFilter, matrixManualDate);
+    if (demora) options.push(demora);
+
+    if (matrixStartDate && matrixEndDate) {
+      options.push(`${matrixStartDate} a ${matrixEndDate}`);
+    } else if (matrixStartDate) {
+      options.push(`Desde ${matrixStartDate}`);
+    } else if (matrixEndDate) {
+      options.push(`Hasta ${matrixEndDate}`);
+    }
+
+    const month = getMonthChosenOption(matrixMonthFilter);
+    if (month) options.push(month);
+
+    if (matrixYearFilter && matrixYearFilter !== 'all') {
+      options.push(matrixYearFilter);
+    }
+
+    const tel = getTelefonoChosenOption(matrixTelefonoFilter);
+    if (tel) options.push(tel);
+
+    const afect = getAfectacionChosenOption(matrixAfectacionFilter);
+    if (afect) options.push(afect);
+
+    if (isOptimized) {
+      options.push('Optimizado');
+    }
+
+    return options;
+  };
+
   // Handler to export cell drilldown modal table to styled Excel (.xlsx)
   const handleDownloadCellModalExcel = async () => {
     if (!selectedCellFilter || displayModalServices.length === 0) {
@@ -1022,76 +1103,62 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     let centralPart = 'Total';
     if (matrixType === 'centrales') {
       if (rowName && rowName.trim()) {
-        const rawName = rowName.trim();
-        centralPart = /^central\b/i.test(rawName) ? rawName : `Central ${rawName}`;
+        centralPart = rowName.trim();
       } else {
         centralPart = 'Total';
       }
     } else if (matrixType === 'cables') {
       if (rowCentral && rowCentral.trim()) {
-        const rawCentral = rowCentral.trim();
-        centralPart = /^central\b/i.test(rawCentral) ? rawCentral : `Central ${rawCentral}`;
+        centralPart = rowCentral.trim();
       } else {
         centralPart = 'Total';
       }
     } else {
-      // Zonas or general
       centralPart = 'Total';
     }
 
-    // 2. Identify filter applied (inside parentheses)
+    // 2. Identify filter options applied (inside parentheses)
     const filterTokens: string[] = [];
-    if (matrixType === 'centrales') {
-      if (colName && colName.trim()) {
-        filterTokens.push(`Grupo ${colName.trim()}`);
-      } else if (rowName && rowName.trim()) {
-        filterTokens.push('Total Central');
-      } else {
-        filterTokens.push('Todos los Registros');
-      }
-    } else if (matrixType === 'cables') {
-      if (rowName && rowName.trim()) {
-        const rawCable = rowName.trim();
-        filterTokens.push(/^cable\b/i.test(rawCable) ? rawCable : `Cable ${rawCable}`);
-      }
-      if (colName && colName.trim()) {
-        filterTokens.push(colName.trim());
-      }
-      if (filterTokens.length === 0) {
-        filterTokens.push('Todos los Registros');
-      }
-    } else if (matrixType === 'zonas') {
-      if (rowName && rowName.trim()) {
-        const rawZone = rowName.trim();
-        if (rawZone.toLowerCase().includes('zona') || rawZone.toLowerCase().includes('sin')) {
-          filterTokens.push(rawZone);
-        } else {
-          filterTokens.push(`Zona ${rawZone}`);
-        }
-      }
-      if (colName && colName.trim()) {
-        filterTokens.push(`Grupo ${colName.trim()}`);
-      }
-      if (filterTokens.length === 0) {
-        filterTokens.push('Total Zonas');
-      }
+
+    // Cell / Column selection
+    if (colName && colName.trim()) {
+      filterTokens.push(colName.trim());
+    }
+    if (matrixType === 'cables' && rowName && rowName.trim()) {
+      filterTokens.push(rowName.trim());
+    }
+    if (matrixType === 'zonas' && rowName && rowName.trim()) {
+      filterTokens.push(rowName.trim());
     }
 
-    // Add in-modal filters if active
+    // Active page filters (Demora en días, fechas, mes, año, afectación, etc.)
+    const activePageFilters = getTab1ActiveFilterOptions();
+    activePageFilters.forEach(opt => {
+      if (!filterTokens.includes(opt)) {
+        filterTokens.push(opt);
+      }
+    });
+
+    // In-modal search/filters
     if (cellModalQuickFilter === 'with_task') {
       filterTokens.push('Con Trabajo Pendiente');
     } else if (cellModalQuickFilter === 'with_afectacion') {
       filterTokens.push('Con Afectación');
     }
     if (cellModalSearch.trim()) {
-      filterTokens.push(`Búsqueda ${cellModalSearch.trim()}`);
+      filterTokens.push(cellModalSearch.trim());
+    }
+
+    // If no specific filter option was chosen at all
+    if (filterTokens.length === 0) {
+      filterTokens.push('Total');
     }
 
     const appliedFilter = filterTokens.join(' - ');
     const cleanCentral = sanitizeFileNamePart(centralPart);
     const cleanFilter = sanitizeFileNamePart(appliedFilter);
 
-    // Format: IP + el nombre de la central o si es total + (dentro de paréntesis el filtro aplicado) + fecha y hora actual
+    // Format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción del filtro) + fecha y hora actual
     const fileName = `IP ${cleanCentral} (${cleanFilter}) ${dateTimeStr}.xlsx`;
 
     const exportData = displayModalServices.map((item, idx) => {
@@ -1179,30 +1246,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     const dateTimeStr = getTab1ExportDateTime();
+    const activeOptions = getTab1ActiveFilterOptions();
+    const filterText = activeOptions.length > 0 ? activeOptions.join(' - ') : 'Total';
+    const appliedFilter = sanitizeFileNamePart(filterText);
 
-    const filterTokens: string[] = ['Matriz Centrales vs Grupos'];
-    if (matrixDemoraFilter !== 'all') {
-      filterTokens.push(`Demora ${matrixDemoraFilter.replace('>', 'Mayor ')}d`);
-    }
-    if (matrixStartDate || matrixEndDate) {
-      filterTokens.push(`${matrixStartDate || 'Inicio'} a ${matrixEndDate || 'Hoy'}`);
-    }
-    if (matrixMonthFilter !== 'all') {
-      const monthNames = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-      filterTokens.push(monthNames[parseInt(matrixMonthFilter, 10)] || `Mes ${matrixMonthFilter}`);
-    }
-    if (matrixYearFilter !== 'all') {
-      filterTokens.push(`Año ${matrixYearFilter}`);
-    }
-    if (matrixTelefonoFilter !== 'all') {
-      filterTokens.push(matrixTelefonoFilter === 'con_telefono' ? 'Con Teléfono' : 'Sin Teléfono');
-    }
-    if (matrixAfectacionFilter !== 'all') {
-      filterTokens.push(`Afectación ${matrixAfectacionFilter}`);
-    }
-
-    const appliedFilter = sanitizeFileNamePart(filterTokens.join(' - '));
-    // Exact requested format: IP + el nombre de la central o si es total + (dentro de paréntesis el filtro aplicado) + fecha y hora actual
+    // Exact requested format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción elegida) + fecha y hora actual
     const fileName = `IP Total (${appliedFilter}) ${dateTimeStr}.xlsx`;
 
     const exportData = matrixCentralesData.rows.map(centralName => {
@@ -1270,17 +1318,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     const dateTimeStr = getTab1ExportDateTime();
+    const activeOptions = getTab1ActiveFilterOptions();
+    const filterText = activeOptions.length > 0 ? activeOptions.join(' - ') : 'Total';
+    const appliedFilter = sanitizeFileNamePart(filterText);
 
-    const filterTokens: string[] = ['Matriz Zonificación vs Grupos'];
-    if (matrixDemoraFilter !== 'all') {
-      filterTokens.push(`Demora ${matrixDemoraFilter.replace('>', 'Mayor ')}d`);
-    }
-    if (matrixStartDate || matrixEndDate) {
-      filterTokens.push(`${matrixStartDate || 'Inicio'} a ${matrixEndDate || 'Hoy'}`);
-    }
-
-    const appliedFilter = sanitizeFileNamePart(filterTokens.join(' - '));
-    // Exact requested format: IP + el nombre de la central o si es total + (dentro de paréntesis el filtro aplicado) + fecha y hora actual
+    // Exact requested format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción elegida) + fecha y hora actual
     const fileName = `IP Total (${appliedFilter}) ${dateTimeStr}.xlsx`;
 
     const exportData = matrixZonasData.rows.map(zoneName => {
