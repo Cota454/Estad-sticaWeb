@@ -1,16 +1,22 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ShieldAlert, AlertTriangle, Clock, Calendar, Filter, Search, Download,
   UserX, Wrench, CheckCircle2, RotateCcw, FileSpreadsheet, Layers,
   Eye, ArrowRight, X, ChevronRight, AlertOctagon, UserCheck, Check,
-  Radio, Network, SlidersHorizontal, ArrowDown, ArrowUp
+  Radio, Network, SlidersHorizontal, ArrowDown, ArrowUp, Upload, Database,
+  FileText, Info, HelpCircle, ShieldCheck, MapPin
 } from 'lucide-react';
 import { RepairRecord, PairCannibalizationEvent, PairMatchType, PairSuspicionLevel, TechnicianCollateralDamageSummary } from '../types';
 import {
   detectPairCannibalizationEvents,
   calculateTechnicianCollateralRanking,
   exportPairCannibalizationExcel,
-  PairFilterOptions
+  loadRecuadro2Faults,
+  parseDirectExcelToFaultRecords,
+  EXCLUDED_EXACT_TERMINALS,
+  GenericFaultRecord,
+  PairFilterOptions,
+  CrossSourceMode
 } from '../utils/pairCannibalizationHelper';
 
 interface AuditoriaTerminalesParesViewProps {
@@ -22,13 +28,25 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
   repairRecords,
   isDarkMode = true
 }) => {
+  const directFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // 1. Time Window Presets State
   const [windowPreset, setWindowPreset] = useState<'24h' | '48h' | '7d' | '15d' | '30d' | 'custom'>('48h');
   const [customMaxDays, setCustomMaxDays] = useState<number>(10);
   const [customDateFrom, setCustomDateFrom] = useState<string>('');
   const [customDateTo, setCustomDateTo] = useState<string>('');
 
-  // 2. Filter State
+  // 2. Data Source Mode for Cross-Referencing ("La reparada contra los excel de recuadros 1 y 2")
+  const [sourceMode, setSourceMode] = useState<CrossSourceMode>('all');
+  const [customDirectFaults, setCustomDirectFaults] = useState<GenericFaultRecord[]>([]);
+  const [directFileName, setDirectFileName] = useState<string>('');
+  const [isLoadingDirectFile, setIsLoadingDirectFile] = useState<boolean>(false);
+
+  // 3. Generic Terminals Omission Rule (1A, 3B, 2C, etc.)
+  const [omitGenericTerminals, setOmitGenericTerminals] = useState<boolean>(true);
+  const [isExclusionModalOpen, setIsExclusionModalOpen] = useState<boolean>(false);
+
+  // 4. Filter State
   const [matchTypeFilter, setMatchTypeFilter] = useState<'all' | 'SAME_TERMINAL' | 'SIBLING_TERMINAL'>('all');
   const [severityFilter, setSeverityFilter] = useState<'all' | PairSuspicionLevel>('all');
   const [selectedCentralFilter, setSelectedCentralFilter] = useState<string>('all');
@@ -36,13 +54,18 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
   const [selectedTechFilter, setSelectedTechFilter] = useState<string>('all');
   const [generalSearchTerm, setGeneralSearchTerm] = useState<string>('');
 
-  // 3. Ranking Table Filters (Afectación por Operario)
+  // 5. Ranking Table Filters (Afectación por Operario)
   const [rankingSortOrder, setRankingSortOrder] = useState<'desc' | 'asc'>('desc');
   const [rankingLimit, setRankingLimit] = useState<'all' | 5 | 10>('all');
   const [rankingSearchTerm, setRankingSearchTerm] = useState<string>('');
 
-  // 4. Modal / Inspect Case State
+  // 6. Modal / Inspect Case State
   const [inspectedEvent, setInspectedEvent] = useState<PairCannibalizationEvent | null>(null);
+
+  // Load Recuadro 2 IP faults count
+  const recuadro2Faults = useMemo(() => {
+    return loadRecuadro2Faults();
+  }, []);
 
   // Compute all unique Centrales & Cables for filter dropdowns
   const availableCentrales = useMemo(() => {
@@ -50,28 +73,54 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
     repairRecords.forEach(r => {
       if (r.centralName) s.add(r.centralName.trim());
     });
+    recuadro2Faults.forEach(f => {
+      if (f.centralName) s.add(f.centralName.trim());
+    });
     return Array.from(s).sort();
-  }, [repairRecords]);
+  }, [repairRecords, recuadro2Faults]);
 
   const availableCables = useMemo(() => {
     const s = new Set<string>();
     repairRecords.forEach(r => {
       if (r.cable) s.add(r.cable.trim());
     });
+    recuadro2Faults.forEach(f => {
+      if (f.cable) s.add(f.cable.trim());
+    });
     return Array.from(s).sort();
-  }, [repairRecords]);
+  }, [repairRecords, recuadro2Faults]);
 
-  // Compute all raw cannibalization events across the entire dataset with active window
+  // Handle direct Excel file upload
+  const handleDirectFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsLoadingDirectFile(true);
+    setDirectFileName(file.name);
+    try {
+      const records = await parseDirectExcelToFaultRecords(file);
+      setCustomDirectFaults(records);
+      setSourceMode('excel_directo');
+    } catch (err) {
+      console.error('Error parsing uploaded direct fault excel', err);
+    } finally {
+      setIsLoadingDirectFile(false);
+    }
+  };
+
+  // Compute all raw cannibalization events across the entire dataset with active window and sources
   const allEvents = useMemo(() => {
     const opts: PairFilterOptions = {
       windowPreset,
       customDateFrom: windowPreset === 'custom' && customDateFrom ? customDateFrom : undefined,
       customDateTo: windowPreset === 'custom' && customDateTo ? customDateTo : undefined,
       customMaxDays: windowPreset === 'custom' ? customMaxDays : undefined,
-      matchTypeFilter: 'all' // Compute all for ranking completeness
+      matchTypeFilter: 'all', // Compute all for ranking completeness
+      sourceMode,
+      omitGenericTerminals
     };
-    return detectPairCannibalizationEvents(repairRecords, opts);
-  }, [repairRecords, windowPreset, customMaxDays, customDateFrom, customDateTo]);
+    return detectPairCannibalizationEvents(repairRecords, opts, customDirectFaults);
+  }, [repairRecords, windowPreset, customMaxDays, customDateFrom, customDateTo, sourceMode, omitGenericTerminals, customDirectFaults]);
 
   // Compute Full Technician Ranking from ALL events (regardless of case filters)
   const fullTechnicianRanking = useMemo(() => {
@@ -143,7 +192,8 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
           ev.firstTerminal.toLowerCase().includes(q) ||
           ev.secondTerminal.toLowerCase().includes(q) ||
           ev.suspectedTechnician.toLowerCase().includes(q) ||
-          ev.secondTech.toLowerCase().includes(q);
+          ev.secondTech.toLowerCase().includes(q) ||
+          (ev.secondSourceLabel && ev.secondSourceLabel.toLowerCase().includes(q));
         if (!matches) return false;
       }
 
@@ -163,6 +213,8 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
     setCustomMaxDays(10);
     setCustomDateFrom('');
     setCustomDateTo('');
+    setSourceMode('all');
+    setOmitGenericTerminals(true);
     setMatchTypeFilter('all');
     setSeverityFilter('all');
     setSelectedCentralFilter('all');
@@ -176,6 +228,8 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
 
   const isAnyFilterActive =
     windowPreset !== '48h' ||
+    sourceMode !== 'all' ||
+    !omitGenericTerminals ||
     matchTypeFilter !== 'all' ||
     severityFilter !== 'all' ||
     selectedCentralFilter !== 'all' ||
@@ -192,14 +246,20 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
       <div className="bg-gradient-to-r from-slate-900 via-rose-950/40 to-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="bg-rose-500/20 text-rose-300 text-[10px] font-black uppercase px-2.5 py-1 rounded-full border border-rose-500/30 flex items-center space-x-1.5 font-mono">
                 <Network className="w-3 h-3 text-rose-400" />
                 <span>AUDITORÍA OPERATIVA EN PLANTA EXTERIOR</span>
               </span>
               <span className="bg-amber-500/20 text-amber-300 text-[10px] font-black uppercase px-2.5 py-1 rounded-full border border-amber-500/30 font-mono">
-                DETECCIÓN DE CANIBALIZACIÓN DE PARES
+                CRUCE: REPARADA VS AVERÍAS (RECUADROS 1 Y 2)
               </span>
+              {omitGenericTerminals && (
+                <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase px-2.5 py-1 rounded-full border border-emerald-500/30 font-mono flex items-center space-x-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                  <span>26 TERMINALES GENÉRICOS OMITIDOS</span>
+                </span>
+              )}
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white flex items-center space-x-2.5">
               <ShieldAlert className="w-6 h-6 text-rose-500 flex-shrink-0" />
@@ -207,12 +267,21 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
             </h2>
             <p className="text-slate-400 text-xs sm:text-sm max-w-3xl leading-relaxed">
               Detecta el patrón de <strong className="text-rose-300 font-bold">"desvestir a un santo para vestir a otro"</strong>:
-              identifica servicios reparados en un cable/terminal donde, en un intervalo cercano de tiempo,
-              un servicio vecino del <strong>mismo terminal o terminal hermano (misma letra, ej. B2 con B4)</strong> cae con avería.
+              cruza los servicios reparados en este módulo contra las averías de los Excel de los <strong>Recuadros 1 y 2</strong> (o entre reparadas),
+              identificando vecinos en el <strong>mismo terminal o terminal hermano (misma letra, ej. B2 con B4)</strong> que cayeron en avería tras la intervención.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setIsExclusionModalOpen(true)}
+              className="bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white font-bold text-xs px-3.5 py-2.5 rounded-xl border border-amber-500/30 transition-all flex items-center space-x-1.5"
+              title="Ver los 26 terminales genéricos excluidos (1A, 3B, 2C, etc.)"
+            >
+              <Info className="w-4 h-4 text-amber-400" />
+              <span>Ver Terminales Omitidos (26)</span>
+            </button>
+
             <button
               onClick={() => exportPairCannibalizationExcel(filteredEvents, fullTechnicianRanking)}
               disabled={filteredEvents.length === 0}
@@ -220,7 +289,7 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
               title="Descargar informe completo en Excel con todas las columnas de auditoría"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-              <span>Exportar Excel Inspección ({filteredEvents.length})</span>
+              <span>Exportar Excel ({filteredEvents.length})</span>
             </button>
 
             {isAnyFilterActive && (
@@ -292,7 +361,128 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
         </div>
       </div>
 
-      {/* 3. Panel de Filtros: Ventana Temporal y Coincidencia */}
+      {/* 3. Panel de Cruce Causal: Reparadas vs Datos de Recuadros 1 y 2 */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div className="flex items-center space-x-2">
+            <Database className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">
+              Fuente de Comparación: La Reparada vs Datos de Averías (Recuadros 1 y 2)
+            </h3>
+          </div>
+          <div className="flex items-center space-x-2 text-xs">
+            <span className="text-slate-400">Estado de Recuadro 2:</span>
+            {recuadro2Faults.length > 0 ? (
+              <span className="bg-emerald-500/20 text-emerald-300 font-mono font-bold px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center space-x-1">
+                <Check className="w-3 h-3 text-emerald-400" />
+                <span>{recuadro2Faults.length} averías conectadas</span>
+              </span>
+            ) : (
+              <span className="bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded-full">
+                Sin datos en Recuadro 2
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Selector de Fuente de Cruce */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setSourceMode('all')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-2 ${
+              sourceMode === 'all'
+                ? 'bg-gradient-to-r from-rose-600 to-indigo-600 text-white shadow-lg shadow-rose-600/30 border border-rose-400'
+                : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-300" />
+            <span>🌟 Modo Integral (Recuadro 2 IP + Reparadas + Excel)</span>
+          </button>
+
+          <button
+            onClick={() => setSourceMode('recuadro2_ip')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-2 ${
+              sourceMode === 'recuadro2_ip'
+                ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30 border border-cyan-400'
+                : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+            }`}
+          >
+            <Network className="w-3.5 h-3.5 text-cyan-300" />
+            <span>🟣 Cruzar vs Averías Recuadro 2 (IP / Cables) ({recuadro2Faults.length})</span>
+          </button>
+
+          <button
+            onClick={() => setSourceMode('recuadro3_reparadas')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-2 ${
+              sourceMode === 'recuadro3_reparadas'
+                ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30 border border-purple-400'
+                : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+            }`}
+          >
+            <Wrench className="w-3.5 h-3.5 text-purple-300" />
+            <span>🔵 Cruzar entre Reparadas (Recuadro 3)</span>
+          </button>
+
+          <div className="relative inline-block">
+            <input
+              type="file"
+              ref={directFileInputRef}
+              onChange={handleDirectFileUpload}
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+            />
+            <button
+              onClick={() => directFileInputRef.current?.click()}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-2 ${
+                sourceMode === 'excel_directo' || customDirectFaults.length > 0
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 border border-emerald-400'
+                  : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-300" />
+              <span>
+                {directFileName
+                  ? `🟢 Excel Cargado: ${directFileName} (${customDirectFaults.length})`
+                  : '🟢 Subir Excel de Averías Externo'}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Regla de Exclusión de Terminales Genéricos */}
+        <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center space-x-2.5">
+            <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+            <div>
+              <span className="font-bold text-white block">
+                Filtro Anti-Falsos Positivos: Omitir 26 Terminales Genéricos
+              </span>
+              <span className="text-slate-400 text-[11px]">
+                Se omiten estrictamente terminales como <strong>1A, 1C, 1D, 1E, 1F, 1G, 1H, 1J, 1I, 3A-3F, 2A-2C, 3J-3Q</strong> por ser bloques genéricos de repartidor o ruidos operativos.
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center space-x-3 shrink-0">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={omitGenericTerminals}
+                onChange={e => setOmitGenericTerminals(e.target.checked)}
+                className="w-4 h-4 text-rose-600 bg-slate-900 border-slate-700 rounded focus:ring-rose-500"
+              />
+              <span className="font-bold text-slate-200">Omitir Genéricos (Activo)</span>
+            </label>
+            <button
+              onClick={() => setIsExclusionModalOpen(true)}
+              className="text-amber-400 hover:text-amber-300 text-xs font-black underline"
+            >
+              Ver Lista Completa
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. Panel de Filtros: Ventana Temporal y Coincidencia */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="flex items-center space-x-2">
@@ -466,7 +656,7 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
         </div>
       </div>
 
-      {/* 4. Tabla de Ranking de Operarios con Mayor "Daño Colateral" */}
+      {/* 5. Tabla de Ranking de Operarios con Mayor "Daño Colateral" */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="space-y-0.5">
@@ -630,13 +820,13 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
         </div>
       </div>
 
-      {/* 5. Tabla Principal de Casos e Inspecciones */}
+      {/* 6. Tabla Principal de Casos e Inspecciones */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white space-y-4 shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="space-y-0.5">
             <h3 className="text-base font-black text-white flex items-center space-x-2">
               <Layers className="w-5 h-5 text-rose-400" />
-              <span>Matriz de Inspección de Servicios Interrumpidos por Cable y Terminal</span>
+              <span>Matriz de Inspección: Reparada (Servicio 1) vs Avería Vecina (Servicio 2)</span>
             </h3>
             <p className="text-xs text-slate-400">
               Contrasta cronológicamente la intervención del 1er servicio reparado frente a la avería subsecuente en el terminal vecino.
@@ -653,11 +843,11 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
             <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px] tracking-wider">
               <tr>
                 <th className="py-3 px-3">Alerta</th>
-                <th className="py-3 px-3">Cable & Dispersión</th>
+                <th className="py-3 px-3">Cable & Central</th>
                 <th className="py-3 px-3">Relación Terminal</th>
                 <th className="py-3 px-3 bg-slate-900/80">Servicio 1 (Reparado)</th>
                 <th className="py-3 px-3 bg-slate-900/80">Fecha 1 & Operario</th>
-                <th className="py-3 px-3 bg-rose-950/20">Servicio 2 (Interrumpido)</th>
+                <th className="py-3 px-3 bg-rose-950/20">Servicio 2 (Interrumpido / Vecino)</th>
                 <th className="py-3 px-3 bg-rose-950/20">Fecha 2 & Diagnóstico</th>
                 <th className="py-3 px-3 text-center">Intervalo (&Delta;t)</th>
                 <th className="py-3 px-3 text-center">Acciones</th>
@@ -669,7 +859,7 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
                   <td colSpan={9} className="py-12 text-center text-slate-500 space-y-2">
                     <ShieldAlert className="w-8 h-8 text-slate-600 mx-auto" />
                     <p className="font-bold">No se encontraron casos con los filtros aplicados.</p>
-                    <p className="text-[11px] text-slate-600">Pruebe ampliando la ventana temporal o limpiando los filtros de búsqueda.</p>
+                    <p className="text-[11px] text-slate-600">Pruebe ampliando la ventana temporal o revisando la fuente de averías seleccionada.</p>
                   </td>
                 </tr>
               ) : (
@@ -751,10 +941,23 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
                       {/* Servicio 2 (Interrumpido / Vecino) */}
                       <td className="py-3 px-3 bg-rose-950/10">
                         <div className="font-bold font-mono text-white text-[12px]">{ev.secondService}</div>
-                        <div className="text-[10px] text-slate-400">
-                          Term: <strong className="text-sky-300">{ev.secondTerminal}</strong>
-                          {ev.secondPair ? ` | Par: ${ev.secondPair}` : ''}
+                        <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-1.5">
+                          <span>Term: <strong className="text-sky-300">{ev.secondTerminal}</strong></span>
+                          {ev.secondPair && <span>| Par: {ev.secondPair}</span>}
                         </div>
+                        {ev.secondSourceLabel && (
+                          <div className="mt-1">
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full inline-block font-mono ${
+                              ev.secondSource === 'RECUADRO_2_IP'
+                                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                                : ev.secondSource === 'EXCEL_DIRECTO'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                            }`}>
+                              {ev.secondSourceLabel}
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Fecha 2 & Diagnóstico */}
@@ -765,6 +968,11 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
                           <span className="text-slate-600">|</span>
                           <span className="text-rose-400">{ev.secondClave}</span>
                         </div>
+                        {ev.secondIssue && (
+                          <div className="text-[10px] text-slate-400 truncate max-w-[180px]" title={ev.secondIssue}>
+                            {ev.secondIssue}
+                          </div>
+                        )}
                       </td>
 
                       {/* Intervalo Delta t */}
@@ -801,7 +1009,7 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
         </div>
       </div>
 
-      {/* 6. Modal / Ficha Técnica de Inspección en Campo */}
+      {/* 7. Modal / Ficha Técnica de Inspección en Campo */}
       {inspectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
@@ -865,7 +1073,7 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
                       1. Intervención Previa (Donante)
                     </span>
                     <span className="bg-indigo-500/20 text-indigo-300 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Cierre Exitoso
+                      Reparación Concluida
                     </span>
                   </div>
                   <div className="space-y-1.5 text-xs">
@@ -904,7 +1112,7 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
                       2. Interrupción Vecino (Afectado)
                     </span>
                     <span className="bg-rose-500/20 text-rose-300 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Caída Posterior
+                      {inspectedEvent.secondSourceLabel || 'Caída Posterior'}
                     </span>
                   </div>
                   <div className="space-y-1.5 text-xs">
@@ -918,21 +1126,30 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
                       {inspectedEvent.secondPair && <span className="text-slate-400 ml-2">(Par: {inspectedEvent.secondPair})</span>}
                     </div>
                     <div>
-                      <span className="text-slate-400 block text-[11px]">Fecha de Caída / Reparación:</span>
+                      <span className="text-slate-400 block text-[11px]">Fecha de Caída / Avería:</span>
                       <strong className="text-white font-mono">{inspectedEvent.secondDate}</strong>
                     </div>
                     <div>
-                      <span className="text-slate-400 block text-[11px]">Técnico que Atendió el Reclamo:</span>
+                      <span className="text-slate-400 block text-[11px]">Atendido por:</span>
                       <strong className="text-slate-200">{inspectedEvent.secondTech}</strong>
                     </div>
                     <div>
-                      <span className="text-slate-400 block text-[11px]">Clave Diagnosticada:</span>
+                      <span className="text-slate-400 block text-[11px]">Clave / Síntoma:</span>
                       <span className="text-rose-400 font-bold">{inspectedEvent.secondClave}</span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[11px]">Ticket / Folio:</span>
                       <span className="text-slate-300 font-mono">{inspectedEvent.secondTicket}</span>
                     </div>
+                    {inspectedEvent.secondAddress && (
+                      <div className="pt-1">
+                        <span className="text-slate-400 block text-[11px]">Dirección Registrada:</span>
+                        <span className="text-slate-300 text-[11px] flex items-center space-x-1">
+                          <MapPin className="w-3 h-3 text-rose-400 shrink-0" />
+                          <span>{inspectedEvent.secondAddress}</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -952,23 +1169,133 @@ export const AuditoriaTerminalesParesView: React.FC<AuditoriaTerminalesParesView
               <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2.5">
                 <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center space-x-2">
                   <Wrench className="w-4 h-4 text-indigo-400" />
-                  <span>Protocolo de Inspección Física Recomendado</span>
+                  <span>Checklist de Verificación Física para el Supervisor en Poste/Caja</span>
                 </h4>
-                <ul className="text-xs text-slate-400 space-y-1.5 list-disc pl-5">
-                  <li>Verificar visualmente en la caja de dispersión {inspectedEvent.firstTerminal} / {inspectedEvent.secondTerminal} si existen cables puenteados o pares cortados.</li>
-                  <li>Comprobar continuidad del par primario asignado a la línea {inspectedEvent.firstService} frente al de {inspectedEvent.secondService}.</li>
-                  <li>Auditar la matrícula del operario <strong className="text-rose-300 font-bold">{inspectedEvent.suspectedTechnician}</strong> para descartar malas prácticas reiteradas en este sector.</li>
-                </ul>
+                <div className="space-y-1.5 text-xs text-slate-400">
+                  <div className="flex items-start space-x-2">
+                    <input type="checkbox" className="mt-0.5 rounded bg-slate-900 border-slate-700 text-rose-600" />
+                    <span>Revisar la bornera del terminal {inspectedEvent.firstTerminal} en busca de puentes improvisados o cables sueltos.</span>
+                  </div>
+                  <div className="flex items-start space-x-2">
+                    <input type="checkbox" className="mt-0.5 rounded bg-slate-900 border-slate-700 text-rose-600" />
+                    <span>Comprobar continuidad del par asignado al abonado vecino ({inspectedEvent.secondService}) hasta la central.</span>
+                  </div>
+                  <div className="flex items-start space-x-2">
+                    <input type="checkbox" className="mt-0.5 rounded bg-slate-900 border-slate-700 text-rose-600" />
+                    <span>Verificar firma y matrícula de la brigada "{inspectedEvent.suspectedTechnician}" en la orden de trabajo.</span>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-end space-x-3">
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-end space-x-2">
               <button
                 onClick={() => setInspectedEvent(null)}
-                className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-colors"
               >
                 Cerrar Ficha
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Modal: Ver Lista de los 26 Terminales Genéricos Omitidos */}
+      {isExclusionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-5 bg-gradient-to-r from-amber-950 via-slate-900 to-slate-900 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 rounded-2xl bg-amber-600 text-white shadow-lg shadow-amber-600/30">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase text-amber-400 font-mono tracking-wider">
+                    REGLA DE PRECISIÓN OPERATIVA
+                  </span>
+                  <h3 className="text-lg font-black text-white">
+                    26 Terminales Genéricos Omitidos
+                  </h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsExclusionModalOpen(false)}
+                className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs text-slate-300">
+              <p className="leading-relaxed text-slate-300">
+                Los siguientes códigos de terminal corresponden a posiciones de distribución general, repartidores internos o marcadores estándar que no representan cajas físicas de dispersión aisladas.
+                Al omitirlos automáticamente, <strong>se eliminan cientos de falsos positivos</strong> y la auditoría se concentra únicamente en terminales de campo reales:
+              </p>
+
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+                <div>
+                  <span className="text-slate-500 font-bold block mb-1 text-[11px]">GRUPO 1 (9 terminales):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['1A', '1C', '1D', '1E', '1F', '1G', '1H', '1J', '1I'].map(t => (
+                      <span key={t} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-lg font-mono font-bold">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 font-bold block mb-1 text-[11px]">GRUPO 3 (6 terminales):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['3A', '3B', '3C', '3D', '3E', '3F'].map(t => (
+                      <span key={t} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-lg font-mono font-bold">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 font-bold block mb-1 text-[11px]">GRUPO 2 (3 terminales):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['2A', '2B', '2C'].map(t => (
+                      <span key={t} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-lg font-mono font-bold">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 font-bold block mb-1 text-[11px]">GRUPO 3 EXTENDIDO (8 terminales):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['3J', '3K', '3L', '3M', '3N', '3O', '3P', '3Q'].map(t => (
+                      <span key={t} className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-lg font-mono font-bold">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center">
+              <label className="flex items-center space-x-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={omitGenericTerminals}
+                  onChange={e => setOmitGenericTerminals(e.target.checked)}
+                  className="w-4 h-4 text-rose-600 bg-slate-900 border-slate-700 rounded"
+                />
+                <span className="font-bold text-slate-300">Mantener omisión activada</span>
+              </label>
+
+              <button
+                onClick={() => setIsExclusionModalOpen(false)}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-colors shadow-lg shadow-amber-600/20"
+              >
+                Entendido
               </button>
             </div>
           </div>

@@ -1,6 +1,38 @@
 import { RepairRecord, PairCannibalizationEvent, PairMatchType, PairSuspicionLevel, TechnicianCollateralDamageSummary } from '../types';
+import { IpCableRow } from '../types/ipCablesTypes';
+import { loadParsedIpData } from './ipCablesStorage';
+import { extractTerminalFromItem, extractTelefonoFromItem, extractDireccionFromItem, cleanCableName } from './ipCablesExcelParser';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from './fileDownloadHelper';
+
+/**
+ * List of 26 generic/internal terminal codes strictly omitted as per user specifications:
+ * 1A, 1C, 1D, 1E, 1F, 1G, 1H, 1J, 1I
+ * 3A, 3B, 3C, 3D, 3E, 3F
+ * 2A, 2B, 2C
+ * 3J, 3K, 3L, 3M, 3N, 3O, 3P, 3Q
+ */
+export const EXCLUDED_EXACT_TERMINALS: Set<string> = new Set([
+  '1A', '1C', '1D', '1E', '1F', '1G', '1H', '1J', '1I',
+  '3A', '3B', '3C', '3D', '3E', '3F',
+  '2A', '2B', '2C',
+  '3J', '3K', '3L', '3M', '3N', '3O', '3P', '3Q'
+]);
+
+/**
+ * Checks whether a given terminal code matches any of the excluded generic terminals.
+ */
+export function isTerminalExcluded(term: string): boolean {
+  if (!term) return true;
+  const clean = term.trim().toUpperCase();
+  if (EXCLUDED_EXACT_TERMINALS.has(clean)) return true;
+
+  // Strip prefixes such as 'TERM', 'TERMINAL', 'CAJA', 'BLOQUE', 'REGLETA', 'TRM'
+  const stripped = clean.replace(/^(TERM|TERMINAL|CAJA|BLOQUE|REGLETA|TRM)\s*[:-]?\s*/i, '').trim();
+  if (EXCLUDED_EXACT_TERMINALS.has(stripped)) return true;
+
+  return false;
+}
 
 /**
  * Extracts and cleans the cable identifier from a RepairRecord
@@ -64,7 +96,7 @@ export function getRecordPair(r: RepairRecord): string {
  */
 export function extractTerminalComponents(term: string): { letter: string; num: string; raw: string } {
   if (!term) return { letter: '', num: '', raw: '' };
-  const clean = term.trim().toUpperCase().replace(/^(TERM|TERMINAL|CAJA|BLOQUE|REGLETA)\s*[:-]?\s*/i, '');
+  const clean = term.trim().toUpperCase().replace(/^(TERM|TERMINAL|CAJA|BLOQUE|REGLETA|TRM)\s*[:-]?\s*/i, '');
   
   // Format letter followed by numbers: "B2", "B-04", "B/4", "TB1"
   const m = clean.match(/^([A-Z]+)[-_/\s]*(\d+)/i);
@@ -91,12 +123,24 @@ export function extractTerminalComponents(term: string): { letter: string; num: 
  * Evaluates whether two terminals share a relationship:
  * - SAME_TERMINAL: 100% exact match
  * - SIBLING_TERMINAL: Same cable, share common block letter (e.g. B2 and B4 share 'B')
+ * Automatically respects the omission rule for generic terminals (1A, 3B, 2C, etc.)
  */
-export function compareTerminals(term1: string, term2: string): { match: boolean; matchType?: PairMatchType; blockLetter: string } {
+export function compareTerminals(
+  term1: string,
+  term2: string,
+  omitExcluded: boolean = true
+): { match: boolean; matchType?: PairMatchType; blockLetter: string; isExcluded?: boolean } {
   if (!term1 || !term2) return { match: false, blockLetter: '' };
 
   const norm1 = term1.trim().toUpperCase();
   const norm2 = term2.trim().toUpperCase();
+
+  // Omit generic excluded terminals (1A, 3A-3Q, 2A-2C, etc.)
+  if (omitExcluded) {
+    if (isTerminalExcluded(norm1) || isTerminalExcluded(norm2)) {
+      return { match: false, blockLetter: '', isExcluded: true };
+    }
+  }
 
   // 1. Exact match (Mismo Terminal)
   if (norm1 === norm2) {
@@ -138,6 +182,171 @@ export function calculateDaysDifference(date1: string, date2: string): number {
   }
 }
 
+/**
+ * Generic Fault / Breakdown record that can originate from Recuadro 2 (IP / Cables),
+ * Recuadro 1 (Reportes), Recuadro 3 (Reparadas), or a directly uploaded Excel file.
+ */
+export interface GenericFaultRecord {
+  id: string;
+  serviceNumber: string;
+  centralName?: string;
+  cable: string;
+  terminal: string;
+  pair?: string;
+  date: string; // YYYY-MM-DD
+  ticketCode?: string;
+  technician?: string;
+  issueType?: string;
+  claveCode?: string;
+  status?: string;
+  address?: string;
+  source: 'RECUADRO_2_IP' | 'RECUADRO_3_REPARADAS' | 'RECUADRO_1_REPORTES' | 'EXCEL_DIRECTO';
+  sourceLabel: string;
+  rawRowData?: Record<string, any>;
+}
+
+/**
+ * Converts a RepairRecord into a GenericFaultRecord
+ */
+export function repairRecordToGenericFault(r: RepairRecord): GenericFaultRecord {
+  return {
+    id: r.id,
+    serviceNumber: r.serviceNumber,
+    centralName: r.centralName,
+    cable: getRecordCable(r),
+    terminal: getRecordTerminal(r),
+    pair: getRecordPair(r),
+    date: r.date,
+    ticketCode: r.ticketCode || 'S/N',
+    technician: r.technician || 'Operario de Reparación',
+    issueType: r.issueType || 'Reparación Concluida',
+    claveCode: r.claveCode || 'C-01',
+    status: r.status,
+    source: 'RECUADRO_3_REPARADAS',
+    sourceLabel: 'Reparación (Recuadro 3)',
+    rawRowData: r.rawRowData
+  };
+}
+
+/**
+ * Converts an IpCableRow from Recuadro 2 into a GenericFaultRecord
+ */
+export function ipCableRowToGenericFault(row: IpCableRow): GenericFaultRecord {
+  const terminal = extractTerminalFromItem(row) || '';
+  const service = row.servicio || extractTelefonoFromItem(row) || '';
+  const address = extractDireccionFromItem(row) || '';
+
+  // Extract date from row.fechaReporte or rawRowData
+  let dateStr = row.fechaReporte || '';
+  if (!dateStr && row.rawRowData) {
+    const dKey = Object.keys(row.rawRowData).find(k => /^(fecha|date|dia|reporte)/i.test(k.trim()));
+    if (dKey && row.rawRowData[dKey]) {
+      dateStr = String(row.rawRowData[dKey]).trim();
+    }
+  }
+  if (!dateStr || dateStr.length < 8) {
+    dateStr = new Date().toISOString().split('T')[0];
+  }
+
+  // Extract ticket / folio
+  let ticketCode = 'FOL-IP';
+  if (row.rawRowData) {
+    const tKey = Object.keys(row.rawRowData).find(k => /^(ticket|folio|orden|codigo|id)/i.test(k.trim()));
+    if (tKey && row.rawRowData[tKey]) {
+      ticketCode = String(row.rawRowData[tKey]).trim();
+    }
+  }
+
+  // Extract pair
+  const pair = row.parP || row.parS || '';
+
+  // Extract issue or group
+  const issue = row.grupo || 'Avería en Red / IP Cables';
+
+  return {
+    id: row.id,
+    serviceNumber: service,
+    centralName: row.central,
+    cable: cleanCableName(row.cable || row.cableP || row.cableS || 'Cable Sin Especificar'),
+    terminal,
+    pair,
+    date: dateStr,
+    ticketCode,
+    technician: 'Pendiente / No Asignado',
+    issueType: issue,
+    claveCode: 'REP-IP',
+    status: 'pending',
+    address,
+    source: 'RECUADRO_2_IP',
+    sourceLabel: 'Avería Recuadro 2 (IP / Cables)',
+    rawRowData: row.rawRowData
+  };
+}
+
+/**
+ * Loads all available fault records from Recuadro 2 (Análisis de IP y Gestión de Cables)
+ */
+export function loadRecuadro2Faults(): GenericFaultRecord[] {
+  try {
+    const ipData = loadParsedIpData();
+    if (ipData && Array.isArray(ipData.consolidatedRows) && ipData.consolidatedRows.length > 0) {
+      return ipData.consolidatedRows.map(ipCableRowToGenericFault);
+    }
+  } catch (e) {
+    console.warn('Error loading Recuadro 2 IP faults for cross-referencing', e);
+  }
+  return [];
+}
+
+/**
+ * Parses any uploaded Excel file containing reported faults to cross-reference
+ */
+export async function parseDirectExcelToFaultRecords(file: File): Promise<GenericFaultRecord[]> {
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+  const firstSheet = wb.SheetNames[0];
+  if (!firstSheet) return [];
+  const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { defval: '' });
+
+  return rawRows.map((row, idx) => {
+    const keys = Object.keys(row);
+    const findVal = (regex: RegExp) => {
+      const k = keys.find(key => regex.test(key.trim()));
+      return k && row[k] !== undefined && row[k] !== null ? String(row[k]).trim() : '';
+    };
+
+    const srv = findVal(/^(servicio|telefono|tel|linea|abonado|numero)/i) || `SRV-EXT-${idx + 1}`;
+    const cab = findVal(/^(cable|falla_cable|averia_cable|alimentador)/i) || 'Cable General';
+    const term = findVal(/^(terminal|term|caja|bloque|trm|regleta)/i) || '';
+    const par = findVal(/^(par|pares|par_sec|par_prim)/i) || '';
+    const ticket = findVal(/^(ticket|folio|orden|codigo|id)/i) || `FOL-EXT-${idx + 1}`;
+    const central = findVal(/^(central|cta|nodo|sucursal)/i) || 'Central Externa';
+    const fecha = findVal(/^(fecha|date|dia|reporte|creacion)/i) || new Date().toISOString().split('T')[0];
+    const tech = findVal(/^(tecnico|brigada|contrata|personal)/i) || 'Personal Externo';
+    const issue = findVal(/^(falla|averia|problema|sintoma|incidencia)/i) || 'Reclamo Vecino';
+
+    return {
+      id: `ext_fault_${idx}_${Date.now()}`,
+      serviceNumber: srv,
+      centralName: central,
+      cable: cleanCableName(cab),
+      terminal: term,
+      pair: par,
+      date: fecha,
+      ticketCode: ticket,
+      technician: tech,
+      issueType: issue,
+      claveCode: 'EXT-01',
+      status: 'pending',
+      source: 'EXCEL_DIRECTO',
+      sourceLabel: `Excel Externo (${file.name})`,
+      rawRowData: row
+    };
+  });
+}
+
+export type CrossSourceMode = 'all' | 'recuadro2_ip' | 'recuadro3_reparadas' | 'excel_directo';
+
 export interface PairFilterOptions {
   windowPreset: '24h' | '48h' | '7d' | '15d' | '30d' | 'custom';
   customDateFrom?: string;
@@ -148,22 +357,49 @@ export interface PairFilterOptions {
   techFilter?: string;
   centralFilter?: string;
   searchTerm?: string;
+  sourceMode?: CrossSourceMode;
+  omitGenericTerminals?: boolean; // Defaults to true (omits 1A, 3B, 2C, etc.)
 }
 
 /**
  * Main Detection Algorithm:
- * Scans repair records to identify pair cannibalization and interrupted neighbor services.
+ * Scans repair records (1st intervention / reparada) against target faults
+ * (from Recuadro 2 IP, Recuadro 1, Reparadas, or directly uploaded Excel).
  */
 export function detectPairCannibalizationEvents(
   records: RepairRecord[],
-  options: PairFilterOptions
+  options: PairFilterOptions,
+  customFaultsList?: GenericFaultRecord[]
 ): PairCannibalizationEvent[] {
-  if (!records || records.length < 2) return [];
+  if (!records || records.length === 0) return [];
 
-  // Filter valid records and sort chronologically
-  const validRecords = records
+  // Filter valid 1st interventions (reparadas) and sort chronologically
+  const validRepairs = records
     .filter(r => r.date && r.serviceNumber)
     .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Build the target faults list based on sourceMode
+  const omitExcluded = options.omitGenericTerminals !== false;
+  let targetFaults: GenericFaultRecord[] = [];
+
+  const sourceMode = options.sourceMode || 'all';
+
+  if (customFaultsList && customFaultsList.length > 0) {
+    targetFaults.push(...customFaultsList);
+  }
+
+  if (sourceMode === 'all' || sourceMode === 'recuadro2_ip') {
+    const rec2Faults = loadRecuadro2Faults();
+    targetFaults.push(...rec2Faults);
+  }
+
+  if (sourceMode === 'all' || sourceMode === 'recuadro3_reparadas') {
+    const rec3Faults = validRepairs.map(repairRecordToGenericFault);
+    targetFaults.push(...rec3Faults);
+  }
+
+  // Filter targets with valid service, date, cable, and terminal
+  const validTargets = targetFaults.filter(t => t.serviceNumber && t.date && t.cable && t.terminal);
 
   // Determine maximum days allowed based on preset or custom options
   let maxDays = 31;
@@ -179,9 +415,9 @@ export function detectPairCannibalizationEvents(
   const events: PairCannibalizationEvent[] = [];
   const processedPairKeys = new Set<string>();
 
-  // Compare each record with subsequent records
-  for (let i = 0; i < validRecords.length; i++) {
-    const r1 = validRecords[i];
+  // Compare each 1st repair intervention against target faults
+  for (let i = 0; i < validRepairs.length; i++) {
+    const r1 = validRepairs[i];
     const s1 = (r1.serviceNumber || '').trim().toLowerCase();
     const cable1 = getRecordCable(r1);
     const term1 = getRecordTerminal(r1);
@@ -189,34 +425,51 @@ export function detectPairCannibalizationEvents(
     // If there is no terminal or cable, skip
     if (!term1 || !cable1 || cable1 === 'Cable Sin Especificar') continue;
 
+    // Check if terminal is excluded (1A, 3B, 2C, etc.)
+    if (omitExcluded && isTerminalExcluded(term1)) continue;
+
     // Filter by manual custom date if provided
     if (options.customDateFrom && r1.date < options.customDateFrom) continue;
     if (options.customDateTo && r1.date > options.customDateTo) continue;
 
-    for (let j = i + 1; j < validRecords.length; j++) {
-      const r2 = validRecords[j];
-      const s2 = (r2.serviceNumber || '').trim().toLowerCase();
+    for (let j = 0; j < validTargets.length; j++) {
+      const target = validTargets[j];
+      const s2 = (target.serviceNumber || '').trim().toLowerCase();
 
-      // Must be DIFFERENT services (Neighbor services, not the same line)
+      // Must be DIFFERENT services (Neighbor service, not the same subscriber)
       if (s1 === s2) continue;
 
-      const cable2 = getRecordCable(r2);
+      // Do not pair a record with itself if from same source
+      if (r1.id === target.id) continue;
+
       // Must match Cable (Same cable / feeder)
-      if (cable1.toLowerCase() !== cable2.toLowerCase()) continue;
+      const cleanCable1 = cleanCableName(cable1).toLowerCase();
+      const cleanCable2 = cleanCableName(target.cable).toLowerCase();
+      if (cleanCable1 !== cleanCable2 && !cleanCable1.includes(cleanCable2) && !cleanCable2.includes(cleanCable1)) {
+        continue;
+      }
+
+      // Chronological causality check:
+      // The breakdown/reclamation on the neighbor MUST happen on or after the 1st repair intervention (target.date >= r1.date)
+      // Allow at most 1 day grace if dates are close
+      if (target.date < r1.date) {
+        continue;
+      }
 
       // Calculate time interval
-      const diffDays = calculateDaysDifference(r1.date, r2.date);
+      const diffDays = calculateDaysDifference(r1.date, target.date);
       if (diffDays > maxDays) {
-        // Since records are sorted chronologically, if diffDays exceeds maxDays + 35, we can break early
-        if (diffDays > maxDays + 35) break;
         continue;
       }
 
       // Check terminal relation
-      const term2 = getRecordTerminal(r2);
+      const term2 = target.terminal;
       if (!term2) continue;
 
-      const comp = compareTerminals(term1, term2);
+      // Check if term2 is excluded (1A, 3B, 2C, etc.)
+      if (omitExcluded && isTerminalExcluded(term2)) continue;
+
+      const comp = compareTerminals(term1, term2, omitExcluded);
       if (!comp.match || !comp.matchType) continue;
 
       // Filter by match type if selected
@@ -225,7 +478,7 @@ export function detectPairCannibalizationEvents(
       }
 
       // Avoid duplicate event pairs
-      const pairKey = `${r1.id}_${r2.id}`;
+      const pairKey = `${r1.id}_${target.id}`;
       if (processedPairKeys.has(pairKey)) continue;
       processedPairKeys.add(pairKey);
 
@@ -250,19 +503,19 @@ export function detectPairCannibalizationEvents(
       }
 
       const isSameTech = Boolean(
-        r1.technician && r2.technician &&
-        r1.technician.trim().toLowerCase() === r2.technician.trim().toLowerCase()
+        r1.technician && target.technician &&
+        r1.technician.trim().toLowerCase() === target.technician.trim().toLowerCase()
       );
 
       const relationText = comp.matchType === 'SAME_TERMINAL'
         ? `Mismo terminal exacto (${term1})`
         : `Terminal hermano (Caja Bloque ${comp.blockLetter}: ${term1} vs ${term2})`;
 
-      const description = `El servicio ${r1.serviceNumber} fue reparado por "${r1.technician}" el ${r1.date} en ${cable1}, ${relationText}. A los ${diffDays === 0 ? 'pocas horas' : `${diffDays} día(s)`} (${r2.date}), el servicio vecino ${r2.serviceNumber} presentó avería y fue intervenido por "${r2.technician}". Posible cambio o desconexión de par.`;
+      const description = `El servicio ${r1.serviceNumber} fue reparado por "${r1.technician}" el ${r1.date} en ${cable1}, ${relationText}. A los ${diffDays === 0 ? 'pocas horas' : `${diffDays} día(s)`} (${target.date}), el servicio vecino ${target.serviceNumber} presentó avería (${target.sourceLabel}). Posible cambio o desconexión de par en la bornera de dispersión.`;
 
       events.push({
-        id: `pair_ev_${r1.id}_${r2.id}`,
-        centralName: r1.centralName || r2.centralName || 'Central General',
+        id: `pair_ev_${r1.id}_${target.id}`,
+        centralName: r1.centralName || target.centralName || 'Central General',
         cable: cable1,
         matchType: comp.matchType,
         blockLetter: comp.blockLetter,
@@ -274,7 +527,7 @@ export function detectPairCannibalizationEvents(
         isSameTech,
         description,
 
-        // First intervention
+        // First intervention (La Reparada)
         firstRepairId: r1.id,
         firstTicket: r1.ticketCode || 'S/N',
         firstService: r1.serviceNumber,
@@ -287,25 +540,27 @@ export function detectPairCannibalizationEvents(
         firstStatus: r1.status,
         firstRawRowData: r1.rawRowData,
 
-        // Second intervention (Interrupted neighbour)
-        secondRepairId: r2.id,
-        secondTicket: r2.ticketCode || 'S/N',
-        secondService: r2.serviceNumber,
-        secondDate: r2.date,
-        secondTech: r2.technician || 'Operario No Asignado',
+        // Second intervention (Avería vecina de Recuadro 2, 1, 3 o Excel)
+        secondRepairId: target.id,
+        secondTicket: target.ticketCode || 'S/N',
+        secondService: target.serviceNumber,
+        secondDate: target.date,
+        secondTech: target.technician || 'Operario No Asignado',
         secondTerminal: term2,
-        secondPair: getRecordPair(r2),
-        secondClave: r2.claveCode || 'C-01',
-        secondIssue: r2.issueType || 'Avería Vecino',
-        secondStatus: r2.status,
-        secondRawRowData: r2.rawRowData
+        secondPair: target.pair || '',
+        secondClave: target.claveCode || 'C-01',
+        secondIssue: target.issueType || 'Avería Vecino',
+        secondStatus: target.status,
+        secondAddress: target.address,
+        secondSource: target.source,
+        secondSourceLabel: target.sourceLabel,
+        secondRawRowData: target.rawRowData
       });
     }
   }
 
-  // Sort events by date of 1st intervention descending or severity
+  // Sort events by severity then chronological date of 1st intervention descending
   return events.sort((a, b) => {
-    // Critical first, then High, then Medium
     const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
     if (order[a.suspicionLevel] !== order[b.suspicionLevel]) {
       return order[a.suspicionLevel] - order[b.suspicionLevel];
@@ -423,10 +678,12 @@ export function exportPairCannibalizationExcel(
     'Fecha 1 (Intervención)': ev.firstDate,
     'Ticket 1': ev.firstTicket,
     'Clave 1': ev.firstClave,
-    'Servicio 2 (Interrumpido)': ev.secondService,
+    'Servicio 2 (Interrumpido / Vecino)': ev.secondService,
     'Terminal 2': ev.secondTerminal,
-    'Fecha 2 (Caída/Avería)': ev.secondDate,
-    'Técnico 2': ev.secondTech,
+    'Fecha 2 (Caída / Avería)': ev.secondDate,
+    'Origen Avería 2': ev.secondSourceLabel || 'Desconocido',
+    'Dirección Vecino': ev.secondAddress || '',
+    'Técnico / Cuadrilla 2': ev.secondTech,
     'Ticket 2': ev.secondTicket,
     'Clave 2': ev.secondClave,
     'Mismo Operario': ev.isSameTech ? 'SÍ' : 'NO',

@@ -391,6 +391,9 @@ export interface PairCannibalizationEvent {
   secondClave: string;
   secondIssue?: string;
   secondStatus?: string;
+  secondAddress?: string;
+  secondSource?: 'RECUADRO_2_IP' | 'RECUADRO_3_REPARADAS' | 'RECUADRO_1_REPORTES' | 'EXCEL_DIRECTO';
+  secondSourceLabel?: string;
   secondRawRowData?: Record<string, any>;
 }
 

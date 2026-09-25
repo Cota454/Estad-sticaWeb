@@ -989,6 +989,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return filtered;
   }, [cellServicesList, cellModalQuickFilter, cellModalSearch, cableTasks]);
 
+  // Helper to format date and time for file naming in format: YYYY-MM-DD_HH-mm
+  const getTab1ExportDateTime = () => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}_${hh}-${min}`;
+  };
+
+  // Helper to sanitize filename tokens while preserving clean text
+  const sanitizeFileNamePart = (val: string) =>
+    val
+      .trim()
+      .replace(/[\\/]/g, '-')
+      .replace(/[:*?"<>|]/g, '')
+      .replace(/\s+/g, ' ');
+
   // Handler to export cell drilldown modal table to styled Excel (.xlsx)
   const handleDownloadCellModalExcel = async () => {
     if (!selectedCellFilter || displayModalServices.length === 0) {
@@ -997,51 +1016,83 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     const { matrixType, rowName, colName, rowCentral } = selectedCellFilter;
+    const dateTimeStr = getTab1ExportDateTime();
 
-    const sanitize = (val: string) =>
-      val
-        .trim()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9_\-]/g, '_')
-        .replace(/_+/g, '_');
-
-    let fileName = '';
-    if (rowName && colName) {
-      if (matrixType === 'zonas') {
-        fileName = `Servicios_Zona_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
-      } else if (matrixType === 'centrales') {
-        fileName = `Servicios_Central_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
+    // 1. Identify Central name or "Total"
+    let centralPart = 'Total';
+    if (matrixType === 'centrales') {
+      if (rowName && rowName.trim()) {
+        const rawName = rowName.trim();
+        centralPart = /^central\b/i.test(rawName) ? rawName : `Central ${rawName}`;
       } else {
-        if (rowCentral) {
-          fileName = `Servicios_Central_${sanitize(rowCentral)}_Cable_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
-        } else {
-          fileName = `Servicios_Cable_${sanitize(rowName)}_Grupo_${sanitize(colName)}.xlsx`;
-        }
+        centralPart = 'Total';
       }
-    } else if (rowName) {
-      if (matrixType === 'zonas') {
-        fileName = `Servicios_Total_Zona_${sanitize(rowName)}.xlsx`;
-      } else if (matrixType === 'centrales') {
-        fileName = `Servicios_Total_Central_${sanitize(rowName)}.xlsx`;
+    } else if (matrixType === 'cables') {
+      if (rowCentral && rowCentral.trim()) {
+        const rawCentral = rowCentral.trim();
+        centralPart = /^central\b/i.test(rawCentral) ? rawCentral : `Central ${rawCentral}`;
       } else {
-        if (rowCentral) {
-          fileName = `Servicios_Total_Central_${sanitize(rowCentral)}_Cable_${sanitize(rowName)}.xlsx`;
-        } else {
-          fileName = `Servicios_Total_Cable_${sanitize(rowName)}.xlsx`;
-        }
+        centralPart = 'Total';
       }
-    } else if (colName) {
-      fileName = `Servicios_Total_Grupo_${sanitize(colName)}.xlsx`;
     } else {
-      if (matrixType === 'zonas') {
-        fileName = `Servicios_Total_General_Zonas.xlsx`;
-      } else if (matrixType === 'centrales') {
-        fileName = `Servicios_Total_General_Centrales.xlsx`;
+      // Zonas or general
+      centralPart = 'Total';
+    }
+
+    // 2. Identify filter applied (inside parentheses)
+    const filterTokens: string[] = [];
+    if (matrixType === 'centrales') {
+      if (colName && colName.trim()) {
+        filterTokens.push(`Grupo ${colName.trim()}`);
+      } else if (rowName && rowName.trim()) {
+        filterTokens.push('Total Central');
       } else {
-        fileName = `Servicios_Total_General_Cables.xlsx`;
+        filterTokens.push('Todos los Registros');
+      }
+    } else if (matrixType === 'cables') {
+      if (rowName && rowName.trim()) {
+        const rawCable = rowName.trim();
+        filterTokens.push(/^cable\b/i.test(rawCable) ? rawCable : `Cable ${rawCable}`);
+      }
+      if (colName && colName.trim()) {
+        filterTokens.push(colName.trim());
+      }
+      if (filterTokens.length === 0) {
+        filterTokens.push('Todos los Registros');
+      }
+    } else if (matrixType === 'zonas') {
+      if (rowName && rowName.trim()) {
+        const rawZone = rowName.trim();
+        if (rawZone.toLowerCase().includes('zona') || rawZone.toLowerCase().includes('sin')) {
+          filterTokens.push(rawZone);
+        } else {
+          filterTokens.push(`Zona ${rawZone}`);
+        }
+      }
+      if (colName && colName.trim()) {
+        filterTokens.push(`Grupo ${colName.trim()}`);
+      }
+      if (filterTokens.length === 0) {
+        filterTokens.push('Total Zonas');
       }
     }
+
+    // Add in-modal filters if active
+    if (cellModalQuickFilter === 'with_task') {
+      filterTokens.push('Con Trabajo Pendiente');
+    } else if (cellModalQuickFilter === 'with_afectacion') {
+      filterTokens.push('Con Afectación');
+    }
+    if (cellModalSearch.trim()) {
+      filterTokens.push(`Búsqueda ${cellModalSearch.trim()}`);
+    }
+
+    const appliedFilter = filterTokens.join(' - ');
+    const cleanCentral = sanitizeFileNamePart(centralPart);
+    const cleanFilter = sanitizeFileNamePart(appliedFilter);
+
+    // Format: IP + el nombre de la central o si es total + (dentro de paréntesis el filtro aplicado) + fecha y hora actual
+    const fileName = `IP ${cleanCentral} (${cleanFilter}) ${dateTimeStr}.xlsx`;
 
     const exportData = displayModalServices.map((item, idx) => {
       const info = getItemTaskInfo(item);
@@ -1117,6 +1168,175 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Servicios');
+    await saveXlsxWorkbook(workbook, fileName);
+  };
+
+  // Handler to export Tab 1 Table 1: Centrales vs Grupos to styled Excel (.xlsx)
+  const handleDownloadCentralesMatrixExcel = async () => {
+    if (!excelData || matrixCentralesData.rows.length === 0) {
+      alert('No hay datos disponibles en la matriz de Centrales para exportar.');
+      return;
+    }
+
+    const dateTimeStr = getTab1ExportDateTime();
+
+    const filterTokens: string[] = ['Matriz Centrales vs Grupos'];
+    if (matrixDemoraFilter !== 'all') {
+      filterTokens.push(`Demora ${matrixDemoraFilter.replace('>', 'Mayor ')}d`);
+    }
+    if (matrixStartDate || matrixEndDate) {
+      filterTokens.push(`${matrixStartDate || 'Inicio'} a ${matrixEndDate || 'Hoy'}`);
+    }
+    if (matrixMonthFilter !== 'all') {
+      const monthNames = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+      filterTokens.push(monthNames[parseInt(matrixMonthFilter, 10)] || `Mes ${matrixMonthFilter}`);
+    }
+    if (matrixYearFilter !== 'all') {
+      filterTokens.push(`Año ${matrixYearFilter}`);
+    }
+    if (matrixTelefonoFilter !== 'all') {
+      filterTokens.push(matrixTelefonoFilter === 'con_telefono' ? 'Con Teléfono' : 'Sin Teléfono');
+    }
+    if (matrixAfectacionFilter !== 'all') {
+      filterTokens.push(`Afectación ${matrixAfectacionFilter}`);
+    }
+
+    const appliedFilter = sanitizeFileNamePart(filterTokens.join(' - '));
+    // Exact requested format: IP + el nombre de la central o si es total + (dentro de paréntesis el filtro aplicado) + fecha y hora actual
+    const fileName = `IP Total (${appliedFilter}) ${dateTimeStr}.xlsx`;
+
+    const exportData = matrixCentralesData.rows.map(centralName => {
+      const rowObj: Record<string, any> = {
+        'Central Telefónica': centralName
+      };
+      matrixCentralesData.columns.forEach(col => {
+        rowObj[col] = matrixCentralesData.cellMap[centralName]?.[col] || 0;
+      });
+      rowObj['Total General'] = matrixCentralesData.rowTotals[centralName] || 0;
+      return rowObj;
+    });
+
+    const totalRowObj: Record<string, any> = {
+      'Central Telefónica': 'TOTAL GENERAL'
+    };
+    matrixCentralesData.columns.forEach(col => {
+      totalRowObj[col] = matrixCentralesData.colTotals[col] || 0;
+    });
+    totalRowObj['Total General'] = matrixCentralesData.grandTotal;
+    exportData.push(totalRowObj);
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '1E3A8A' } }, // Deep Navy
+          font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    const lastR = range.e.r;
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastR, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '0F172A' } }, // Slate 900
+          font: { bold: true, color: { rgb: '60A5FA' }, sz: 11 }, // Blue 400
+          alignment: { horizontal: C === 0 ? 'left' : 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    worksheet['!cols'] = [
+      { wch: 26 }, // Central Telefónica
+      ...matrixCentralesData.columns.map(c => ({ wch: Math.max(c.length + 4, 14) })),
+      { wch: 16 } // Total General
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Centrales vs Grupos');
+    await saveXlsxWorkbook(workbook, fileName);
+  };
+
+  // Handler to export Tab 1 Table 2: Zonificación vs Grupos to styled Excel (.xlsx)
+  const handleDownloadZonasMatrixExcel = async () => {
+    if (!excelData || matrixZonasData.rows.length === 0) {
+      alert('No hay datos disponibles en la matriz de Zonas para exportar.');
+      return;
+    }
+
+    const dateTimeStr = getTab1ExportDateTime();
+
+    const filterTokens: string[] = ['Matriz Zonificación vs Grupos'];
+    if (matrixDemoraFilter !== 'all') {
+      filterTokens.push(`Demora ${matrixDemoraFilter.replace('>', 'Mayor ')}d`);
+    }
+    if (matrixStartDate || matrixEndDate) {
+      filterTokens.push(`${matrixStartDate || 'Inicio'} a ${matrixEndDate || 'Hoy'}`);
+    }
+
+    const appliedFilter = sanitizeFileNamePart(filterTokens.join(' - '));
+    // Exact requested format: IP + el nombre de la central o si es total + (dentro de paréntesis el filtro aplicado) + fecha y hora actual
+    const fileName = `IP Total (${appliedFilter}) ${dateTimeStr}.xlsx`;
+
+    const exportData = matrixZonasData.rows.map(zoneName => {
+      const rowObj: Record<string, any> = {
+        'Zona Operativa': zoneName
+      };
+      matrixZonasData.columns.forEach(col => {
+        rowObj[col] = matrixZonasData.cellMap[zoneName]?.[col] || 0;
+      });
+      rowObj['Total General'] = matrixZonasData.rowTotals[zoneName] || 0;
+      return rowObj;
+    });
+
+    const totalRowObj: Record<string, any> = {
+      'Zona Operativa': 'TOTAL GENERAL ZONAS'
+    };
+    matrixZonasData.columns.forEach(col => {
+      totalRowObj[col] = matrixZonasData.colTotals[col] || 0;
+    });
+    totalRowObj['Total General'] = matrixZonasData.grandTotal;
+    exportData.push(totalRowObj);
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '065F46' } }, // Emerald 800
+          font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    const lastR = range.e.r;
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastR, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '0F172A' } },
+          font: { bold: true, color: { rgb: '34D399' }, sz: 11 },
+          alignment: { horizontal: C === 0 ? 'left' : 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    worksheet['!cols'] = [
+      { wch: 26 },
+      ...matrixZonasData.columns.map(c => ({ wch: Math.max(c.length + 4, 14) })),
+      { wch: 16 }
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Zonas vs Grupos');
     await saveXlsxWorkbook(workbook, fileName);
   };
 
@@ -2132,6 +2352,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <span>Ocultar Ceros</span>
                 </label>
                 <CopyTableButton headers={copyCentralesHeaders} rows={copyCentralesRows} label="Copiar Tabla Centrales" />
+                <button
+                  type="button"
+                  onClick={handleDownloadCentralesMatrixExcel}
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-900/30 cursor-pointer active:scale-95 border border-emerald-400/40"
+                  title="Descargar matriz de Centrales vs Grupos en Excel (.xlsx)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Excel</span>
+                </button>
               </div>
             </div>
 
@@ -2282,6 +2511,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <span>Gestor y Dashboard de Zonas</span>
                 </button>
                 <CopyTableButton headers={copyZonasHeaders} rows={copyZonasRows} label="Copiar Tabla Zonas" />
+                <button
+                  type="button"
+                  onClick={handleDownloadZonasMatrixExcel}
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-900/30 cursor-pointer active:scale-95 border border-emerald-400/40"
+                  title="Descargar matriz de Zonas vs Grupos en Excel (.xlsx)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Excel</span>
+                </button>
               </div>
             </div>
 
