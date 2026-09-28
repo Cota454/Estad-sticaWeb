@@ -77,11 +77,39 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
   // Navigation State
   const [activeTab, setActiveTab] = useState<TabType>('central');
 
-  // Filter State (Month & Year)
+  // Filter State (Month & Year) - Applied & Draft
   const todayDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState<number>(todayDate.getMonth()); // 0-indexed
   const [selectedYear, setSelectedYear] = useState<number>(todayDate.getFullYear());
   const [selectedCentralFilter, setSelectedCentralFilter] = useState<string>('all');
+
+  const [draftMonth, setDraftMonth] = useState<number>(todayDate.getMonth());
+  const [draftYear, setDraftYear] = useState<number>(todayDate.getFullYear());
+  const [draftCentralFilter, setDraftCentralFilter] = useState<string>('all');
+  const [isSearchingGlobal, setIsSearchingGlobal] = useState<boolean>(false);
+
+  const hasPendingGlobalChanges = draftMonth !== selectedMonth || draftYear !== selectedYear || draftCentralFilter !== selectedCentralFilter;
+
+  const handleApplyGlobalSearch = () => {
+    setIsSearchingGlobal(true);
+    setSelectedMonth(draftMonth);
+    setSelectedYear(draftYear);
+    setSelectedCentralFilter(draftCentralFilter);
+    setTimeout(() => {
+      setIsSearchingGlobal(false);
+    }, 120);
+  };
+
+  const handleResetGlobalSearch = () => {
+    const curM = todayDate.getMonth();
+    const curY = todayDate.getFullYear();
+    setDraftMonth(curM);
+    setDraftYear(curY);
+    setDraftCentralFilter('all');
+    setSelectedMonth(curM);
+    setSelectedYear(curY);
+    setSelectedCentralFilter('all');
+  };
   
   // Independent Chart Type Selector & Value Labels
   const [chartType, setChartType] = useState<ChartType>('bar_grouped');
@@ -1873,15 +1901,22 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
 
       {/* GLOBAL CONTROLS BAR: Month/Year Filter, Chart Type Selector & Value Labels Toggle */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-        {/* Month & Year Filter */}
-        <div className="flex items-center space-x-3">
-          <Calendar className="w-4 h-4 text-indigo-400" />
-          <span className="text-xs font-bold text-slate-300">Periodo de Análisis:</span>
+        {/* Month & Year Filter with 🔎 Buscar and ↺ Restablecer */}
+        <div
+          className="flex flex-wrap items-center gap-2.5"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleApplyGlobalSearch();
+          }}
+        >
+          <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-300">
+            <Calendar className="w-4 h-4 text-indigo-400" />
+            <span>Periodo:</span>
+          </div>
           
           <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
-            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+            value={draftMonth}
+            onChange={(e) => setDraftMonth(parseInt(e.target.value, 10))}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500 cursor-pointer"
           >
             <option value={-1}>Todos los Meses</option>
             {MONTH_NAMES_ES.map((mName, idx) => (
@@ -1890,9 +1925,9 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           </select>
 
           <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+            value={draftYear}
+            onChange={(e) => setDraftYear(parseInt(e.target.value, 10))}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500 cursor-pointer"
           >
             <option value={-1}>Todos los Años</option>
             <option value={2026}>2026</option>
@@ -1900,15 +1935,49 @@ export const AnalisisReparacionesView: React.FC<AnalisisReparacionesViewProps> =
           </select>
 
           <select
-            value={selectedCentralFilter}
-            onChange={(e) => setSelectedCentralFilter(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+            value={draftCentralFilter}
+            onChange={(e) => setDraftCentralFilter(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500 cursor-pointer max-w-[180px] truncate"
           >
             <option value="all">Todas las Centrales</option>
             {centrales.map(c => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+
+          {/* BOTÓN 🔎 Buscar y ↺ Restablecer */}
+          <button
+            type="button"
+            onClick={handleApplyGlobalSearch}
+            disabled={isSearchingGlobal}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shadow-md active:scale-95 ${
+              hasPendingGlobalChanges
+                ? 'bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white ring-2 ring-indigo-400/60 shadow-indigo-500/30 animate-pulse'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
+            }`}
+            title="🔎 Buscar y aplicar filtros al análisis de reparadas (Atajo: Presione Enter)"
+          >
+            {isSearchingGlobal ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Search className="w-3.5 h-3.5" />
+            )}
+            <span>Buscar</span>
+            {hasPendingGlobalChanges && (
+              <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black text-[9px] rounded-full uppercase tracking-wider">
+                Pendiente
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleResetGlobalSearch}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl transition-all border border-slate-700 cursor-pointer shadow-sm"
+            title="Restablecer filtros al mes actual y todas las centrales"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         {/* Chart Visualization Controls */}

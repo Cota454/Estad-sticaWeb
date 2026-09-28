@@ -31,6 +31,16 @@ import { getTodayStr, getPastDateStr } from './utils/dateUtils';
 import { saveZones, saveCableRules, saveParsedIpData, savePrintedServices, saveCablePendingTasks } from './utils/ipCablesStorage';
 import { loadReportSettings, saveReportSettings } from './utils/settingsUtils';
 import { saveWordReportProfiles } from './utils/wordProfileUtils';
+import {
+  loadCentrosTelefonicos,
+  saveCentrosTelefonicos,
+  loadPlanesCalidad,
+  savePlanesCalidad,
+  loadQualityCustomization,
+  saveQualityCustomization,
+  loadQualityDailyRecords,
+  saveQualityDailyRecord
+} from './utils/qualityIndicatorsStorage';
 import { ReportSettings } from './types';
 import {
   ADMIN_EMAIL,
@@ -43,7 +53,7 @@ import { WelcomeLandingView } from './components/WelcomeLandingView';
 import { ModulesHubView } from './components/ModulesHubView';
 import { AnalisisIpView } from './components/AnalisisIpView';
 import { AnalisisReparacionesView } from './components/AnalisisReparacionesView';
-import { WordReportManagerView } from './components/WordReportManagerView';
+import { IndicadoresCalidadView } from './components/IndicadoresCalidadView';
 import { ComparativaMultiPeriodoView } from './components/ComparativaMultiPeriodoView';
 import { PortalUser, PortalModuleId } from './types';
 import { getActivePortalSession, clearActivePortalSession } from './utils/authService';
@@ -166,7 +176,11 @@ export default function App() {
         reports: updatedReports,
         repairRecords: updatedRepairs,
         customTables: updatedCustomTables,
-        repairColumnMapping: updatedMapping
+        repairColumnMapping: updatedMapping,
+        qualityCentros: loadCentrosTelefonicos(),
+        qualityPlanes: loadPlanesCalidad(),
+        qualityCustomization: loadQualityCustomization(),
+        qualityDailyRecords: loadQualityDailyRecords()
       }, 'auto')
         .then(() => setSyncStatus('synced'))
         .catch(err => {
@@ -240,6 +254,15 @@ export default function App() {
       if (backup.wordReportProfiles && Array.isArray(backup.wordReportProfiles)) {
         saveWordReportProfiles(backup.wordReportProfiles);
       }
+      if (backup.qualityCentros && Array.isArray(backup.qualityCentros)) {
+        saveCentrosTelefonicos(backup.qualityCentros);
+      }
+      if (backup.qualityPlanes && typeof backup.qualityPlanes === 'object') {
+        savePlanesCalidad(backup.qualityPlanes);
+      }
+      if (backup.qualityCustomization && typeof backup.qualityCustomization === 'object') {
+        saveQualityCustomization(backup.qualityCustomization);
+      }
     }
 
     // 2. Apply History & Data (if not config-only)
@@ -261,6 +284,9 @@ export default function App() {
       }
       if (backup.ipPrintedServices) {
         savePrintedServices(backup.ipPrintedServices);
+      }
+      if (backup.qualityDailyRecords && Array.isArray(backup.qualityDailyRecords)) {
+        backup.qualityDailyRecords.forEach(r => saveQualityDailyRecord(r));
       }
     }
 
@@ -293,11 +319,18 @@ export default function App() {
     if (currentUser?.accessToken) {
       try {
         await uploadBackupToDrive(currentUser.accessToken, {
-          version: '2.5',
+          version: '3.0.0',
           exportedAt: new Date().toISOString(),
           centrales,
           workGroups,
-          reports
+          reports,
+          repairRecords,
+          customTables,
+          repairColumnMapping: columnMapping,
+          qualityCentros: loadCentrosTelefonicos(),
+          qualityPlanes: loadPlanesCalidad(),
+          qualityCustomization: loadQualityCustomization(),
+          qualityDailyRecords: loadQualityDailyRecords()
         }, 'logout_backup');
       } catch (err) {
         console.warn('Error saving backup before logout:', err);
@@ -545,20 +578,12 @@ export default function App() {
     );
   }
 
-  // 4. Gestor de Informes Word Module View
+  // 4. Cálculo de los Indicadores de Calidad Module View
   if (activeModule === 'word_reports') {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 sm:p-6 lg:p-8">
-        <div className="max-w-7xl mx-auto">
-          <WordReportManagerView
-            onBackToHub={() => setActiveModule('hub')}
-            centrales={centrales}
-            workGroups={workGroups}
-            reports={reports}
-            repairRecords={repairRecords}
-          />
-        </div>
-      </div>
+      <IndicadoresCalidadView
+        onBackToHub={() => setActiveModule('hub')}
+      />
     );
   }
 

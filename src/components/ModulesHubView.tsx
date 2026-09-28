@@ -304,50 +304,50 @@ export const ModulesHubView: React.FC<ModulesHubViewProps> = ({
             </button>
           </div>
 
-          {/* CARD 4: Gestor de Informes Word */}
+          {/* CARD 4: Cálculo de los Indicadores de Calidad */}
           <div
             onClick={() => onSelectModule('word_reports')}
-            className="group cursor-pointer bg-slate-900 border-2 border-blue-500/40 hover:border-blue-400 rounded-3xl p-6 transition-all duration-300 hover:scale-[1.02] shadow-xl hover:shadow-blue-500/20 flex flex-col justify-between space-y-6 relative overflow-hidden"
+            className="group cursor-pointer bg-slate-900 border-2 border-emerald-500/40 hover:border-emerald-400 rounded-3xl p-6 transition-all duration-300 hover:scale-[1.02] shadow-xl hover:shadow-emerald-500/20 flex flex-col justify-between space-y-6 relative overflow-hidden"
           >
-            <div className="absolute -top-12 -right-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
+            <div className="absolute -top-12 -right-12 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all" />
 
             <div className="space-y-4 relative z-10">
               <div className="flex items-center justify-between">
-                <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-2xl text-blue-400 group-hover:scale-110 transition-transform">
-                  <FileText className="w-7 h-7" />
+                <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-400 group-hover:scale-110 transition-transform">
+                  <Activity className="w-7 h-7" />
                 </div>
-                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-black uppercase px-2.5 py-1 rounded-full tracking-wider font-mono">
-                  MÓDULO INFORMES
+                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase px-2.5 py-1 rounded-full tracking-wider font-mono">
+                  INDICADORES CALIDAD
                 </span>
               </div>
 
               <div>
-                <h3 className="text-xl font-black text-white group-hover:text-blue-300 transition-colors">
-                  4. Gestor Informes Word
+                <h3 className="text-xl font-black text-white group-hover:text-emerald-300 transition-colors">
+                  4. Cálculo de los Indicadores de Calidad
                 </h3>
                 <p className="text-slate-300 text-xs mt-2 leading-relaxed">
-                  Procesador y creador de documentos Word (.docx): modifique o quite secciones/tablas, agregue nuevos modelos de informe a medida y expórtelos instantáneamente.
+                  Evaluación estadística de telefonía básica con 3 archivos Excel (IntPendientes INICIAL/FINAL e IntReparadas): cálculo de RER, Reporte Inicial, % Reparadas -3d, % Reparadas -1d y Demora Promedio vs Plan.
                 </p>
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-slate-800">
                 <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Personalización de Secciones, Tablas y Gráficas</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Cálculo de RER, Reporte Inicial y DTR</span>
                 </div>
                 <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Creación de Múltiples Plantillas / Pestañas Word</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>% Reparadas en 3 Días y 1 Día vs Plan</span>
                 </div>
                 <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Exportación .docx Directa e Integrada</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Gráficos Diarios, Acumulados Mensuales y Metas</span>
                 </div>
               </div>
             </div>
 
-            <button className="w-full py-3 px-4 bg-blue-600 group-hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/20">
-              <span>Ingresar a Gestor Informes Word</span>
+            <button className="w-full py-3 px-4 bg-emerald-600 group-hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-emerald-600/20 cursor-pointer">
+              <span>Ingresar a Indicadores de Calidad</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
           </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { GitCompare, ArrowDown, ArrowUp, Minus, Info, CheckCircle, AlertCircle, Calendar, CalendarDays, CalendarRange, Filter } from 'lucide-react';
+import { GitCompare, ArrowDown, ArrowUp, Minus, Info, CheckCircle, AlertCircle, Calendar, CalendarDays, CalendarRange, Filter, Search, RefreshCw, RotateCcw } from 'lucide-react';
 import { Central, WorkGroup, DailyReport, DifferenceRow } from '../types';
 import { calculateDifferenceMatrix } from '../utils/statCalculations';
 import { getTodayStr, getPastDateStr, formatDateLong, formatDateShort, getAvailableWeeks, getAvailableMonths } from '../utils/dateUtils';
@@ -25,6 +25,8 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
   // Days Mode State
   const [startDate, setStartDate] = useState<string>(yesterdayStr);
   const [endDate, setEndDate] = useState<string>(todayStr);
+  const [draftStartDate, setDraftStartDate] = useState<string>(yesterdayStr);
+  const [draftEndDate, setDraftEndDate] = useState<string>(todayStr);
 
   // Available unique dates from reports
   const uniqueDates = useMemo(() => {
@@ -35,11 +37,68 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
   const availableWeeks = useMemo(() => getAvailableWeeks(uniqueDates), [uniqueDates]);
   const [selectedWeek1, setSelectedWeek1] = useState<string>(() => availableWeeks[1]?.key || availableWeeks[0]?.key || '');
   const [selectedWeek2, setSelectedWeek2] = useState<string>(() => availableWeeks[0]?.key || '');
+  const [draftWeek1, setDraftWeek1] = useState<string>(() => availableWeeks[1]?.key || availableWeeks[0]?.key || '');
+  const [draftWeek2, setDraftWeek2] = useState<string>(() => availableWeeks[0]?.key || '');
 
   // Months List & State
   const availableMonths = useMemo(() => getAvailableMonths(uniqueDates), [uniqueDates]);
   const [selectedMonth1, setSelectedMonth1] = useState<string>(() => availableMonths[1]?.key || availableMonths[0]?.key || '');
   const [selectedMonth2, setSelectedMonth2] = useState<string>(() => availableMonths[0]?.key || '');
+  const [draftMonth1, setDraftMonth1] = useState<string>(() => availableMonths[1]?.key || availableMonths[0]?.key || '');
+  const [draftMonth2, setDraftMonth2] = useState<string>(() => availableMonths[0]?.key || '');
+
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+
+  // Pending changes check
+  const hasPendingChanges = useMemo(() => {
+    if (compareMode === 'days') {
+      return draftStartDate !== startDate || draftEndDate !== endDate;
+    } else if (compareMode === 'weeks') {
+      return draftWeek1 !== selectedWeek1 || draftWeek2 !== selectedWeek2;
+    } else {
+      return draftMonth1 !== selectedMonth1 || draftMonth2 !== selectedMonth2;
+    }
+  }, [compareMode, draftStartDate, startDate, draftEndDate, endDate, draftWeek1, selectedWeek1, draftWeek2, selectedWeek2, draftMonth1, selectedMonth1, draftMonth2, selectedMonth2]);
+
+  const handleApplySearch = () => {
+    setIsSearching(true);
+    if (compareMode === 'days') {
+      setStartDate(draftStartDate);
+      setEndDate(draftEndDate);
+    } else if (compareMode === 'weeks') {
+      setSelectedWeek1(draftWeek1);
+      setSelectedWeek2(draftWeek2);
+    } else {
+      setSelectedMonth1(draftMonth1);
+      setSelectedMonth2(draftMonth2);
+    }
+    setTimeout(() => {
+      setIsSearching(false);
+    }, 120);
+  };
+
+  const handleResetSearch = () => {
+    if (compareMode === 'days') {
+      setDraftStartDate(yesterdayStr);
+      setDraftEndDate(todayStr);
+      setStartDate(yesterdayStr);
+      setEndDate(todayStr);
+    } else if (compareMode === 'weeks') {
+      const w1 = availableWeeks[1]?.key || availableWeeks[0]?.key || '';
+      const w2 = availableWeeks[0]?.key || '';
+      setDraftWeek1(w1);
+      setDraftWeek2(w2);
+      setSelectedWeek1(w1);
+      setSelectedWeek2(w2);
+    } else {
+      const m1 = availableMonths[1]?.key || availableMonths[0]?.key || '';
+      const m2 = availableMonths[0]?.key || '';
+      setDraftMonth1(m1);
+      setDraftMonth2(m2);
+      setSelectedMonth1(m1);
+      setSelectedMonth2(m2);
+    }
+  };
 
   // Active boundaries
   const { period1, period2, labelText, period1Label, period2Label } = useMemo(() => {
@@ -206,148 +265,204 @@ export const MatrizDiferenciasView: React.FC<MatrizDiferenciasViewProps> = ({
         </div>
 
         {/* Dynamic Controls per Compare Mode */}
-        {compareMode === 'days' && (
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
-            <div className="flex flex-wrap items-center gap-4 text-xs">
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-700">1. Fecha Inicial (Base):</span>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+        <div
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleApplySearch();
+          }}
+          className="space-y-4"
+        >
+          {compareMode === 'days' && (
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+              <div className="flex flex-wrap items-center gap-4 text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-slate-700">1. Fecha Inicial (Base):</span>
+                  <input
+                    type="date"
+                    value={draftStartDate}
+                    onChange={(e) => setDraftStartDate(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-slate-700">2. Fecha Final (Comparación):</span>
+                  <input
+                    type="date"
+                    value={draftEndDate}
+                    onChange={(e) => setDraftEndDate(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-700">2. Fecha Final (Comparación):</span>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftStartDate(yesterdayStr);
+                    setDraftEndDate(todayStr);
+                  }}
+                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors"
+                >
+                  Ayer vs Hoy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftStartDate(getPastDateStr(7));
+                    setDraftEndDate(todayStr);
+                  }}
+                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors"
+                >
+                  Hace 7 días vs Hoy
+                </button>
               </div>
             </div>
+          )}
 
+          {compareMode === 'weeks' && (
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+              <div className="flex flex-wrap items-center gap-4 text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-slate-700">1. Semana Inicial (Base):</span>
+                  <select
+                    value={draftWeek1}
+                    onChange={(e) => setDraftWeek1(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {availableWeeks.map(wk => (
+                      <option key={wk.key} value={wk.key}>
+                        {wk.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-slate-700">2. Semana Final (Comparación):</span>
+                  <select
+                    value={draftWeek2}
+                    onChange={(e) => setDraftWeek2(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {availableWeeks.map(wk => (
+                      <option key={wk.key} value={wk.key}>
+                        {wk.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {availableWeeks.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftWeek1(availableWeeks[1].key);
+                    setDraftWeek2(availableWeeks[0].key);
+                  }}
+                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors self-start md:self-auto"
+                >
+                  Semana Anterior vs Semana Actual
+                </button>
+              )}
+            </div>
+          )}
+
+          {compareMode === 'months' && (
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+              <div className="flex flex-wrap items-center gap-4 text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-slate-700">1. Mes Inicial (Base):</span>
+                  <select
+                    value={draftMonth1}
+                    onChange={(e) => setDraftMonth1(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {availableMonths.map(mo => (
+                      <option key={mo.key} value={mo.key}>
+                        {mo.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-slate-700">2. Mes Final (Comparación):</span>
+                  <select
+                    value={draftMonth2}
+                    onChange={(e) => setDraftMonth2(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {availableMonths.map(mo => (
+                      <option key={mo.key} value={mo.key}>
+                        {mo.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {availableMonths.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftMonth1(availableMonths[1].key);
+                    setDraftMonth2(availableMonths[0].key);
+                  }}
+                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors self-start md:self-auto"
+                >
+                  Mes Anterior vs Mes Actual
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Unified Action Bar: 🔎 Buscar + ↺ Restablecer */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => {
-                  setStartDate(yesterdayStr);
-                  setEndDate(todayStr);
-                }}
-                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors"
+                type="button"
+                onClick={handleApplySearch}
+                disabled={isSearching}
+                className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-md active:scale-95 ${
+                  hasPendingChanges
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white ring-2 ring-blue-400/60 shadow-blue-500/30 animate-pulse'
+                    : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/20'
+                }`}
+                title="🔎 Buscar y calcular matriz de diferencias (Atajo: Presione Enter)"
               >
-                Ayer vs Hoy
+                {isSearching ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                <span>Buscar</span>
+                {hasPendingChanges && (
+                  <span className="px-1.5 py-0.5 bg-amber-300 text-slate-900 font-black text-[9px] rounded-full uppercase tracking-wider">
+                    Pendiente
+                  </span>
+                )}
               </button>
+
               <button
-                onClick={() => {
-                  setStartDate(getPastDateStr(7));
-                  setEndDate(todayStr);
-                }}
-                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors"
+                type="button"
+                onClick={handleResetSearch}
+                className="flex items-center space-x-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 cursor-pointer transition-all shadow-sm active:scale-95"
+                title="Restablecer períodos a los predeterminados"
               >
-                Hace 7 días vs Hoy
+                <RotateCcw className="w-3 h-3 text-slate-500" />
+                <span>Restablecer</span>
               </button>
             </div>
-          </div>
-        )}
 
-        {compareMode === 'weeks' && (
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
-            <div className="flex flex-wrap items-center gap-4 text-xs">
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-700">1. Semana Inicial (Base):</span>
-                <select
-                  value={selectedWeek1}
-                  onChange={(e) => setSelectedWeek1(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {availableWeeks.map(wk => (
-                    <option key={wk.key} value={wk.key}>
-                      {wk.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-700">2. Semana Final (Comparación):</span>
-                <select
-                  value={selectedWeek2}
-                  onChange={(e) => setSelectedWeek2(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {availableWeeks.map(wk => (
-                    <option key={wk.key} value={wk.key}>
-                      {wk.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {availableWeeks.length >= 2 && (
-              <button
-                onClick={() => {
-                  setSelectedWeek1(availableWeeks[1].key);
-                  setSelectedWeek2(availableWeeks[0].key);
-                }}
-                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors self-start md:self-auto"
-              >
-                Semana Anterior vs Semana Actual
-              </button>
+            {hasPendingChanges && (
+              <span className="text-xs text-blue-700 bg-blue-50 px-3 py-1 rounded-lg font-medium">
+                ⚠️ Filtros modificados pendientes de aplicar. Presione <strong>"🔎 Buscar"</strong> o <strong>[Enter]</strong>.
+              </span>
             )}
           </div>
-        )}
-
-        {compareMode === 'months' && (
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
-            <div className="flex flex-wrap items-center gap-4 text-xs">
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-700">1. Mes Inicial (Base):</span>
-                <select
-                  value={selectedMonth1}
-                  onChange={(e) => setSelectedMonth1(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {availableMonths.map(mo => (
-                    <option key={mo.key} value={mo.key}>
-                      {mo.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-700">2. Mes Final (Comparación):</span>
-                <select
-                  value={selectedMonth2}
-                  onChange={(e) => setSelectedMonth2(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {availableMonths.map(mo => (
-                    <option key={mo.key} value={mo.key}>
-                      {mo.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {availableMonths.length >= 2 && (
-              <button
-                onClick={() => {
-                  setSelectedMonth1(availableMonths[1].key);
-                  setSelectedMonth2(availableMonths[0].key);
-                }}
-                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 font-semibold transition-colors self-start md:self-auto"
-              >
-                Mes Anterior vs Mes Actual
-              </button>
-            )}
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Main Differences Matrix Card */}

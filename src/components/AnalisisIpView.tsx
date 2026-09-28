@@ -317,7 +317,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // --- COMPUTED DATA FOR MATRICES (PESTAÑA 1) ---
 
-  // Matrix Filter States
+  // Matrix Filter States (Applied & Draft)
   const [matrixDemoraFilter, setMatrixDemoraFilter] = useState<string>('all');
   const [matrixManualDate, setMatrixManualDate] = useState<string>('');
   const [matrixStartDate, setMatrixStartDate] = useState<string>('');
@@ -329,6 +329,62 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [cableAfectacionFilter, setCableAfectacionFilter] = useState<string>('all');
   const [isOptimized, setIsOptimized] = useState<boolean>(false);
   const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
+
+  const [draftMatrixDemoraFilter, setDraftMatrixDemoraFilter] = useState<string>('all');
+  const [draftMatrixManualDate, setDraftMatrixManualDate] = useState<string>('');
+  const [draftMatrixStartDate, setDraftMatrixStartDate] = useState<string>('');
+  const [draftMatrixEndDate, setDraftMatrixEndDate] = useState<string>('');
+  const [draftMatrixMonthFilter, setDraftMatrixMonthFilter] = useState<string>('all');
+  const [draftMatrixYearFilter, setDraftMatrixYearFilter] = useState<string>('all');
+  const [draftMatrixTelefonoFilter, setDraftMatrixTelefonoFilter] = useState<TelefonoTypeFilter>('all');
+  const [draftMatrixAfectacionFilter, setDraftMatrixAfectacionFilter] = useState<string>('all');
+  const [isSearchingMatrix, setIsSearchingMatrix] = useState<boolean>(false);
+
+  const hasPendingMatrixChanges =
+    draftMatrixDemoraFilter !== matrixDemoraFilter ||
+    draftMatrixManualDate !== matrixManualDate ||
+    draftMatrixStartDate !== matrixStartDate ||
+    draftMatrixEndDate !== matrixEndDate ||
+    draftMatrixMonthFilter !== matrixMonthFilter ||
+    draftMatrixYearFilter !== matrixYearFilter ||
+    draftMatrixTelefonoFilter !== matrixTelefonoFilter ||
+    draftMatrixAfectacionFilter !== matrixAfectacionFilter;
+
+  const handleApplyMatrixSearch = () => {
+    setIsSearchingMatrix(true);
+    setMatrixDemoraFilter(draftMatrixDemoraFilter);
+    setMatrixManualDate(draftMatrixManualDate);
+    setMatrixStartDate(draftMatrixStartDate);
+    setMatrixEndDate(draftMatrixEndDate);
+    setMatrixMonthFilter(draftMatrixMonthFilter);
+    setMatrixYearFilter(draftMatrixYearFilter);
+    setMatrixTelefonoFilter(draftMatrixTelefonoFilter);
+    setMatrixAfectacionFilter(draftMatrixAfectacionFilter);
+    setTimeout(() => {
+      setIsSearchingMatrix(false);
+    }, 120);
+  };
+
+  const handleResetMatrixSearch = () => {
+    setDraftMatrixDemoraFilter('all');
+    setDraftMatrixManualDate('');
+    setDraftMatrixStartDate('');
+    setDraftMatrixEndDate('');
+    setDraftMatrixMonthFilter('all');
+    setDraftMatrixYearFilter('all');
+    setDraftMatrixTelefonoFilter('all');
+    setDraftMatrixAfectacionFilter('all');
+
+    setMatrixDemoraFilter('all');
+    setMatrixManualDate('');
+    setMatrixStartDate('');
+    setMatrixEndDate('');
+    setMatrixMonthFilter('all');
+    setMatrixYearFilter('all');
+    setMatrixTelefonoFilter('all');
+    setMatrixAfectacionFilter('all');
+    setIsOptimized(false);
+  };
 
   // Synchronized state for independent Afectaciones & Cable Tasks
   const [cableTasks, setCableTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
@@ -377,41 +433,39 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
   // Handlers for Date Range Filter with strict validation (fecha inicial no puede ser mayor que la final)
   const handleMatrixStartDateChange = (val: string) => {
-    setMatrixStartDate(val);
-    if (val && matrixEndDate && val > matrixEndDate) {
-      // Auto-correct end date so start date is never greater than end date
-      setMatrixEndDate(val);
+    setDraftMatrixStartDate(val);
+    if (val && draftMatrixEndDate && val > draftMatrixEndDate) {
+      setDraftMatrixEndDate(val);
     }
   };
 
   const handleMatrixEndDateChange = (val: string) => {
-    setMatrixEndDate(val);
-    if (val && matrixStartDate && val < matrixStartDate) {
-      // Auto-correct start date so end date is never less than start date
-      setMatrixStartDate(val);
+    setDraftMatrixEndDate(val);
+    if (val && draftMatrixStartDate && val < draftMatrixStartDate) {
+      setDraftMatrixStartDate(val);
     }
   };
 
   const handleClearDateRange = () => {
-    setMatrixStartDate('');
-    setMatrixEndDate('');
+    setDraftMatrixStartDate('');
+    setDraftMatrixEndDate('');
   };
 
   const handleQuickDatePreset = (preset: 'today' | '7days' | 'thisMonth') => {
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
     if (preset === 'today') {
-      setMatrixStartDate(todayStr);
-      setMatrixEndDate(todayStr);
+      setDraftMatrixStartDate(todayStr);
+      setDraftMatrixEndDate(todayStr);
     } else if (preset === '7days') {
       const d7 = new Date();
       d7.setDate(d7.getDate() - 6);
-      setMatrixStartDate(d7.toISOString().split('T')[0]);
-      setMatrixEndDate(todayStr);
+      setDraftMatrixStartDate(d7.toISOString().split('T')[0]);
+      setDraftMatrixEndDate(todayStr);
     } else if (preset === 'thisMonth') {
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-      setMatrixStartDate(firstDay.toISOString().split('T')[0]);
-      setMatrixEndDate(todayStr);
+      setDraftMatrixStartDate(firstDay.toISOString().split('T')[0]);
+      setDraftMatrixEndDate(todayStr);
     }
   };
 
@@ -2077,25 +2131,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       <Calendar className="w-3.5 h-3.5 text-emerald-400" />
                       <span>Fecha Inicial (Desde)</span>
                     </span>
-                    {matrixStartDate && (
+                    {draftMatrixStartDate && (
                       <span className="text-emerald-400 font-mono text-[10px] font-bold">
-                        {matrixStartDate}
+                        {draftMatrixStartDate}
                       </span>
                     )}
                   </label>
                   <div className="relative flex items-center">
                     <input
                       type="date"
-                      value={matrixStartDate}
-                      max={matrixEndDate || undefined}
+                      value={draftMatrixStartDate}
+                      max={draftMatrixEndDate || undefined}
                       onChange={(e) => handleMatrixStartDateChange(e.target.value)}
                       className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none transition-all ${
-                        matrixStartDate
+                        draftMatrixStartDate
                           ? 'border-emerald-500 ring-1 ring-emerald-500/30'
                           : 'border-slate-700 hover:border-slate-600 focus:border-emerald-500'
                       }`}
                     />
-                    {matrixStartDate && (
+                    {draftMatrixStartDate && (
                       <button
                         type="button"
                         onClick={() => handleMatrixStartDateChange('')}
@@ -2114,25 +2168,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       <Calendar className="w-3.5 h-3.5 text-emerald-400" />
                       <span>Fecha Final (Hasta)</span>
                     </span>
-                    {matrixEndDate && (
+                    {draftMatrixEndDate && (
                       <span className="text-emerald-400 font-mono text-[10px] font-bold">
-                        {matrixEndDate}
+                        {draftMatrixEndDate}
                       </span>
                     )}
                   </label>
                   <div className="relative flex items-center">
                     <input
                       type="date"
-                      value={matrixEndDate}
-                      min={matrixStartDate || undefined}
+                      value={draftMatrixEndDate}
+                      min={draftMatrixStartDate || undefined}
                       onChange={(e) => handleMatrixEndDateChange(e.target.value)}
                       className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none transition-all ${
-                        matrixEndDate
+                        draftMatrixEndDate
                           ? 'border-emerald-500 ring-1 ring-emerald-500/30'
                           : 'border-slate-700 hover:border-slate-600 focus:border-emerald-500'
                       }`}
                     />
-                    {matrixEndDate && (
+                    {draftMatrixEndDate && (
                       <button
                         type="button"
                         onClick={() => handleMatrixEndDateChange('')}
@@ -2200,171 +2254,223 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
             </div>
 
-            {/* Grid of Standard and Type Filters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 pt-1">
-              {/* 1. Filtro Columna Teléfono (Teléfono vs TxD Dato) */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                  <Phone className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Filtro Columna Teléfono</span>
-                </label>
-                <select
-                  value={matrixTelefonoFilter}
-                  onChange={(e) => setMatrixTelefonoFilter(e.target.value as TelefonoTypeFilter)}
-                  className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
-                    matrixTelefonoFilter !== 'all'
-                      ? 'border-cyan-500 text-cyan-300 font-bold bg-cyan-950/20'
-                      : 'border-slate-800 text-white focus:border-cyan-500'
-                  }`}
-                >
-                  <option value="all">Todos los Servicios</option>
-                  <option value="telefono">📞 Teléfono (Solo números)</option>
-                  <option value="txd_dato">💻 TxD Dato (Con letras)</option>
-                </select>
-              </div>
-
-              {/* 2. Demora en Días Filter */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                  <Clock className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Demora en Días / Fecha</span>
-                </label>
-                <select
-                  value={matrixDemoraFilter}
-                  onChange={(e) => setMatrixDemoraFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
-                >
-                  <option value="all">Todas las demoras (sin filtro)</option>
-                  <option value="0">0 días</option>
-                  <option value="1">1 día</option>
-                  <option value="2">2 días</option>
-                  <option value="3">3 días</option>
-                  <option value="4-30">4 - 30 días</option>
-                  <option value="31-60">31 - 60 días</option>
-                  <option value="61-90">61 - 90 días</option>
-                  <option value="91-180">91 - 180 días</option>
-                  <option value="181-365">181 - 365 días</option>
-                  <option value=">365">Más de 1 año (&gt; 365 días)</option>
-                  <option value="manual_date">📅 Filtrar por Fecha Manual...</option>
-                </select>
-
-                {/* Manual Date Input Picker */}
-                {matrixDemoraFilter === 'manual_date' && (
-                  <div className="pt-1.5 flex items-center space-x-1.5">
-                    <input
-                      type="date"
-                      value={matrixManualDate}
-                      onChange={(e) => setMatrixManualDate(e.target.value)}
-                      className="w-full bg-slate-950 border border-amber-500/80 rounded-xl px-2.5 py-1.5 text-xs text-amber-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                    {matrixManualDate && (
-                      <button
-                        type="button"
-                        onClick={() => setMatrixManualDate('')}
-                        className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors shrink-0"
-                        title="Limpiar fecha manual"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* 3. Month Filter */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Mes</span>
-                </label>
-                <select
-                  value={matrixMonthFilter}
-                  onChange={(e) => setMatrixMonthFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
-                >
-                  <option value="all">Todos los meses (sin filtro)</option>
-                  <option value="1">Enero</option>
-                  <option value="2">Febrero</option>
-                  <option value="3">Marzo</option>
-                  <option value="4">Abril</option>
-                  <option value="5">Mayo</option>
-                  <option value="6">Junio</option>
-                  <option value="7">Julio</option>
-                  <option value="8">Agosto</option>
-                  <option value="9">Septiembre</option>
-                  <option value="10">Octubre</option>
-                  <option value="11">Noviembre</option>
-                  <option value="12">Diciembre</option>
-                </select>
-              </div>
-
-              {/* 4. Year Filter */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Año</span>
-                </label>
-                <select
-                  value={matrixYearFilter}
-                  onChange={(e) => setMatrixYearFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
-                >
-                  <option value="all">Todos los años (sin filtro)</option>
-                  {availableMatrixYears.map(yr => (
-                    <option key={yr} value={yr.toString()}>{yr}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 5. Afectaciones Filter (Desplegable dinámico idéntico a Hoja 6) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+            {/* Grid of Standard and Type Filters with 🔎 Buscar action */}
+            <div
+              className="space-y-4"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleApplyMatrixSearch();
+              }}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 pt-1">
+                {/* 1. Filtro Columna Teléfono (Teléfono vs TxD Dato) */}
+                <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Afectaciones</span>
+                    <Phone className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Filtro Columna Teléfono</span>
                   </label>
+                  <select
+                    value={draftMatrixTelefonoFilter}
+                    onChange={(e) => setDraftMatrixTelefonoFilter(e.target.value as TelefonoTypeFilter)}
+                    className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
+                      draftMatrixTelefonoFilter !== 'all'
+                        ? 'border-cyan-500 text-cyan-300 font-bold bg-cyan-950/20'
+                        : 'border-slate-800 text-white focus:border-cyan-500'
+                    }`}
+                  >
+                    <option value="all">Todos los Servicios</option>
+                    <option value="telefono">📞 Teléfono (Solo números)</option>
+                    <option value="txd_dato">💻 TxD Dato (Con letras)</option>
+                  </select>
+                </div>
+
+                {/* 2. Demora en Días Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Demora en Días / Fecha</span>
+                  </label>
+                  <select
+                    value={draftMatrixDemoraFilter}
+                    onChange={(e) => setDraftMatrixDemoraFilter(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+                  >
+                    <option value="all">Todas las demoras (sin filtro)</option>
+                    <option value="0">0 días</option>
+                    <option value="1">1 día</option>
+                    <option value="2">2 días</option>
+                    <option value="3">3 días</option>
+                    <option value="4-30">4 - 30 días</option>
+                    <option value="31-60">31 - 60 días</option>
+                    <option value="61-90">61 - 90 días</option>
+                    <option value="91-180">91 - 180 días</option>
+                    <option value="181-365">181 - 365 días</option>
+                    <option value=">365">Más de 1 año (&gt; 365 días)</option>
+                    <option value="manual_date">📅 Filtrar por Fecha Manual...</option>
+                  </select>
+
+                  {/* Manual Date Input Picker */}
+                  {draftMatrixDemoraFilter === 'manual_date' && (
+                    <div className="pt-1.5 flex items-center space-x-1.5">
+                      <input
+                        type="date"
+                        value={draftMatrixManualDate}
+                        onChange={(e) => setDraftMatrixManualDate(e.target.value)}
+                        className="w-full bg-slate-950 border border-amber-500/80 rounded-xl px-2.5 py-1.5 text-xs text-amber-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      {draftMatrixManualDate && (
+                        <button
+                          type="button"
+                          onClick={() => setDraftMatrixManualDate('')}
+                          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors shrink-0"
+                          title="Limpiar fecha manual"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Month Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Mes</span>
+                  </label>
+                  <select
+                    value={draftMatrixMonthFilter}
+                    onChange={(e) => setDraftMatrixMonthFilter(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+                  >
+                    <option value="all">Todos los meses (sin filtro)</option>
+                    <option value="1">Enero</option>
+                    <option value="2">Febrero</option>
+                    <option value="3">Marzo</option>
+                    <option value="4">Abril</option>
+                    <option value="5">Mayo</option>
+                    <option value="6">Junio</option>
+                    <option value="7">Julio</option>
+                    <option value="8">Agosto</option>
+                    <option value="9">Septiembre</option>
+                    <option value="10">Octubre</option>
+                    <option value="11">Noviembre</option>
+                    <option value="12">Diciembre</option>
+                  </select>
+                </div>
+
+                {/* 4. Year Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Año</span>
+                  </label>
+                  <select
+                    value={draftMatrixYearFilter}
+                    onChange={(e) => setDraftMatrixYearFilter(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+                  >
+                    <option value="all">Todos los años (sin filtro)</option>
+                    {availableMatrixYears.map(yr => (
+                      <option key={yr} value={yr.toString()}>{yr}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 5. Afectaciones Filter (Desplegable dinámico idéntico a Hoja 6) */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Afectaciones</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsAfectacionesModalOpen(true)}
+                      className="text-[10px] font-bold text-purple-400 hover:text-purple-200 bg-purple-950/60 hover:bg-purple-900/80 px-2 py-0.5 rounded-lg border border-purple-500/40 transition-colors cursor-pointer"
+                      title="Crear, actualizar o eliminar afectaciones"
+                    >
+                      + Gestionar
+                    </button>
+                  </div>
+                  <select
+                    value={draftMatrixAfectacionFilter}
+                    onChange={(e) => setDraftMatrixAfectacionFilter(e.target.value)}
+                    className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
+                      draftMatrixAfectacionFilter !== 'all'
+                        ? 'border-purple-500 text-purple-300 font-bold bg-purple-950/20'
+                        : 'border-slate-800 text-white focus:border-purple-500'
+                    }`}
+                  >
+                    <option value="all">Todas las Afectaciones</option>
+                    <option value="con_afectacion">Con Afectación Registrada</option>
+                    <option value="sin_afectacion">Sin Afectación (-)</option>
+                    {availableAfectaciones.map(a => (
+                      <option key={a} value={a}>Motivo: {a}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 6. Ocultar Ceros Option */}
+                <div className="space-y-1.5 flex flex-col justify-end">
+                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                    <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Visualización</span>
+                  </label>
+                  <label className="flex items-center space-x-2.5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-medium cursor-pointer transition-all h-[38px] select-none">
+                    <input
+                      type="checkbox"
+                      checked={hideZeroValues}
+                      onChange={(e) => setHideZeroValues(e.target.checked)}
+                      className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer accent-blue-600"
+                    />
+                    <span className="font-bold text-slate-200">Ocultar ceros (0)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* ACTION BAR: 🔎 Buscar + ↺ Restablecer con Micro-feedback y estado Pendiente */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
+                <div className="flex items-center space-x-2">
                   <button
                     type="button"
-                    onClick={() => setIsAfectacionesModalOpen(true)}
-                    className="text-[10px] font-bold text-purple-400 hover:text-purple-200 bg-purple-950/60 hover:bg-purple-900/80 px-2 py-0.5 rounded-lg border border-purple-500/40 transition-colors cursor-pointer"
-                    title="Crear, actualizar o eliminar afectaciones"
+                    onClick={handleApplyMatrixSearch}
+                    disabled={isSearchingMatrix}
+                    className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-lg active:scale-95 ${
+                      hasPendingMatrixChanges
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white ring-2 ring-blue-400/60 shadow-blue-500/30 animate-pulse'
+                        : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/20'
+                    }`}
+                    title="🔎 Buscar y calcular matrices IP (Atajo: Presione Enter)"
                   >
-                    + Gestionar
+                    {isSearchingMatrix ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Search className="w-3.5 h-3.5" />
+                    )}
+                    <span>Buscar</span>
+                    {hasPendingMatrixChanges && (
+                      <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black text-[9px] rounded-full uppercase tracking-wider">
+                        Pendiente
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetMatrixSearch}
+                    className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-3 py-2 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer transition-all shadow-sm active:scale-95"
+                    title="Restablecer todos los filtros a sus valores iniciales"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Restablecer Filtros</span>
                   </button>
                 </div>
-                <select
-                  value={matrixAfectacionFilter}
-                  onChange={(e) => setMatrixAfectacionFilter(e.target.value)}
-                  className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
-                    matrixAfectacionFilter !== 'all'
-                      ? 'border-purple-500 text-purple-300 font-bold bg-purple-950/20'
-                      : 'border-slate-800 text-white focus:border-purple-500'
-                  }`}
-                >
-                  <option value="all">Todas las Afectaciones</option>
-                  <option value="con_afectacion">Con Afectación Registrada</option>
-                  <option value="sin_afectacion">Sin Afectación (-)</option>
-                  {availableAfectaciones.map(a => (
-                    <option key={a} value={a}>Motivo: {a}</option>
-                  ))}
-                </select>
-              </div>
 
-              {/* 6. Ocultar Ceros Option */}
-              <div className="space-y-1.5 flex flex-col justify-end">
-                <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                  <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Visualización</span>
-                </label>
-                <label className="flex items-center space-x-2.5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-medium cursor-pointer transition-all h-[38px] select-none">
-                  <input
-                    type="checkbox"
-                    checked={hideZeroValues}
-                    onChange={(e) => setHideZeroValues(e.target.checked)}
-                    className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer accent-blue-600"
-                  />
-                  <span className="font-bold text-slate-200">Ocultar ceros (0)</span>
-                </label>
+                {hasPendingMatrixChanges && (
+                  <span className="text-xs text-blue-300 bg-blue-950/60 border border-blue-500/30 px-3 py-1.5 rounded-xl font-medium">
+                    ⚠️ Filtros modificados pendientes de aplicar. Presione <strong>"🔎 Buscar"</strong> o la tecla <strong>[Enter]</strong>.
+                  </span>
+                )}
               </div>
             </div>
           </div>

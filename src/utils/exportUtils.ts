@@ -17,6 +17,12 @@ import { loadZones, loadCableRules, loadParsedIpData, loadPrintedServices, loadC
 import { loadReportSettings } from './settingsUtils';
 import { loadWordReportProfiles } from './wordProfileUtils';
 import { saveFileWithPickerOrFallback } from './fileDownloadHelper';
+import {
+  loadCentrosTelefonicos,
+  loadPlanesCalidad,
+  loadQualityCustomization,
+  loadQualityDailyRecords
+} from './qualityIndicatorsStorage';
 
 function generateTimestampStr(): string {
   const now = new Date();
@@ -54,7 +60,7 @@ export function downloadConfigBackup(
     backupType: 'configuration',
     version: '3.0.0',
     exportedAt: new Date().toISOString(),
-    description: 'Copia de seguridad de todas las configuraciones del sistema (Centrales, Grupos, Reglas, Zonas, Ajustes y Perfiles)',
+    description: 'Copia de seguridad de todas las configuraciones del sistema (Centrales, Grupos, Reglas, Zonas, Ajustes, Perfiles y Calidad)',
     centrales,
     workGroups,
     repairColumnMapping,
@@ -63,6 +69,9 @@ export function downloadConfigBackup(
     ipCableRules: loadCableRules(),
     cablePendingTasks: loadCablePendingTasks(),
     wordReportProfiles: loadWordReportProfiles(),
+    qualityCentros: loadCentrosTelefonicos(),
+    qualityPlanes: loadPlanesCalidad(),
+    qualityCustomization: loadQualityCustomization(),
     customTableDefinitions: customTables?.map(t => ({
       id: t.id,
       tableName: t.tableName,
@@ -95,7 +104,8 @@ export function downloadHistoryBackup(
     repairRecords: repairRecords || [],
     ipParsedData: loadParsedIpData() || undefined,
     ipPrintedServices: loadPrintedServices(),
-    customTablesData: customTables || []
+    customTablesData: customTables || [],
+    qualityDailyRecords: loadQualityDailyRecords()
   };
 
   const timestamp = generateTimestampStr();
@@ -117,7 +127,7 @@ export function downloadJSONBackup(
     backupType: 'full',
     version: '3.0.0',
     exportedAt: new Date().toISOString(),
-    description: 'Copia de seguridad integral completa (Configuraciones + Historial)',
+    description: 'Copia de seguridad integral completa (Configuraciones + Historial + Indicadores de Calidad)',
     centrales,
     workGroups,
     reports,
@@ -130,7 +140,11 @@ export function downloadJSONBackup(
     cablePendingTasks: loadCablePendingTasks(),
     wordReportProfiles: loadWordReportProfiles(),
     ipParsedData: loadParsedIpData() || undefined,
-    ipPrintedServices: loadPrintedServices()
+    ipPrintedServices: loadPrintedServices(),
+    qualityCentros: loadCentrosTelefonicos(),
+    qualityPlanes: loadPlanesCalidad(),
+    qualityCustomization: loadQualityCustomization(),
+    qualityDailyRecords: loadQualityDailyRecords()
   };
 
   const timestamp = generateTimestampStr();
@@ -190,7 +204,11 @@ export function parseJSONBackupFile(file: File): Promise<ParsedBackupResult> {
           cablePendingTasks: parsed.cablePendingTasks,
           wordReportProfiles: parsed.wordReportProfiles,
           ipParsedData: parsed.ipParsedData,
-          ipPrintedServices: parsed.ipPrintedServices
+          ipPrintedServices: parsed.ipPrintedServices,
+          qualityCentros: parsed.qualityCentros,
+          qualityPlanes: parsed.qualityPlanes,
+          qualityCustomization: parsed.qualityCustomization,
+          qualityDailyRecords: parsed.qualityDailyRecords
         };
 
         const summary = {
@@ -203,7 +221,9 @@ export function parseJSONBackupFile(file: File): Promise<ParsedBackupResult> {
           hasRules: Boolean(normalizedData.ipCableRules),
           cablePendingTasksCount: Array.isArray(normalizedData.cablePendingTasks) ? normalizedData.cablePendingTasks.length : 0,
           hasParsedIp: Boolean(normalizedData.ipParsedData && normalizedData.ipParsedData.consolidatedRows?.length > 0),
-          printedServicesCount: normalizedData.ipPrintedServices ? Object.keys(normalizedData.ipPrintedServices).length : 0
+          printedServicesCount: normalizedData.ipPrintedServices ? Object.keys(normalizedData.ipPrintedServices).length : 0,
+          qualityCentrosCount: Array.isArray(normalizedData.qualityCentros) ? normalizedData.qualityCentros.length : 0,
+          qualityDailyRecordsCount: Array.isArray(normalizedData.qualityDailyRecords) ? normalizedData.qualityDailyRecords.length : 0
         };
 
         // Basic sanity check: at least something should exist
@@ -215,7 +235,9 @@ export function parseJSONBackupFile(file: File): Promise<ParsedBackupResult> {
           summary.hasZones ||
           summary.hasRules ||
           summary.cablePendingTasksCount > 0 ||
-          summary.hasParsedIp;
+          summary.hasParsedIp ||
+          summary.qualityCentrosCount > 0 ||
+          summary.qualityDailyRecordsCount > 0;
 
         if (!hasContent) {
           return reject(new Error('El archivo JSON no contiene datos reconocibles de configuración ni de historial.'));

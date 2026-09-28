@@ -138,6 +138,12 @@ export interface CustomTableSchema {
 
 import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult, CablePendingTask } from './types/ipCablesTypes';
 import { PrintedRecord } from './utils/ipCablesStorage';
+import {
+  CentroTelefonicoConfig,
+  IndicadorPlanConfig,
+  QualityDailyRecord,
+  QualityCustomization
+} from './types/qualityIndicators';
 
 export interface SystemConfigBackup {
   backupType: 'configuration';
@@ -152,6 +158,9 @@ export interface SystemConfigBackup {
   ipCableRules?: CableClassificationRules;
   cablePendingTasks?: CablePendingTask[];
   wordReportProfiles?: WordReportProfile[];
+  qualityCentros?: CentroTelefonicoConfig[];
+  qualityPlanes?: Record<string, IndicadorPlanConfig>;
+  qualityCustomization?: QualityCustomization;
   customTableDefinitions?: Array<{
     id: string;
     tableName: string;
@@ -173,6 +182,7 @@ export interface SystemHistoryBackup {
   ipParsedData?: IpCableExcelParseResult;
   ipPrintedServices?: Record<string, PrintedRecord>;
   customTablesData?: CustomTableSchema[];
+  qualityDailyRecords?: QualityDailyRecord[];
 }
 
 export interface SystemDataBackup {
@@ -193,6 +203,10 @@ export interface SystemDataBackup {
   wordReportProfiles?: WordReportProfile[];
   ipParsedData?: IpCableExcelParseResult;
   ipPrintedServices?: Record<string, PrintedRecord>;
+  qualityCentros?: CentroTelefonicoConfig[];
+  qualityPlanes?: Record<string, IndicadorPlanConfig>;
+  qualityCustomization?: QualityCustomization;
+  qualityDailyRecords?: QualityDailyRecord[];
 }
 
 export type PortalModuleId = 'report_analysis' | 'ip_analysis' | 'repairs_analysis' | 'word_reports';
