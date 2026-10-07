@@ -32,7 +32,10 @@ import {
   Binary,
   Wrench,
   Download,
-  AlertTriangle
+  AlertTriangle,
+  Tag,
+  Radio,
+  Bell
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -88,6 +91,8 @@ import {
   matchZoneCableRule,
   extractTelefonoFromItem,
   extractAsociadoFromItem,
+  extractProblemaFromItem,
+  extractTpoServFromItem,
   extractTerminalFromItem,
   extractDireccionFromItem,
   matchTelefonoTypeFilter,
@@ -330,6 +335,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [isOptimized, setIsOptimized] = useState<boolean>(false);
   const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
 
+  // Filtro por Columna TPO SERV (NAUTA HOGAR PLUS y personalizables)
+  const [tpoServFilterActive, setTpoServFilterActive] = useState<boolean>(false);
+  const [tpoServPatterns, setTpoServPatterns] = useState<string[]>(['NAUTA HOGAR PLUS']);
+  const [showTpoServModal, setShowTpoServModal] = useState<boolean>(false);
+  const [customTpoServInput, setCustomTpoServInput] = useState<string>('');
+  const [tpoServNotification, setTpoServNotification] = useState<{ visible: boolean; message: string; count: number } | null>(null);
+
   const [draftMatrixDemoraFilter, setDraftMatrixDemoraFilter] = useState<string>('all');
   const [draftMatrixManualDate, setDraftMatrixManualDate] = useState<string>('');
   const [draftMatrixStartDate, setDraftMatrixStartDate] = useState<string>('');
@@ -339,6 +351,93 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [draftMatrixTelefonoFilter, setDraftMatrixTelefonoFilter] = useState<TelefonoTypeFilter>('all');
   const [draftMatrixAfectacionFilter, setDraftMatrixAfectacionFilter] = useState<string>('all');
   const [isSearchingMatrix, setIsSearchingMatrix] = useState<boolean>(false);
+
+  // Valores únicos de TPO SERV detectados en el archivo Excel cargado
+  const detectedTpoServValues = useMemo(() => {
+    if (!excelData) return [];
+    const set = new Set<string>();
+    excelData.consolidatedRows.forEach(r => {
+      const val = extractTpoServFromItem(r);
+      if (val && val !== '-') {
+        set.add(val.trim());
+      }
+    });
+    return Array.from(set).sort();
+  }, [excelData]);
+
+  // Conteo dinámico de registros que coinciden con los tipos configurados de TPO SERV
+  const matchingTpoServCount = useMemo(() => {
+    if (!excelData) return 0;
+    return excelData.consolidatedRows.filter(r => {
+      const itemTpo = extractTpoServFromItem(r).toUpperCase();
+      return tpoServPatterns.some(p => {
+        const clean = p.trim().toUpperCase();
+        return clean && itemTpo.includes(clean);
+      });
+    }).length;
+  }, [excelData, tpoServPatterns]);
+
+  // Handler para activar/desactivar filtro TPO SERV y disparar la notificación requerida
+  const handleToggleTpoServFilter = () => {
+    const nextState = !tpoServFilterActive;
+    setTpoServFilterActive(nextState);
+
+    const count = matchingTpoServCount;
+    const patternsStr = tpoServPatterns.join(', ');
+
+    if (nextState) {
+      setTpoServNotification({
+        visible: true,
+        message: `Filtro "TPO SERV" aplicado: Se encontraron ${count} servicios que contienen "${patternsStr}".`,
+        count
+      });
+    } else {
+      setTpoServNotification({
+        visible: true,
+        message: `Filtro "TPO SERV" desactivado. Mostrando todos los tipos de servicios.`,
+        count
+      });
+    }
+
+    setTimeout(() => {
+      setTpoServNotification(prev => prev ? { ...prev, visible: false } : null);
+    }, 6000);
+  };
+
+  const handleAddTpoServPattern = (patternToAdd: string) => {
+    const clean = patternToAdd.trim().toUpperCase();
+    if (!clean) return;
+    if (!tpoServPatterns.map(p => p.toUpperCase()).includes(clean)) {
+      const updated = [...tpoServPatterns, clean];
+      setTpoServPatterns(updated);
+      setCustomTpoServInput('');
+      if (tpoServFilterActive) {
+        setTimeout(() => {
+          const newCount = excelData
+            ? excelData.consolidatedRows.filter(r => {
+                const itemTpo = extractTpoServFromItem(r).toUpperCase();
+                return updated.some(p => itemTpo.includes(p.trim().toUpperCase()));
+              }).length
+            : 0;
+          setTpoServNotification({
+            visible: true,
+            message: `Tipo "${clean}" agregado a TPO SERV. Total filtrado: ${newCount} servicios.`,
+            count: newCount
+          });
+          setTimeout(() => setTpoServNotification(null), 5000);
+        }, 100);
+      }
+    }
+  };
+
+  const handleRemoveTpoServPattern = (patternToRemove: string) => {
+    if (tpoServPatterns.length <= 1) {
+      alert('Debe mantener al menos un tipo de servicio en la lista.');
+      return;
+    }
+    const updated = tpoServPatterns.filter(p => p.toUpperCase() !== patternToRemove.toUpperCase());
+    setTpoServPatterns(updated);
+  };
 
   const hasPendingMatrixChanges =
     draftMatrixDemoraFilter !== matrixDemoraFilter ||
@@ -383,6 +482,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setMatrixYearFilter('all');
     setMatrixTelefonoFilter('all');
     setMatrixAfectacionFilter('all');
+    setTpoServFilterActive(false);
     setIsOptimized(false);
   };
 
@@ -569,9 +669,21 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
+      // 7. Filtro por Columna TPO SERV (NAUTA HOGAR PLUS y personalizables)
+      if (tpoServFilterActive) {
+        const itemTpo = extractTpoServFromItem(item).toUpperCase();
+        const matchesTpo = tpoServPatterns.some(pattern => {
+          const cleanP = pattern.trim().toUpperCase();
+          return cleanP && itemTpo.includes(cleanP);
+        });
+        if (!matchesTpo) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, cableAfectaciones, cableTasks]);
+  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, tpoServFilterActive, tpoServPatterns, cableAfectaciones, cableTasks]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -1140,6 +1252,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       options.push('Optimizado');
     }
 
+    if (tpoServFilterActive) {
+      options.push(`TPO SERV (${tpoServPatterns.join(', ')})`);
+    }
+
     return options;
   };
 
@@ -1218,6 +1334,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const exportData = displayModalServices.map((item, idx) => {
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
+      const prob = extractProblemaFromItem(item);
       return {
         'N°': idx + 1,
         'Servicio': item.servicio,
@@ -1234,14 +1351,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Demora en Días': getDemoraDays(item),
         'Fecha Reporte': item.fechaReporte || '-',
         'Afectaciones': info.afectacion || '-',
-        'Tarea o Trabajo': info.taskName || '-'
+        'Tarea o Trabajo': info.taskName || '-',
+        'PROBLEMA': prob || '-'
       };
     });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
     // Force string formatting for Servicio and Asociado so leading zeros are preserved
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:P1');
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Q1');
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
       const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
       if (cellServicio) {
@@ -1272,7 +1390,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       { wch: 15 }, // Demora en Días
       { wch: 14 }, // Fecha Reporte
       { wch: 22 }, // Afectaciones
-      { wch: 36 }  // Tarea o Trabajo
+      { wch: 36 }, // Tarea o Trabajo
+      { wch: 22 }  // PROBLEMA
     ];
 
     // Styled header
@@ -2025,7 +2144,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || isOptimized) && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || tpoServFilterActive || isOptimized) && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
@@ -2036,6 +2155,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     setMatrixYearFilter('all');
                     setMatrixTelefonoFilter('all');
                     setMatrixAfectacionFilter('all');
+                    setTpoServFilterActive(false);
                     setIsOptimized(false);
                   }}
                   className="flex items-center space-x-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer w-fit"
@@ -2253,6 +2373,245 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </label>
               </div>
             </div>
+
+            {/* Notificación flotante / banner de confirmación para TPO SERV */}
+            {tpoServNotification && tpoServNotification.visible && (
+              <div className="p-3.5 bg-gradient-to-r from-emerald-950 via-teal-950 to-slate-900 border border-emerald-500/60 rounded-2xl flex items-center justify-between text-xs text-emerald-200 shadow-xl shadow-emerald-950/50 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl shrink-0 border border-emerald-500/30">
+                    <Bell className="w-4 h-4 animate-bounce" />
+                  </div>
+                  <div>
+                    <span className="font-extrabold text-white text-xs block">
+                      Notificación de Filtro "TPO SERV":
+                    </span>
+                    <span className="text-[11px] text-emerald-200 font-medium">
+                      {tpoServNotification.message}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 font-mono font-bold rounded-lg text-xs border border-emerald-500/30">
+                    {tpoServNotification.count} Registros
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTpoServNotification(null)}
+                    className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                    title="Cerrar notificación"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* BOTÓN FILTRO TPO SERV (NAUTA HOGAR PLUS y personalizables) */}
+            <div className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+              tpoServFilterActive
+                ? 'bg-emerald-950/30 border-emerald-500/60 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/30'
+                : 'bg-slate-950 border-slate-800 hover:border-slate-700/80'
+            }`}>
+              <div className="flex items-start md:items-center space-x-3">
+                <div className={`p-2.5 rounded-xl border shrink-0 ${
+                  tpoServFilterActive
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700'
+                }`}>
+                  <Radio className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-extrabold text-sm text-white flex items-center space-x-1.5">
+                      <span>Filtro de Columna "TPO SERV"</span>
+                    </span>
+                    {tpoServFilterActive ? (
+                      <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-500/50 text-[10px] px-2.5 py-0.5 rounded-md font-black tracking-wide flex items-center space-x-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        <span>ACTIVO ({matchingTpoServCount} SERVICIOS COINCIDENTES)</span>
+                      </span>
+                    ) : (
+                      <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded-md font-semibold">
+                        Inactivo (Total coincidentes: {matchingTpoServCount})
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Filtra la columna <strong>TPO SERV</strong> por los tipos seleccionados (por defecto <strong>NAUTA HOGAR PLUS</strong> y permite agregar otros tipos).
+                  </p>
+
+                  {/* Badges de tipos de servicio configurados */}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {tpoServPatterns.map(pat => (
+                      <span
+                        key={pat}
+                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 rounded-lg text-[11px] font-bold font-mono"
+                      >
+                        <Tag className="w-3 h-3 text-emerald-400" />
+                        <span>{pat}</span>
+                        {tpoServPatterns.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveTpoServPattern(pat);
+                            }}
+                            className="hover:text-red-400 ml-1 text-slate-400 cursor-pointer"
+                            title={`Quitar "${pat}"`}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setShowTpoServModal(true)}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded-lg text-[10px] font-bold flex items-center space-x-1 transition-colors cursor-pointer"
+                      title="Agregar otros tipos de servicio a filtrar"
+                    >
+                      <span>+ Agregar / Cambiar Tipos</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botón interactivo de filtro */}
+              <div className="flex items-center space-x-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/60">
+                <button
+                  type="button"
+                  onClick={handleToggleTpoServFilter}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-lg active:scale-95 ${
+                    tpoServFilterActive
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30 ring-2 ring-emerald-400/50'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-emerald-500/50'
+                  }`}
+                  title="Presione para aplicar o retirar el filtro de TPO SERV"
+                >
+                  <Radio className={`w-4 h-4 ${tpoServFilterActive ? 'text-emerald-200 animate-pulse' : 'text-slate-400'}`} />
+                  <span>{tpoServFilterActive ? 'Filtro TPO SERV Activo' : 'Filtrar por TPO SERV'}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                    tpoServFilterActive
+                      ? 'bg-white/20 text-white'
+                      : 'bg-slate-900 text-emerald-400 border border-emerald-500/30'
+                  }`}>
+                    {matchingTpoServCount}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal de configuración de tipos para TPO SERV */}
+            {showTpoServModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                        <Tag className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Configurar Tipos para "TPO SERV"</h4>
+                        <p className="text-[11px] text-slate-400">Agregue tipos adicionales para incluir en este filtro</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTpoServModal(false)}
+                      className="p-1.5 text-slate-400 hover:text-white rounded-xl"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Form to add custom type */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">Escribir nuevo tipo a incluir:</label>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="text"
+                        placeholder="Ej. NAUTA HOGAR PLUS, TELEFONIA BASICA..."
+                        value={customTpoServInput}
+                        onChange={(e) => setCustomTpoServInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTpoServPattern(customTpoServInput);
+                          }
+                        }}
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase focus:outline-none focus:border-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddTpoServPattern(customTpoServInput)}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl cursor-pointer"
+                      >
+                        + Agregar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tipos activos */}
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-bold text-slate-300">Tipos activos actualmente ({tpoServPatterns.length}):</span>
+                    <div className="flex flex-wrap gap-2 p-2.5 bg-slate-950 rounded-xl border border-slate-800">
+                      {tpoServPatterns.map(p => (
+                        <span key={p} className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold">
+                          <span>{p}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTpoServPattern(p)}
+                            className="hover:text-red-400 ml-1 text-slate-400 cursor-pointer"
+                            title="Quitar"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Detected values in Excel */}
+                  {detectedTpoServValues.length > 0 && (
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] font-bold text-slate-400">Valores detectados en la columna TPO SERV del archivo:</span>
+                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-slate-950/60 rounded-xl border border-slate-800">
+                        {detectedTpoServValues.map(val => {
+                          const isAlreadyAdded = tpoServPatterns.some(p => p.toUpperCase() === val.toUpperCase());
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => {
+                                if (isAlreadyAdded) handleRemoveTpoServPattern(val);
+                                else handleAddTpoServPattern(val);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+                                isAlreadyAdded
+                                  ? 'bg-emerald-900/60 border-emerald-400 text-emerald-200 font-bold'
+                                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {isAlreadyAdded ? `✓ ${val}` : `+ ${val}`}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end pt-2 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setShowTpoServModal(false)}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl cursor-pointer"
+                    >
+                      Listo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Grid of Standard and Type Filters with 🔎 Buscar action */}
             <div
@@ -3521,7 +3880,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
               {/* Copy Table Button with all columns */}
               <CopyTableButton
-                headers={['N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO']}
+                headers={['N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA']}
                 rows={[
                   ...displayModalServices.map((s, idx) => {
                     const info = getItemTaskInfo(s);
@@ -3541,10 +3900,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       `${getDemoraDays(s)} días`,
                       s.fechaReporte || '-',
                       info.afectacion || '-',
-                      info.taskName || '-'
+                      info.taskName || '-',
+                      extractProblemaFromItem(s) || '-'
                     ];
                   }),
-                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']
+                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']
                 ]}
                 label="Copiar Servicios"
               />
@@ -3568,12 +3928,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <th className="py-3 px-4 text-center">Fecha Reporte</th>
                     <th className="py-3 px-4 text-rose-400">Afectaciones</th>
                     <th className="py-3 px-4 text-amber-400">Tarea o Trabajo</th>
+                    <th className="py-3 px-4 text-rose-300 font-bold">Problema</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {displayModalServices.length === 0 ? (
                     <tr>
-                      <td colSpan={13} className="py-8 text-center text-slate-500 font-bold">
+                      <td colSpan={14} className="py-8 text-center text-slate-500 font-bold">
                         No se encontraron servicios consolidados para este filtro.
                       </td>
                     </tr>
@@ -3652,6 +4013,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             ) : (
                               <span className="text-slate-600 text-center block">-</span>
                             )}
+                          </td>
+                          <td className="py-3 px-4 text-xs font-mono text-slate-300 max-w-[180px] truncate" title={extractProblemaFromItem(item) || '-'}>
+                            {extractProblemaFromItem(item) || '-'}
                           </td>
                         </tr>
                       );

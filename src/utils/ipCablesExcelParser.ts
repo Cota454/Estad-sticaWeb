@@ -301,6 +301,70 @@ export function extractAsociadoFromItem(item: IpCableRow): string {
   return '';
 }
 
+/**
+ * Extracts the "PROBLEMA" column value from an item's rawRowData.
+ * Looks for column aliases: PROBLEMA, PROBLEMAS, DESC_PROBLEMA, DESCRIPCION PROBLEMA, FALLA, AVERIA, etc.
+ */
+export function extractProblemaFromItem(item: IpCableRow): string {
+  if (!item || !item.rawRowData) return '-';
+  const raw = item.rawRowData;
+  const keys = Object.keys(raw);
+
+  const exactKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return norm === 'problema' || norm === 'problemas' || norm === 'descproblema' ||
+           norm === 'desc_problema' || norm === 'descripcionproblema' ||
+           norm === 'tipoproblema' || norm === 'problem' || norm === 'falla' || norm === 'averia';
+  });
+  if (exactKey && raw[exactKey] !== undefined && raw[exactKey] !== null) {
+    const val = String(raw[exactKey]).trim();
+    if (val && val !== '') return val;
+  }
+
+  const fuzzyKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return norm.includes('problema') || norm.includes('falla') || norm.includes('averia');
+  });
+  if (fuzzyKey && raw[fuzzyKey] !== undefined && raw[fuzzyKey] !== null) {
+    const val = String(raw[fuzzyKey]).trim();
+    if (val && val !== '') return val;
+  }
+
+  return '-';
+}
+
+/**
+ * Extracts the "TPO SERV" (Tipo de Servicio) column value from an item's rawRowData.
+ * Looks for aliases: TPO SERV, TPO_SERV, TIPO SERV, TIPO SERVICIO, etc.
+ */
+export function extractTpoServFromItem(item: IpCableRow): string {
+  if (!item || !item.rawRowData) return '';
+  const raw = item.rawRowData;
+  const keys = Object.keys(raw);
+
+  const exactKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return norm === 'tposerv' || norm === 'tposervicio' || norm === 'tiposerv' ||
+           norm === 'tiposervicio' || norm === 'typeservice' || norm === 'servicetype';
+  });
+  if (exactKey && raw[exactKey] !== undefined && raw[exactKey] !== null) {
+    const val = String(raw[exactKey]).trim();
+    if (val && val !== '') return val;
+  }
+
+  const fuzzyKey = keys.find(k => {
+    const norm = normalizeHeader(k);
+    return (norm.includes('tpo') && norm.includes('serv')) ||
+           (norm.includes('tipo') && norm.includes('serv'));
+  });
+  if (fuzzyKey && raw[fuzzyKey] !== undefined && raw[fuzzyKey] !== null) {
+    const val = String(raw[fuzzyKey]).trim();
+    if (val && val !== '') return val;
+  }
+
+  return '';
+}
+
 export type TelefonoTypeFilter = 'all' | 'telefono' | 'txd_dato';
 
 /**
@@ -937,7 +1001,9 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
           'Par P': item.parP,
           'Cable S': item.cblS,
           'Par S': item.parS,
-          FECHA: item.fch
+          FECHA: item.fch,
+          PROBLEMA: idx % 2 === 0 ? 'Sin Tono' : 'Crucetas / Ruido en Línea',
+          'TPO SERV': idx % 2 === 0 ? 'NAUTA HOGAR PLUS' : 'TELEFONIA BASICA'
         },
         networkType: classification.networkType,
         networkTypeLabel: classification.networkTypeLabel,
@@ -952,8 +1018,8 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
 
   return {
     totalRowsRead: sampleDataRaw.length,
-    totalHeaderCols: 8,
-    headers: ['SERVICIO', 'TELÉFONO', 'CENTRAL TELEFÓNICA', 'GRUPO', 'Cable P', 'Par P', 'Cable S', 'Par S', 'FECHA REPORTE'],
+    totalHeaderCols: 11,
+    headers: ['SERVICIO', 'TELÉFONO', 'CENTRAL TELEFÓNICA', 'GRUPO', 'Cable P', 'Par P', 'Cable S', 'Par S', 'FECHA REPORTE', 'PROBLEMA', 'TPO SERV'],
     consolidatedRows,
     uniqueServicesCount: consolidatedRows.length,
     uniqueCentrales: ['CENTRAL SUR', 'CORE CENTRAL', 'CTA SE', 'OUTDOOR EXT-1', 'PLAZA NORTE'],

@@ -117,5 +117,6 @@ export interface CableTaskServiceDetailRow {
   terminal: string;               // Columna TERMINAL del Excel subido
   terminalDireccion?: string;     // Mantenido para retrocompatibilidad
   afectacion: string;             // Columna AFECTACIONES
+  problema?: string;              // Columna PROBLEMA del Excel subido
   status: 'pending' | 'in_progress' | 'completed';
 }

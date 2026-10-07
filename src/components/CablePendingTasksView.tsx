@@ -47,6 +47,7 @@ import {
   saveCablePendingTasks
 } from '../utils/ipCablesStorage';
 import { getDemoraDays } from './AnalisisIpView';
+import { extractProblemaFromItem } from '../utils/ipCablesExcelParser';
 import { CableBatchTasksImportModal } from './CableBatchTasksImportModal';
 import { CableAfectacionesModal } from './CableAfectacionesModal';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -525,8 +526,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           // 1. Asociado: del Excel subido
           const associated = getExcelRawValue(raw, ['ASOCIADO', 'TELEFONO ASOCIADO', 'TELÉFONO ASOCIADO', 'TELEFONO', 'TELÉFONO', 'ABONADO']) || '-';
 
-          // 2. Cable P: del Excel subido
-          const cableP = matchedRow.cableP || getExcelRawValue(raw, ['CABLE P', 'CABLE_P', 'CABLE PRIMARIO', 'CABLE_PRIMARIO']) || task.cable || '-';
+          // 2. Cable P: del Excel subido (cable real del servicio)
+          const cableP = matchedRow.cableP || getExcelRawValue(raw, ['CABLE P', 'CABLE_P', 'CABLE PRIMARIO', 'CABLE_PRIMARIO']) || '-';
 
           // 3. Par P: del Excel subido
           const parP = matchedRow.parP || getExcelRawValue(raw, ['PAR P', 'PAR_P', 'PAR PRIMARIO', 'PAR_PRIMARIO']) || '-';
@@ -579,6 +580,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             }
           }
 
+          const problemaVal = extractProblemaFromItem(matchedRow);
+
           rows.push({
             id: rowId,
             taskId: task.id,
@@ -596,6 +599,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             terminal: terminalVal,
             terminalDireccion: terminalVal,
             afectacion: afectacion,
+            problema: problemaVal,
             status: task.status || 'pending'
           });
         });
@@ -648,6 +652,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               }
             }
 
+            const problemaVal = extractProblemaFromItem(matchedRow);
+
             rows.push({
               id: rowId,
               taskId: task.id,
@@ -665,6 +671,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               terminal: terminalVal,
               terminalDireccion: terminalVal,
               afectacion: afectacion,
+              problema: problemaVal,
               status: task.status || 'pending'
             });
           }
@@ -868,7 +875,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       'Central Telefónica': r.central,
       'Terminal': r.terminal || r.terminalDireccion || '-',
       'AFECTACIONES': r.afectacion,
-      'Tarea o Trabajo': r.taskName
+      'Tarea o Trabajo': r.taskName,
+      'PROBLEMA': r.problema || '-'
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(dataForExport);
@@ -887,12 +895,13 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       { wch: 20 }, // Central Telefónica
       { wch: 18 }, // Terminal
       { wch: 18 }, // AFECTACIONES
-      { wch: 35 }  // Tarea o Trabajo
+      { wch: 35 }, // Tarea o Trabajo
+      { wch: 22 }  // PROBLEMA
     ];
     worksheet['!cols'] = colWidths;
 
     // Header styling
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:M1');
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:N1');
     for (let C = range.s.c; C <= range.e.c; ++C) {
       const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
       if (worksheet[cellAddress]) {
@@ -927,7 +936,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       'Central Telefónica',
       'Terminal',
       'AFECTACIONES',
-      'Tarea o Trabajo'
+      'Tarea o Trabajo',
+      'PROBLEMA'
     ];
 
     const lines = filteredRows.map(r => [
@@ -943,7 +953,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       r.central,
       r.terminal || r.terminalDireccion || '-',
       r.afectacion,
-      r.taskName
+      r.taskName,
+      r.problema || '-'
     ].join('\t'));
 
     const tsvContent = [headers.join('\t'), ...lines].join('\n');
@@ -1211,10 +1222,6 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   const handleSaveTask = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formCable.trim()) {
-      alert('Por favor especifique el Cable asociado a este trabajo.');
-      return;
-    }
     if (!formTaskName.trim()) {
       alert('Por favor escriba la Tarea o Trabajo a realizar.');
       return;
@@ -1237,13 +1244,16 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     const mergedServicesSet = new Set([...selectedServicesSet, ...typedServices]);
     const finalServices = Array.from(mergedServicesSet);
 
+    // Cable Específico es solo el nombre identificativo de la tarea; si no se especificó, asignamos nombre por defecto
+    const effectiveCable = formCable.trim() || suggestedCableFromPasted?.cable || (finalServices.length > 0 ? 'TRABAJO DE SERVICIOS' : 'TRABAJO GENERAL');
+
     if (editingTask) {
       // Edit existing
       const updated = tasks.map(t => {
         if (t.id === editingTask.id) {
           return {
             ...t,
-            cable: formCable.trim(),
+            cable: effectiveCable,
             taskName: formTaskName.trim(),
             terminalDireccion: formTerminalDir.trim() || undefined,
             status: formStatus,
@@ -1263,7 +1273,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       // Create new: check if an identical task (same taskName and cable) already exists to offer seamless consolidation
       const existingIdenticalTask = tasks.find(
         t => t.taskName.trim().toUpperCase() === formTaskName.trim().toUpperCase() &&
-             t.cable.trim().toUpperCase() === formCable.trim().toUpperCase()
+             t.cable.trim().toUpperCase() === effectiveCable.toUpperCase()
       );
 
       if (existingIdenticalTask) {
@@ -1274,6 +1284,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           if (t.id === existingIdenticalTask.id) {
             return {
               ...t,
+              cable: effectiveCable,
               serviceNumbers: Array.from(unionSet),
               hasAfectacion: formHasAfectacion ? true : t.hasAfectacion,
               afectacionMotivo: formHasAfectacion ? formAfectacionMotivo.trim() : t.afectacionMotivo,
@@ -1288,7 +1299,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       } else {
         const newTask: CablePendingTask = {
           id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          cable: formCable.trim(),
+          cable: effectiveCable,
           taskName: formTaskName.trim(),
           terminalDireccion: formTerminalDir.trim() || undefined,
           status: formStatus,
@@ -1883,13 +1894,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                   <th className="py-3 px-3.5 text-slate-300">Terminal</th>
                   <th className="py-3 px-3 text-center text-purple-400 font-bold">AFECTACIONES</th>
                   <th className="py-3 px-4 text-white font-black">Tarea o Trabajo</th>
+                  <th className="py-3 px-3 text-center text-rose-300 font-bold">PROBLEMA</th>
                   <th className="py-3 px-3 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80 font-medium">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="py-12 text-center text-slate-500 italic space-y-2">
+                    <td colSpan={15} className="py-12 text-center text-slate-500 italic space-y-2">
                       <p className="text-sm font-semibold text-slate-300">
                         {!excelData
                           ? 'No hay archivo Excel cargado. Suba el archivo Excel para ver los servicios reportados.'
@@ -2011,6 +2023,11 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                             <Wrench className="w-3 h-3 text-blue-400 shrink-0" />
                             <span className="truncate font-semibold">{row.taskName}</span>
                           </div>
+                        </td>
+
+                        {/* 14. PROBLEMA */}
+                        <td className="py-2.5 px-3.5 text-center font-mono text-slate-300 max-w-xs truncate" title={row.problema || '-'}>
+                          <span className="text-slate-300 text-[11px] truncate">{row.problema || '-'}</span>
                         </td>
 
                         {/* Acciones */}
@@ -2160,6 +2177,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                               <th className="py-2.5 px-4">Central</th>
                               <th className="py-2.5 px-3 text-slate-300">Terminal</th>
                               <th className="py-2.5 px-3 text-center text-purple-400 font-bold">AFECTACIÓN</th>
+                              <th className="py-2.5 px-3 text-center text-rose-300 font-bold">PROBLEMA</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/50 font-medium">
@@ -2185,6 +2203,9 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                                   ) : (
                                     <span className="text-slate-600 font-mono">-</span>
                                   )}
+                                </td>
+                                <td className="py-2 px-3 text-center font-mono text-slate-300 text-[11px] truncate max-w-[140px]" title={r.problema || '-'}>
+                                  {r.problema || '-'}
                                 </td>
                               </tr>
                             ))}
@@ -2696,19 +2717,26 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               {/* Cable & Status */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                    <Cable className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Cable Específico *</span>
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                      <Cable className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Cable / Nombre del Trabajo</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-normal">
+                      (Etiqueta o referencia)
+                    </span>
+                  </div>
                   <input
                     type="text"
                     list="cables-list"
-                    placeholder="Ej. CABLE-01, CR-101..."
+                    placeholder="Ej. CABLE-01, Avería Primario, o nombre de referencia..."
                     value={formCable}
                     onChange={(e) => setFormCable(e.target.value)}
-                    required
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
                   />
+                  <p className="text-[10px] text-slate-400 leading-tight">
+                    💡 Solo es el nombre identificativo. Los servicios que pegues abajo se buscarán específicamente en el reporte sin importar el cable.
+                  </p>
                   <datalist id="cables-list">
                     {(excelData?.uniqueCables || []).map(c => (
                       <option key={c} value={c} />
@@ -2995,15 +3023,29 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
                   {/* Vista previa con chips de números pegados */}
                   {parsedPastedServices.length > 0 && (
-                    <div className="space-y-1.5 pt-1.5 border-t border-slate-800/80">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span>Vista previa de números pegados ({parsedPastedServices.length}):</span>
-                        {matchedServicesInExcelCount > 0 && (
-                          <span className="text-emerald-400 font-medium">
-                            ✓ {matchedServicesInExcelCount} coinciden en el reporte consolidado
+                    <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-300 gap-1.5 bg-slate-900/90 p-2 rounded-xl border border-slate-800">
+                        <span className="font-semibold text-white">
+                          📋 {parsedPastedServices.length} servicios pegados
+                        </span>
+                        {matchedServicesInExcelCount > 0 ? (
+                          <span className="text-emerald-400 font-bold flex items-center space-x-1">
+                            <span>✓ {matchedServicesInExcelCount} reportados en el Excel</span>
+                            {parsedPastedServices.length - matchedServicesInExcelCount > 0 && (
+                              <span className="text-slate-400 font-normal">
+                                ({parsedPastedServices.length - matchedServicesInExcelCount} no reportados)
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-amber-400 font-medium">
+                            Ninguno de los servicios pegados figura en el Excel actual
                           </span>
                         )}
                       </div>
+                      <p className="text-[10px] text-emerald-300/90 bg-emerald-950/30 p-2 rounded-lg border border-emerald-500/20">
+                        ✨ <strong>Búsqueda directa activa:</strong> Se buscarán específicamente estos números en el reporte y se mostrarán con sus datos reales (Cables reales, Par, Central, Demora y Problema), sin importar el nombre del cable.
+                      </p>
                       <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 bg-slate-900/60 rounded-xl border border-slate-800">
                         {parsedPastedServices.map((srv, idx) => {
                           const inReport = excelServicesMap.has(srv.toUpperCase());
