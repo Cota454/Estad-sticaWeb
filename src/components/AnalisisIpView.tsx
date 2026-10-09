@@ -35,7 +35,8 @@ import {
   AlertTriangle,
   Tag,
   Radio,
-  Bell
+  Bell,
+  FilePlus2
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -63,7 +64,8 @@ import {
   IpCableRow,
   NetworkTypeCategory,
   CablePendingTask,
-  CableAfectacion
+  CableAfectacion,
+  AuxiliaryExcelData
 } from '../types/ipCablesTypes';
 
 import {
@@ -97,7 +99,10 @@ import {
   extractDireccionFromItem,
   matchTelefonoTypeFilter,
   optimizeAndSimplifyRows,
-  TelefonoTypeFilter
+  TelefonoTypeFilter,
+  parseAuxiliaryExcel,
+  getAuxiliaryDataForService,
+  countAuxiliaryMatches
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -197,6 +202,31 @@ interface AnalisisIpViewProps {
   onUpdateCurrentUser?: (user: UserProfile) => void;
 }
 
+const STORAGE_KEY_IP_AUXILIARY_EXCEL = 'telecomstat_ip_auxiliary_excel_v1';
+
+function loadAuxiliaryDataFromStorage(): AuxiliaryExcelData | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_IP_AUXILIARY_EXCEL);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    console.warn('Error loading auxiliary data from storage:', e);
+    return null;
+  }
+}
+
+function saveAuxiliaryDataToStorage(data: AuxiliaryExcelData | null) {
+  try {
+    if (!data) {
+      localStorage.removeItem(STORAGE_KEY_IP_AUXILIARY_EXCEL);
+    } else {
+      localStorage.setItem(STORAGE_KEY_IP_AUXILIARY_EXCEL, JSON.stringify(data));
+    }
+  } catch (e) {
+    console.warn('Error saving auxiliary data to storage:', e);
+  }
+}
+
 export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   onBackToHub,
   centrales = [],
@@ -212,7 +242,6 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   // Navigation Tabs
   const [activeTab, setActiveTab] = useState<'matrices' | 'ip_cables' | 'print_reports' | 'cable_settings' | 'backup' | 'cable_tasks'>('matrices');
 
-
   // Loaded Excel State & Cable Rules & Zones State
   const [cableRules, setCableRules] = useState<CableClassificationRules>(loadCableRules);
   const [zones, setZones] = useState<ZoneConfig[]>(loadZones);
@@ -220,6 +249,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return loadParsedIpData();
   });
   const [isDataHydrated, setIsDataHydrated] = useState<boolean>(false);
+
+  // Estado para el archivo Excel Auxiliar / Complementario (Cruce por SERVICIO)
+  const [auxiliaryData, setAuxiliaryData] = useState<AuxiliaryExcelData | null>(loadAuxiliaryDataFromStorage);
+  const [isParsingAux, setIsParsingAux] = useState<boolean>(false);
+  const [auxError, setAuxError] = useState<string | null>(null);
+  const [auxSuccessMessage, setAuxSuccessMessage] = useState<string | null>(null);
 
   // Hydrate full persistent Excel dataset from IndexedDB on component mount
   useEffect(() => {
@@ -293,6 +328,50 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const handleClearExcelData = () => {
     clearParsedIpData();
     setExcelData(null);
+  };
+
+  // Conteo de coincidencias entre el Excel Auxiliar y los servicios del Excel principal activo
+  const auxiliaryMatchesCount = useMemo(() => {
+    if (!auxiliaryData || !excelData || !excelData.consolidatedRows) return 0;
+    const services = excelData.consolidatedRows.map(r => r.servicio);
+    return countAuxiliaryMatches(services, auxiliaryData);
+  }, [auxiliaryData, excelData]);
+
+  // Handler para subir archivo complementario (Cruce por SERVICIO)
+  const handleAuxiliaryFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+
+    setIsParsingAux(true);
+    setAuxError(null);
+    setAuxSuccessMessage(null);
+
+    try {
+      const parsed = await parseAuxiliaryExcel(file);
+      setAuxiliaryData(parsed);
+      saveAuxiliaryDataToStorage(parsed);
+
+      const activeServices = (excelData?.consolidatedRows || []).map(r => r.servicio);
+      const matches = countAuxiliaryMatches(activeServices, parsed);
+      const matchPct = activeServices.length > 0 ? ((matches / activeServices.length) * 100).toFixed(1) : '0';
+      setAuxSuccessMessage(
+        `¡Archivo complementario "${parsed.fileName}" cargado exitosamente! Contiene ${parsed.totalRows} filas y ${parsed.extraColumnNames.length} columnas adicionales. Se vincularon ${matches} de ${activeServices.length} servicios del reporte (${matchPct}% de coincidencia).`
+      );
+    } catch (err: any) {
+      console.error('Error parsing auxiliary Excel:', err);
+      setAuxError(err.message || 'Error al procesar el archivo complementario. Verifique que contenga la columna SERVICIO.');
+    } finally {
+      setIsParsingAux(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleClearAuxiliaryData = () => {
+    setAuxiliaryData(null);
+    saveAuxiliaryDataToStorage(null);
+    setAuxSuccessMessage(null);
+    setAuxError(null);
   };
 
   // Re-run network type classification if rules change
@@ -1331,11 +1410,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     // Format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción del filtro) + fecha y hora actual
     const fileName = `IP ${cleanCentral} (${cleanFilter}) ${dateTimeStr}.xlsx`;
 
+    const baseHeaders = ['N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
+    const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
+
     const exportData = displayModalServices.map((item, idx) => {
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
       const prob = extractProblemaFromItem(item);
-      return {
+      const row: Record<string, any> = {
         'N°': idx + 1,
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
@@ -1354,6 +1437,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Tarea o Trabajo': info.taskName || '-',
         'PROBLEMA': prob || '-'
       };
+
+      if (auxCols.length > 0) {
+        const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData);
+        auxCols.forEach(colName => {
+          const exportKey = baseHeadersUpperSet.has(colName.toUpperCase()) ? `${colName} (Auxiliar)` : colName;
+          row[exportKey] = auxRec?.[colName] !== undefined && auxRec?.[colName] !== '' ? auxRec[colName] : '-';
+        });
+      }
+
+      return row;
     });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
@@ -1374,7 +1467,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     // Set responsive column widths
-    worksheet['!cols'] = [
+    const colWidths = [
       { wch: 6 },  // N°
       { wch: 15 }, // Servicio
       { wch: 15 }, // Asociado
@@ -1393,6 +1486,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       { wch: 36 }, // Tarea o Trabajo
       { wch: 22 }  // PROBLEMA
     ];
+
+    if (auxCols.length > 0) {
+      auxCols.forEach(colName => {
+        colWidths.push({ wch: Math.max(16, colName.length + 4) });
+      });
+    }
+
+    worksheet['!cols'] = colWidths;
 
     // Styled header
     for (let C = range.s.c; C <= range.e.c; ++C) {
@@ -2116,6 +2217,122 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             </div>
           </div>
         )}
+
+        {/* SECCIÓN: ARCHIVO COMPLEMENTARIO / AUXILIAR (OPCIONAL - CRUCE POR SERVICIO) */}
+        <div className="pt-3 border-t border-slate-800">
+          <div className="bg-slate-950/80 border border-slate-800/90 rounded-2xl p-4 transition-all">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center space-x-3">
+                <div className="p-2.5 bg-violet-500/20 text-violet-400 border border-violet-500/30 rounded-xl shrink-0">
+                  <FilePlus2 className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-extrabold text-xs text-white">Excel Complementario (Opcional - Cruce por SERVICIO)</span>
+                    {auxiliaryData ? (
+                      <span className="bg-violet-500/20 text-violet-300 border border-violet-500/40 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center space-x-1 shadow-sm">
+                        <CheckCircle2 className="w-3 h-3 text-violet-400 shrink-0" />
+                        <span>Activo: <strong>{auxiliaryData.fileName}</strong></span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded-md font-medium">
+                        Sin archivo auxiliar cargado
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Sube un Excel adicional con la columna <strong>SERVICIO</strong> y columnas extra (Cliente, Técnico, Folio, etc.). El sistema vinculará cada servicio y agregará esas columnas a todos los Excel que descargues.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 shrink-0">
+                <label className="cursor-pointer bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-lg shadow-violet-600/20 border border-violet-400/30 flex items-center space-x-1.5 cursor-pointer">
+                  {isParsingAux ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                  <span>{isParsingAux ? 'Procesando...' : auxiliaryData ? 'Cambiar Excel Complementario' : 'Subir Excel Complementario'}</span>
+                  <input
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    onChange={handleAuxiliaryFileUpload}
+                    disabled={isParsingAux}
+                    className="hidden"
+                  />
+                </label>
+
+                {auxiliaryData && (
+                  <button
+                    onClick={handleClearAuxiliaryData}
+                    className="p-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                    title="Quitar archivo complementario"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Métricas y columnas detectadas del archivo complementario */}
+            {auxiliaryData && (
+              <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400 text-[10px] font-bold">FILAS EN AUXILIAR:</span>
+                    <strong className="text-violet-300 font-mono text-xs">{auxiliaryData.totalRows}</strong>
+                  </div>
+                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400 text-[10px] font-bold">SERVICIOS VINCULADOS:</span>
+                    <strong className="text-emerald-400 font-mono text-xs">
+                      {auxiliaryMatchesCount} / {excelData?.uniqueServicesCount || 0}
+                      {excelData?.uniqueServicesCount ? ` (${(((auxiliaryMatchesCount) / excelData.uniqueServicesCount) * 100).toFixed(1)}%)` : ''}
+                    </strong>
+                  </div>
+                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between col-span-2 sm:col-span-1">
+                    <span className="text-slate-400 text-[10px] font-bold">COLUMNAS DETECTADAS:</span>
+                    <strong className="text-amber-300 font-mono text-xs">{auxiliaryData.extraColumnNames.length} columnas</strong>
+                  </div>
+                </div>
+
+                {/* Badges de columnas que se añadirán a las descargas */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+                    Columnas anexadas a los Excel:
+                  </span>
+                  {auxiliaryData.extraColumnNames.map(col => (
+                    <span
+                      key={col}
+                      className="px-2 py-0.5 bg-violet-950/60 text-violet-200 border border-violet-700/50 rounded-md text-[10px] font-mono font-bold"
+                    >
+                      + {col}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {auxError && (
+              <div className="mt-2.5 p-2.5 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold flex items-center space-x-2">
+                <Info className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{auxError}</span>
+              </div>
+            )}
+
+            {auxSuccessMessage && (
+              <div className="mt-2.5 p-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-xl text-xs font-semibold flex items-center justify-between space-x-2">
+                <div className="flex items-center space-x-2 truncate">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="truncate">{auxSuccessMessage}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuxSuccessMessage(null)}
+                  className="text-emerald-400 hover:text-white p-0.5 rounded cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* PESTAÑA 1: MATRICES (CENTRALES Y ZONAS VS GRUPOS) */}
@@ -3773,6 +3990,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           workGroups={workGroups}
           onFileUpload={handleFileUpload}
           isParsing={isParsing}
+          auxiliaryData={auxiliaryData}
         />
       )}
 
@@ -3878,12 +4096,20 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 />
               </div>
 
-              {/* Copy Table Button with all columns */}
+              {/* Copy Table Button with all columns including auxiliary ones */}
               <CopyTableButton
-                headers={['N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA']}
+                headers={[
+                  'N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA',
+                  ...(auxiliaryData?.extraColumnNames || [])
+                ]}
                 rows={[
                   ...displayModalServices.map((s, idx) => {
                     const info = getItemTaskInfo(s);
+                    const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData);
+                    const auxVals = (auxiliaryData?.extraColumnNames || []).map(col => {
+                      const v = auxRec?.[col];
+                      return v !== undefined && v !== '' ? String(v) : '-';
+                    });
                     return [
                       (idx + 1).toString(),
                       s.servicio,
@@ -3901,10 +4127,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       s.fechaReporte || '-',
                       info.afectacion || '-',
                       info.taskName || '-',
-                      extractProblemaFromItem(s) || '-'
+                      extractProblemaFromItem(s) || '-',
+                      ...auxVals
                     ];
                   }),
-                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']
+                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
                 ]}
                 label="Copiar Servicios"
               />
@@ -3929,12 +4156,17 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <th className="py-3 px-4 text-rose-400">Afectaciones</th>
                     <th className="py-3 px-4 text-amber-400">Tarea o Trabajo</th>
                     <th className="py-3 px-4 text-rose-300 font-bold">Problema</th>
+                    {(auxiliaryData?.extraColumnNames || []).map(col => (
+                      <th key={col} className="py-3 px-4 text-violet-300 font-bold bg-violet-950/40 whitespace-nowrap">
+                        {col} (Aux)
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {displayModalServices.length === 0 ? (
                     <tr>
-                      <td colSpan={14} className="py-8 text-center text-slate-500 font-bold">
+                      <td colSpan={14 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-8 text-center text-slate-500 font-bold">
                         No se encontraron servicios consolidados para este filtro.
                       </td>
                     </tr>
@@ -4017,6 +4249,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           <td className="py-3 px-4 text-xs font-mono text-slate-300 max-w-[180px] truncate" title={extractProblemaFromItem(item) || '-'}>
                             {extractProblemaFromItem(item) || '-'}
                           </td>
+                          {(auxiliaryData?.extraColumnNames || []).map(col => {
+                            const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData);
+                            const val = auxRec?.[col];
+                            return (
+                              <td key={col} className="py-3 px-4 text-xs font-mono text-violet-200 bg-violet-950/10 whitespace-nowrap">
+                                {val !== undefined && val !== '' ? String(val) : <span className="text-slate-600">-</span>}
+                              </td>
+                            );
+                          })}
                         </tr>
                       );
                     })

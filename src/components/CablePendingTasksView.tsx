@@ -39,7 +39,8 @@ import {
   IpCableExcelParseResult,
   IpCableRow,
   CablePendingTask,
-  CableTaskServiceDetailRow
+  CableTaskServiceDetailRow,
+  AuxiliaryExcelData
 } from '../types/ipCablesTypes';
 import { Central, WorkGroup } from '../types';
 import {
@@ -47,7 +48,7 @@ import {
   saveCablePendingTasks
 } from '../utils/ipCablesStorage';
 import { getDemoraDays } from './AnalisisIpView';
-import { extractProblemaFromItem } from '../utils/ipCablesExcelParser';
+import { extractProblemaFromItem, getAuxiliaryDataForService } from '../utils/ipCablesExcelParser';
 import { CableBatchTasksImportModal } from './CableBatchTasksImportModal';
 import { CableAfectacionesModal } from './CableAfectacionesModal';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -137,6 +138,7 @@ interface CablePendingTasksViewProps {
   workGroups?: WorkGroup[];
   onFileUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   isParsing?: boolean;
+  auxiliaryData?: AuxiliaryExcelData | null;
 }
 
 export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
@@ -144,7 +146,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   centrales = [],
   workGroups = [],
   onFileUpload,
-  isParsing = false
+  isParsing = false,
+  auxiliaryData
 }) => {
   // Tasks state from localStorage
   const [tasks, setTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
@@ -862,22 +865,38 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       return;
     }
 
-    const dataForExport = filteredRows.map(r => ({
-      'Servicio': r.servicio,
-      'Asociado': r.asociado,
-      'Cable P': r.cableP,
-      'Par P': r.parP,
-      'Cable S': r.cableS,
-      'Par S': r.parS,
-      'Fecha Reporte': r.fechaReporte,
-      'Grupo': r.grupo,
-      'Demora en Días': r.demoraEnDias,
-      'Central Telefónica': r.central,
-      'Terminal': r.terminal || r.terminalDireccion || '-',
-      'AFECTACIONES': r.afectacion,
-      'Tarea o Trabajo': r.taskName,
-      'PROBLEMA': r.problema || '-'
-    }));
+    const baseHeadersList = ['Servicio', 'Asociado', 'Cable P', 'Par P', 'Cable S', 'Par S', 'Fecha Reporte', 'Grupo', 'Demora en Días', 'Central Telefónica', 'Terminal', 'AFECTACIONES', 'Tarea o Trabajo', 'PROBLEMA'];
+    const baseHeadersUpperSet = new Set(baseHeadersList.map(h => h.toUpperCase()));
+    const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
+
+    const dataForExport = filteredRows.map(r => {
+      const rowObj: Record<string, any> = {
+        'Servicio': r.servicio,
+        'Asociado': r.asociado,
+        'Cable P': r.cableP,
+        'Par P': r.parP,
+        'Cable S': r.cableS,
+        'Par S': r.parS,
+        'Fecha Reporte': r.fechaReporte,
+        'Grupo': r.grupo,
+        'Demora en Días': r.demoraEnDias,
+        'Central Telefónica': r.central,
+        'Terminal': r.terminal || r.terminalDireccion || '-',
+        'AFECTACIONES': r.afectacion,
+        'Tarea o Trabajo': r.taskName,
+        'PROBLEMA': r.problema || '-'
+      };
+
+      if (auxCols.length > 0) {
+        const auxRec = getAuxiliaryDataForService(r.servicio, auxiliaryData);
+        auxCols.forEach(colName => {
+          const exportKey = baseHeadersUpperSet.has(colName.toUpperCase()) ? `${colName} (Auxiliar)` : colName;
+          rowObj[exportKey] = auxRec?.[colName] !== undefined && auxRec?.[colName] !== '' ? auxRec[colName] : '-';
+        });
+      }
+
+      return rowObj;
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(dataForExport);
 
@@ -898,6 +917,13 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       { wch: 35 }, // Tarea o Trabajo
       { wch: 22 }  // PROBLEMA
     ];
+
+    if (auxCols.length > 0) {
+      auxCols.forEach(colName => {
+        colWidths.push({ wch: Math.max(16, colName.length + 4) });
+      });
+    }
+
     worksheet['!cols'] = colWidths;
 
     // Header styling
@@ -923,6 +949,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   const handleCopyTable = () => {
     if (filteredRows.length === 0) return;
 
+    const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
+
     const headers = [
       'Servicio',
       'Asociado',
@@ -937,25 +965,35 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       'Terminal',
       'AFECTACIONES',
       'Tarea o Trabajo',
-      'PROBLEMA'
+      'PROBLEMA',
+      ...auxCols
     ];
 
-    const lines = filteredRows.map(r => [
-      r.servicio,
-      r.asociado,
-      r.cableP,
-      r.parP,
-      r.cableS,
-      r.parS,
-      r.fechaReporte,
-      r.grupo,
-      r.demoraEnDias,
-      r.central,
-      r.terminal || r.terminalDireccion || '-',
-      r.afectacion,
-      r.taskName,
-      r.problema || '-'
-    ].join('\t'));
+    const lines = filteredRows.map(r => {
+      const auxRec = getAuxiliaryDataForService(r.servicio, auxiliaryData);
+      const auxVals = auxCols.map(col => {
+        const v = auxRec?.[col];
+        return v !== undefined && v !== '' ? String(v) : '-';
+      });
+
+      return [
+        r.servicio,
+        r.asociado,
+        r.cableP,
+        r.parP,
+        r.cableS,
+        r.parS,
+        r.fechaReporte,
+        r.grupo,
+        r.demoraEnDias,
+        r.central,
+        r.terminal || r.terminalDireccion || '-',
+        r.afectacion,
+        r.taskName,
+        r.problema || '-',
+        ...auxVals
+      ].join('\t');
+    });
 
     const tsvContent = [headers.join('\t'), ...lines].join('\n');
     navigator.clipboard.writeText(tsvContent).then(() => {
@@ -1569,19 +1607,26 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             </div>
           </div>
 
-          {onFileUpload && (
-            <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-2 shrink-0 self-start md:self-auto shadow-sm">
-              {isParsing ? <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
-              <span>{isParsing ? 'Procesando Excel...' : 'Cargar / Actualizar Excel'}</span>
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={onFileUpload}
-                disabled={isParsing}
-                className="hidden"
-              />
-            </label>
-          )}
+          <div className="flex items-center space-x-2 shrink-0 self-start md:self-auto">
+            {auxiliaryData && (
+              <span className="text-[11px] bg-violet-950/60 text-violet-300 border border-violet-700/40 px-2.5 py-2 rounded-xl font-bold flex items-center space-x-1.5 shadow-sm" title={`Archivo auxiliar activo: ${auxiliaryData.fileName}`}>
+                <span>Auxiliar: <strong>{auxiliaryData.fileName}</strong> (+{auxiliaryData.extraColumnNames.length} cols)</span>
+              </span>
+            )}
+            {onFileUpload && (
+              <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-2 shadow-sm">
+                {isParsing ? <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
+                <span>{isParsing ? 'Procesando Excel...' : 'Cargar / Actualizar Excel'}</span>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={onFileUpload}
+                  disabled={isParsing}
+                  className="hidden"
+                />
+              </label>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1895,13 +1940,18 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                   <th className="py-3 px-3 text-center text-purple-400 font-bold">AFECTACIONES</th>
                   <th className="py-3 px-4 text-white font-black">Tarea o Trabajo</th>
                   <th className="py-3 px-3 text-center text-rose-300 font-bold">PROBLEMA</th>
+                  {(auxiliaryData?.extraColumnNames || []).map(col => (
+                    <th key={col} className="py-3 px-3 text-center text-violet-300 font-bold bg-violet-950/30 whitespace-nowrap">
+                      {col}
+                    </th>
+                  ))}
                   <th className="py-3 px-3 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80 font-medium">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="py-12 text-center text-slate-500 italic space-y-2">
+                    <td colSpan={15 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-12 text-center text-slate-500 italic space-y-2">
                       <p className="text-sm font-semibold text-slate-300">
                         {!excelData
                           ? 'No hay archivo Excel cargado. Suba el archivo Excel para ver los servicios reportados.'
@@ -2029,6 +2079,17 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                         <td className="py-2.5 px-3.5 text-center font-mono text-slate-300 max-w-xs truncate" title={row.problema || '-'}>
                           <span className="text-slate-300 text-[11px] truncate">{row.problema || '-'}</span>
                         </td>
+
+                        {/* Columnas Auxiliares */}
+                        {(auxiliaryData?.extraColumnNames || []).map(col => {
+                          const auxRec = getAuxiliaryDataForService(row.servicio, auxiliaryData);
+                          const val = auxRec?.[col];
+                          return (
+                            <td key={col} className="py-2.5 px-3 text-center font-mono text-violet-200 text-xs bg-violet-950/10 whitespace-nowrap">
+                              {val !== undefined && val !== '' ? String(val) : <span className="text-slate-600">-</span>}
+                            </td>
+                          );
+                        })}
 
                         {/* Acciones */}
                         <td className="py-2.5 px-3 text-center whitespace-nowrap">

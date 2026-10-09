@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx-js-style';
 import Papa from 'papaparse';
-import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig } from '../types/ipCablesTypes';
+import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig, AuxiliaryExcelData } from '../types/ipCablesTypes';
 
 /**
  * Calculates delay in days from item raw data or fechaReporte
@@ -1028,5 +1028,225 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
     uniqueMonthsYears: [{ year: 2026, month: 8, label: 'Agosto 2026' }],
     parseDate: new Date().toISOString(),
     fileName: 'Muestra_Consolidada_IP_Cables.xlsx'
+  };
+}
+
+/**
+ * Normaliza una clave de servicio para búsquedas y cruce de datos
+ */
+export function normalizeServiceKey(service: any): string {
+  if (service === undefined || service === null) return '';
+  return String(service).trim().toUpperCase();
+}
+
+/**
+ * Extrae solo los dígitos numéricos de un servicio
+ */
+export function extractDigitsService(service: any): string {
+  if (service === undefined || service === null) return '';
+  return String(service).replace(/\D/g, '');
+}
+
+/**
+ * Busca y retorna el registro correspondiente en el Excel Auxiliar para un servicio dado.
+ * Aplica coincidencia inteligente en cascada:
+ * 1. Coincidencia exacta en mayúsculas
+ * 2. Coincidencia numérica (solo dígitos)
+ * 3. Coincidencia numérica sin ceros a la izquierda
+ */
+export function getAuxiliaryDataForService(
+  service: string | number | undefined | null,
+  auxData: AuxiliaryExcelData | null | undefined
+): Record<string, any> | undefined {
+  if (!auxData || !service) return undefined;
+  const rawKey = normalizeServiceKey(service);
+  if (!rawKey) return undefined;
+
+  // 1. Clave exacta
+  if (auxData.recordsByService[rawKey]) {
+    return auxData.recordsByService[rawKey];
+  }
+
+  // 2. Por dígitos
+  const digits = extractDigitsService(rawKey);
+  if (digits) {
+    if (auxData.recordsByService[digits]) {
+      return auxData.recordsByService[digits];
+    }
+    const noLeadingZeros = digits.replace(/^0+/, '');
+    if (noLeadingZeros && auxData.recordsByService[noLeadingZeros]) {
+      return auxData.recordsByService[noLeadingZeros];
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Cuenta la cantidad de servicios de un array que tienen coincidencia en el archivo auxiliar
+ */
+export function countAuxiliaryMatches(
+  activeServices: (string | number)[],
+  auxData: AuxiliaryExcelData | null | undefined
+): number {
+  if (!auxData || !activeServices || activeServices.length === 0) return 0;
+  let count = 0;
+  const seen = new Set<string>();
+  activeServices.forEach(srv => {
+    const rawKey = normalizeServiceKey(srv);
+    if (!rawKey || seen.has(rawKey)) return;
+    seen.add(rawKey);
+    if (getAuxiliaryDataForService(srv, auxData)) {
+      count++;
+    }
+  });
+  return count;
+}
+
+/**
+ * Procesa un archivo Excel o CSV auxiliar / complementario.
+ * Descubre automáticamente la fila de encabezados buscando la columna 'SERVICIO'
+ * (o variantes como 'SERVICIOS', 'ABONADO', 'LINEA', 'TELEFONO').
+ * Extrae e indexa todas las columnas adicionales para incorporarlas a las exportaciones Excel.
+ */
+export async function parseAuxiliaryExcel(file: File): Promise<AuxiliaryExcelData> {
+  const data = await file.arrayBuffer();
+  const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
+    throw new Error('El archivo no contiene hojas de cálculo.');
+  }
+
+  const worksheet = workbook.Sheets[firstSheetName];
+  const rawMatrix: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+
+  if (rawMatrix.length < 2) {
+    throw new Error('El archivo complementario debe tener al menos una fila de encabezados y filas de datos.');
+  }
+
+  // Detección automática de la fila de encabezados explorando las primeras 25 filas
+  let headerRowIndex = -1;
+  let servicioColIdx = -1;
+
+  for (let r = 0; r < Math.min(rawMatrix.length, 25); r++) {
+    const row = rawMatrix[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const cellVal = String(row[c] || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (
+        cellVal === 'servicio' ||
+        cellVal === 'servicios' ||
+        cellVal === 'nro_servicio' ||
+        cellVal === 'nro servicio' ||
+        cellVal === 'num_servicio' ||
+        cellVal === 'numero servicio' ||
+        cellVal === 'numero de servicio' ||
+        cellVal === 'abonado' ||
+        cellVal === 'telefono' ||
+        cellVal === 'telefono asociado' ||
+        cellVal === 'linea'
+      ) {
+        headerRowIndex = r;
+        servicioColIdx = c;
+        break;
+      }
+    }
+    if (headerRowIndex !== -1) break;
+  }
+
+  // Fallback si no fue exacto: buscar celdas que contengan 'servicio' o 'abonado'
+  if (headerRowIndex === -1) {
+    for (let r = 0; r < Math.min(rawMatrix.length, 25); r++) {
+      const row = rawMatrix[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const cellVal = String(row[c] || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (cellVal.includes('servicio') || cellVal.includes('abonado')) {
+          headerRowIndex = r;
+          servicioColIdx = c;
+          break;
+        }
+      }
+      if (headerRowIndex !== -1) break;
+    }
+  }
+
+  // Fallback a primera fila si no se detectó
+  if (headerRowIndex === -1) {
+    headerRowIndex = 0;
+    servicioColIdx = 0;
+  }
+
+  const headerRow = rawMatrix[headerRowIndex] || [];
+
+  // Extraer las columnas adicionales (todas menos la columna de servicio)
+  const extraCols: { idx: number; name: string }[] = [];
+  const seenNames = new Set<string>();
+
+  headerRow.forEach((col, idx) => {
+    if (idx === servicioColIdx) return;
+    let name = String(col !== undefined && col !== null ? col : '').trim();
+    if (!name) {
+      name = `Columna_${idx + 1}`;
+    }
+    let finalName = name;
+    let counter = 2;
+    while (seenNames.has(finalName.toUpperCase())) {
+      finalName = `${name}_${counter}`;
+      counter++;
+    }
+    seenNames.add(finalName.toUpperCase());
+    extraCols.push({ idx, name: finalName });
+  });
+
+  if (extraCols.length === 0) {
+    throw new Error('El archivo complementario contiene la columna de servicio pero no incluye otras columnas adicionales para agregar.');
+  }
+
+  const recordsByService: Record<string, Record<string, any>> = {};
+  const dataRows = rawMatrix.slice(headerRowIndex + 1);
+  let validRowsCount = 0;
+
+  dataRows.forEach(row => {
+    if (!row || row.length === 0) return;
+    const srvCell = row[servicioColIdx];
+    if (srvCell === undefined || srvCell === null || String(srvCell).trim() === '') return;
+
+    const srvStr = String(srvCell).trim();
+    const exactKey = srvStr.toUpperCase();
+    const digitsKey = srvStr.replace(/\D/g, '');
+    const cleanDigitsKey = digitsKey.replace(/^0+/, '');
+
+    const record: Record<string, any> = {};
+    extraCols.forEach(({ idx, name }) => {
+      let cellVal = row[idx];
+      if (cellVal instanceof Date) {
+        cellVal = cellVal.toISOString().slice(0, 10);
+      } else if (cellVal === undefined || cellVal === null) {
+        cellVal = '';
+      } else {
+        cellVal = String(cellVal).trim();
+      }
+      record[name] = cellVal;
+    });
+
+    recordsByService[exactKey] = record;
+    if (digitsKey && digitsKey !== exactKey) {
+      if (!recordsByService[digitsKey]) {
+        recordsByService[digitsKey] = record;
+      }
+    }
+    if (cleanDigitsKey && cleanDigitsKey !== exactKey && cleanDigitsKey !== digitsKey) {
+      if (!recordsByService[cleanDigitsKey]) {
+        recordsByService[cleanDigitsKey] = record;
+      }
+    }
+    validRowsCount++;
+  });
+
+  return {
+    fileName: file.name,
+    totalRows: validRowsCount,
+    extraColumnNames: extraCols.map(c => c.name),
+    recordsByService,
+    uploadedAt: new Date().toISOString()
   };
 }

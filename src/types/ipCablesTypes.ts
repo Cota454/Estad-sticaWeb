@@ -120,3 +120,16 @@ export interface CableTaskServiceDetailRow {
   problema?: string;              // Columna PROBLEMA del Excel subido
   status: 'pending' | 'in_progress' | 'completed';
 }
+
+/**
+ * Estructura de datos para el archivo Excel Auxiliar / Complementario en el 2do recuadro.
+ * Permite cruzar por SERVICIO y adjuntar columnas arbitrarias a las descargas y vistas.
+ */
+export interface AuxiliaryExcelData {
+  fileName: string;
+  totalRows: number;
+  matchedServicesCount?: number;
+  extraColumnNames: string[];
+  recordsByService: Record<string, Record<string, any>>;
+  uploadedAt: string;
+}
