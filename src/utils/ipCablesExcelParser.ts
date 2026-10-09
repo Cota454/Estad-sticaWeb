@@ -518,11 +518,35 @@ export function classifyNetworkType(
   flexibleRuleId?: string;
   flexibleAssignedName?: string;
 } {
-  const normCableP = cleanCableName(cablePVal).toUpperCase();
-  const normCableS = cleanCableName(cableSVal).toUpperCase();
+  const normCableP = cleanCableName(cablePVal).trim().toUpperCase();
+  const normCableS = cleanCableName(cableSVal).trim().toUpperCase();
   const normCentral = (centralVal || '').toString().trim().toUpperCase();
 
-  // 1. Check Red Rígida (Matches in rules.rigidaCables against Cable P or Cable S)
+  // 1. Check Red Flexible (Pestaña 4: Coincidencia Red Flexible)
+  // REGLA: Los patrones se comparan con la columna Cable P. Si coincide con alguno de ellos,
+  // entonces en la columna Clasificación Red se establece "Red Flexible".
+  const flexibleRuleMatch = (rules.flexibleRules || []).find(rule => {
+    const rawPatterns = (rule.pattern || '').toString().split(',');
+    return rawPatterns.some(p => {
+      const pat = cleanCableName(p).trim().toUpperCase();
+      if (!pat) return false;
+      return (
+        (normCableP && (normCableP === pat || isCableExactMatch(cablePVal, pat))) ||
+        (cleanCableName(cablePVal).trim().toUpperCase() === pat)
+      );
+    });
+  });
+
+  if (flexibleRuleMatch) {
+    return {
+      networkType: 'flexible',
+      networkTypeLabel: 'Red Flexible',
+      flexibleRuleId: flexibleRuleMatch.id,
+      flexibleAssignedName: flexibleRuleMatch.assignedName || 'Red Flexible'
+    };
+  }
+
+  // 2. Check Red Rígida (Matches in rules.rigidaCables against Cable P or Cable S)
   const isRigida = rules.rigidaCables.some(r => {
     const rawPatterns = r.toString().split(',');
     return rawPatterns.some(p => {
@@ -537,29 +561,6 @@ export function classifyNetworkType(
 
   if (isRigida) {
     return { networkType: 'rigida', networkTypeLabel: 'Red Rígida' };
-  }
-
-  // 2. Check Red Flexible (Matches strictly against rules.flexibleRules defined in Ajustes de Cables)
-  const flexibleRuleMatch = (rules.flexibleRules || []).find(rule => {
-    const rawPatterns = (rule.pattern || '').toString().split(',');
-    return rawPatterns.some(p => {
-      const pat = cleanCableName(p).toUpperCase();
-      if (!pat) return false;
-      return (
-        (normCableP && (normCableP === pat || isCableExactMatch(cablePVal, pat))) ||
-        (normCableS && (normCableS === pat || isCableExactMatch(cableSVal, pat)))
-      );
-    });
-  });
-
-  if (flexibleRuleMatch) {
-    const assigned = flexibleRuleMatch.assignedName || `Red Flexible (${flexibleRuleMatch.pattern})`;
-    return {
-      networkType: 'flexible',
-      networkTypeLabel: assigned,
-      flexibleRuleId: flexibleRuleMatch.id,
-      flexibleAssignedName: assigned
-    };
   }
 
   // 3. Check Outdoor (Matches in rules.outdoorRules against Central)
@@ -911,6 +912,7 @@ export async function parseIpCablesExcelFile(
   const uniqueCentralesSet = new Set<string>();
   const uniqueGroupsSet = new Set<string>();
   const uniqueCablesSet = new Set<string>();
+  const uniqueCablePSet = new Set<string>();
   const monthYearSet = new Map<string, { year: number; month: number; label: string }>();
 
   consolidatedRows.forEach(r => {
@@ -925,6 +927,14 @@ export async function parseIpCablesExcelFile(
     }
     if (r.cable) {
       r.cable.split('/').forEach(c => uniqueCablesSet.add(c.trim()));
+    }
+    if (r.cableP) {
+      r.cableP.split(/[\/,;]+/).forEach(cp => {
+        const cleaned = cleanCableName(cp).trim();
+        if (cleaned && cleaned !== '-' && cleaned !== 'SIN CABLE') {
+          uniqueCablePSet.add(cleaned);
+        }
+      });
     }
 
     if (r.fechaReporte && r.fechaReporte.length >= 7) {
@@ -948,6 +958,7 @@ export async function parseIpCablesExcelFile(
     uniqueCentrales: Array.from(uniqueCentralesSet).sort(),
     uniqueGroups: Array.from(uniqueGroupsSet).sort(),
     uniqueCables: Array.from(uniqueCablesSet).sort(),
+    uniqueCableP: Array.from(uniqueCablePSet).sort(),
     uniqueMonthsYears: Array.from(monthYearSet.values()).sort((a, b) => b.year - a.year || b.month - a.month),
     parseDate: new Date().toISOString(),
     fileName: file.name
@@ -1025,6 +1036,7 @@ export function generateSampleIpCablesData(rules: CableClassificationRules): IpC
     uniqueCentrales: ['CENTRAL SUR', 'CORE CENTRAL', 'CTA SE', 'OUTDOOR EXT-1', 'PLAZA NORTE'],
     uniqueGroups: ['BRIGADA EXTERIOR', 'BRIGADA NORTE 1', 'BRIGADA NORTE 2', 'BRIGADA SUR 1', 'BRIGADA SUR 2', 'NOC CORE'],
     uniqueCables: ['CAB-EXT', 'CABLE-05', 'CF-201', 'CF-202', 'CF-203', 'CR-101', 'CR-102', 'CR-103', 'CS-01', 'CS-02', 'CS-05', 'CS-09', 'CS-10', 'OUT-301'],
+    uniqueCableP: ['CAB-EXT', 'CABLE-05', 'CF-201', 'CF-202', 'CF-203', 'CR-101', 'CR-102', 'CR-103', 'OUT-301'],
     uniqueMonthsYears: [{ year: 2026, month: 8, label: 'Agosto 2026' }],
     parseDate: new Date().toISOString(),
     fileName: 'Muestra_Consolidada_IP_Cables.xlsx'

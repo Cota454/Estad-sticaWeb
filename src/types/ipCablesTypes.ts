@@ -53,6 +53,7 @@ export interface IpCableExcelParseResult {
   uniqueCentrales: string[];
   uniqueGroups: string[];
   uniqueCables: string[];
+  uniqueCableP?: string[];        // Lista de cables únicos detectados específicamente en Cable P
   uniqueMonthsYears: { year: number; month: number; label: string }[];
   parseDate: string;
   fileName: string;
@@ -114,6 +115,8 @@ export interface CableTaskServiceDetailRow {
   grupo: string;
   demoraEnDias: number;
   central: string;
+  zona?: string;                  // Zona a la que pertenece el servicio según matriz de zonificación
+  clasificacionRed?: string;      // Clasificación de Red (Red Flexible, Red Rígida, etc.)
   terminal: string;               // Columna TERMINAL del Excel subido
   terminalDireccion?: string;     // Mantenido para retrocompatibilidad
   afectacion: string;             // Columna AFECTACIONES

@@ -40,7 +40,8 @@ import {
   IpCableRow,
   CablePendingTask,
   CableTaskServiceDetailRow,
-  AuxiliaryExcelData
+  AuxiliaryExcelData,
+  ZoneConfig
 } from '../types/ipCablesTypes';
 import { Central, WorkGroup } from '../types';
 import {
@@ -48,7 +49,7 @@ import {
   saveCablePendingTasks
 } from '../utils/ipCablesStorage';
 import { getDemoraDays } from './AnalisisIpView';
-import { extractProblemaFromItem, getAuxiliaryDataForService } from '../utils/ipCablesExcelParser';
+import { extractProblemaFromItem, getAuxiliaryDataForService, findMatchingZoneForItem } from '../utils/ipCablesExcelParser';
 import { CableBatchTasksImportModal } from './CableBatchTasksImportModal';
 import { CableAfectacionesModal } from './CableAfectacionesModal';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -139,6 +140,7 @@ interface CablePendingTasksViewProps {
   onFileUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   isParsing?: boolean;
   auxiliaryData?: AuxiliaryExcelData | null;
+  zones?: ZoneConfig[];
 }
 
 export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
@@ -147,7 +149,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   workGroups = [],
   onFileUpload,
   isParsing = false,
-  auxiliaryData
+  auxiliaryData,
+  zones = []
 }) => {
   // Tasks state from localStorage
   const [tasks, setTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
@@ -584,6 +587,9 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           }
 
           const problemaVal = extractProblemaFromItem(matchedRow);
+          const matchedZone = findMatchingZoneForItem(matchedRow, zones);
+          const zonaVal = matchedZone ? matchedZone.name : 'Sin Zonificar';
+          const clasifRedVal = matchedRow.networkTypeLabel || (matchedRow.networkType === 'flexible' ? 'Red Flexible' : '-');
 
           rows.push({
             id: rowId,
@@ -591,6 +597,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             taskName: task.taskName,
             servicio: matchedRow.servicio || srvNum,
             asociado: String(associated),
+            zona: zonaVal,
+            clasificacionRed: clasifRedVal,
             cableP: String(cableP),
             parP: String(parP),
             cableS: String(cableS),
@@ -656,6 +664,9 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             }
 
             const problemaVal = extractProblemaFromItem(matchedRow);
+            const matchedZone = findMatchingZoneForItem(matchedRow, zones);
+            const zonaVal = matchedZone ? matchedZone.name : 'Sin Zonificar';
+            const clasifRedVal = matchedRow.networkTypeLabel || (matchedRow.networkType === 'flexible' ? 'Red Flexible' : '-');
 
             rows.push({
               id: rowId,
@@ -663,6 +674,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               taskName: task.taskName,
               servicio: matchedRow.servicio,
               asociado: String(associated),
+              zona: zonaVal,
+              clasificacionRed: clasifRedVal,
               cableP: String(cableP),
               parP: String(parP),
               cableS: String(cableS),
@@ -683,7 +696,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     });
 
     return rows;
-  }, [tasks, excelServicesMap, excelData]);
+  }, [tasks, excelServicesMap, excelData, zones]);
 
   // -------------------------------------------------------------
   // Mejora C: Búsqueda Contextual por Servicio (Task Context Search)
@@ -865,7 +878,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       return;
     }
 
-    const baseHeadersList = ['Servicio', 'Asociado', 'Cable P', 'Par P', 'Cable S', 'Par S', 'Fecha Reporte', 'Grupo', 'Demora en Días', 'Central Telefónica', 'Terminal', 'AFECTACIONES', 'Tarea o Trabajo', 'PROBLEMA'];
+    const baseHeadersList = ['Servicio', 'Asociado', 'Zona', 'Cable P', 'Par P', 'Cable S', 'Par S', 'Fecha Reporte', 'Grupo', 'Clasificación Red', 'Demora en Días', 'Central Telefónica', 'Terminal', 'AFECTACIONES', 'Tarea o Trabajo', 'PROBLEMA'];
     const baseHeadersUpperSet = new Set(baseHeadersList.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
@@ -873,12 +886,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       const rowObj: Record<string, any> = {
         'Servicio': r.servicio,
         'Asociado': r.asociado,
+        'Zona': r.zona || 'Sin Zonificar',
         'Cable P': r.cableP,
         'Par P': r.parP,
         'Cable S': r.cableS,
         'Par S': r.parS,
         'Fecha Reporte': r.fechaReporte,
         'Grupo': r.grupo,
+        'Clasificación Red': r.clasificacionRed || '-',
         'Demora en Días': r.demoraEnDias,
         'Central Telefónica': r.central,
         'Terminal': r.terminal || r.terminalDireccion || '-',
@@ -904,12 +919,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     const colWidths = [
       { wch: 14 }, // Servicio
       { wch: 14 }, // Asociado
+      { wch: 18 }, // Zona
       { wch: 12 }, // Cable P
       { wch: 10 }, // Par P
       { wch: 12 }, // Cable S
       { wch: 10 }, // Par S
       { wch: 14 }, // Fecha Reporte
       { wch: 16 }, // Grupo
+      { wch: 18 }, // Clasificación Red
       { wch: 15 }, // Demora en Días
       { wch: 20 }, // Central Telefónica
       { wch: 18 }, // Terminal
@@ -927,7 +944,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     worksheet['!cols'] = colWidths;
 
     // Header styling
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:N1');
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:O1');
     for (let C = range.s.c; C <= range.e.c; ++C) {
       const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
       if (worksheet[cellAddress]) {
@@ -954,12 +971,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     const headers = [
       'Servicio',
       'Asociado',
+      'Zona',
       'Cable P',
       'Par P',
       'Cable S',
       'Par S',
       'Fecha Reporte',
       'Grupo',
+      'Clasificación Red',
       'Demora en Días',
       'Central Telefónica',
       'Terminal',
@@ -979,12 +998,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       return [
         r.servicio,
         r.asociado,
+        r.zona || 'Sin Zonificar',
         r.cableP,
         r.parP,
         r.cableS,
         r.parS,
         r.fechaReporte,
         r.grupo,
+        r.clasificacionRed || '-',
         r.demoraEnDias,
         r.central,
         r.terminal || r.terminalDireccion || '-',
@@ -1928,12 +1949,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                 <tr>
                   <th className="py-3 px-3.5 text-white">Servicio</th>
                   <th className="py-3 px-3.5 text-slate-300">Asociado</th>
+                  <th className="py-3 px-3.5 text-emerald-400 font-bold">Zona</th>
                   <th className="py-3 px-3 text-center text-emerald-400">Cable P</th>
                   <th className="py-3 px-3 text-center text-emerald-300">Par P</th>
                   <th className="py-3 px-3 text-center text-cyan-400">Cable S</th>
                   <th className="py-3 px-3 text-center text-cyan-300">Par S</th>
                   <th className="py-3 px-3 text-center text-slate-300">Fecha Reporte</th>
                   <th className="py-3 px-3.5 text-slate-300">Grupo</th>
+                  <th className="py-3 px-3 text-center">Clasificación Red</th>
                   <th className="py-3 px-3 text-center text-amber-400">Demora (Días)</th>
                   <th className="py-3 px-3.5 text-slate-300">Central Telefónica</th>
                   <th className="py-3 px-3.5 text-slate-300">Terminal</th>
@@ -1951,7 +1974,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               <tbody className="divide-y divide-slate-800/80 font-medium">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={15 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-12 text-center text-slate-500 italic space-y-2">
+                    <td colSpan={17 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-12 text-center text-slate-500 italic space-y-2">
                       <p className="text-sm font-semibold text-slate-300">
                         {!excelData
                           ? 'No hay archivo Excel cargado. Suba el archivo Excel para ver los servicios reportados.'
@@ -1999,6 +2022,13 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                           {row.asociado}
                         </td>
 
+                        {/* Zona */}
+                        <td className="py-2.5 px-3.5 font-semibold text-emerald-300 whitespace-nowrap">
+                          <span className="bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded text-[11px]">
+                            {row.zona || 'Sin Zonificar'}
+                          </span>
+                        </td>
+
                         {/* 3. Cable P */}
                         <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-400 whitespace-nowrap">
                           {row.cableP}
@@ -2027,6 +2057,19 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                         {/* 8. Grupo */}
                         <td className="py-2.5 px-3.5 text-slate-300 whitespace-nowrap">
                           {row.grupo}
+                        </td>
+
+                        {/* Clasificación Red */}
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            row.clasificacionRed === 'Red Flexible'
+                              ? 'bg-blue-950/60 border-blue-800/60 text-blue-300'
+                              : row.clasificacionRed === 'Red Rígida'
+                              ? 'bg-amber-950/60 border-amber-800/60 text-amber-300'
+                              : 'bg-slate-800 border-slate-700 text-slate-400'
+                          }`}>
+                            {row.clasificacionRed || '-'}
+                          </span>
                         </td>
 
                         {/* 9. Demora en Días */}

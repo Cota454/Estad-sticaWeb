@@ -262,7 +262,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     loadParsedIpDataAsync().then(saved => {
       if (isMounted) {
         if (saved && saved.consolidatedRows && saved.consolidatedRows.length > 0) {
-          setExcelData(saved);
+          const currentRules = loadCableRules();
+          const syncedRows = saved.consolidatedRows.map(row => {
+            const rawP = row.cableP || (row.rawRowData && row.rawRowData['Cable P']) || row.cable || '';
+            const classification = classifyNetworkType(rawP, row.cableS || '', row.central, currentRules);
+            return {
+              ...row,
+              networkType: classification.networkType,
+              networkTypeLabel: classification.networkTypeLabel,
+              flexibleRuleId: classification.flexibleRuleId,
+              flexibleAssignedName: classification.flexibleAssignedName
+            };
+          });
+          setExcelData({ ...saved, consolidatedRows: syncedRows });
         } else {
           // If no user Excel has ever been uploaded or stored, initialize with sample data
           setExcelData(prev => prev || generateSampleIpCablesData(loadCableRules()));
@@ -375,11 +387,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   };
 
   // Re-run network type classification if rules change
-  const handleRulesUpdated = (newRules: CableClassificationRules) => {
+  const handleRulesUpdated = async (newRules: CableClassificationRules) => {
     setCableRules(newRules);
+    saveCableRules(newRules);
     if (excelData) {
       const updatedRows = excelData.consolidatedRows.map(row => {
-        const classification = classifyNetworkType(row.cableP || row.cable, row.cableS || '', row.central, newRules);
+        const rawP = row.cableP || (row.rawRowData && (row.rawRowData['Cable P'] || row.rawRowData['CABLE P'])) || '';
+        const rawS = row.cableS || (row.rawRowData && (row.rawRowData['Cable S'] || row.rawRowData['CABLE S'])) || '';
+        const classification = classifyNetworkType(rawP, rawS, row.central, newRules);
         return {
           ...row,
           networkType: classification.networkType,
@@ -395,7 +410,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       };
 
       setExcelData(updatedData);
-      saveParsedIpData(updatedData);
+      await saveParsedIpData(updatedData);
     }
   };
 
@@ -1410,7 +1425,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     // Format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción del filtro) + fecha y hora actual
     const fileName = `IP ${cleanCentral} (${cleanFilter}) ${dateTimeStr}.xlsx`;
 
-    const baseHeaders = ['N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeaders = ['N°', 'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
@@ -1418,10 +1433,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
       const prob = extractProblemaFromItem(item);
+      const matchedZone = findMatchingZoneForItem(item, zones);
+      const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+
       const row: Record<string, any> = {
         'N°': idx + 1,
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
+        'Zona': zonaName,
         'Central': item.central,
         'Cable P': item.cableP || '-',
         'Par P': item.parP || '-',
@@ -1452,7 +1471,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
     // Force string formatting for Servicio and Asociado so leading zeros are preserved
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Q1');
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:R1');
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
       const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
       if (cellServicio) {
@@ -1471,6 +1490,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       { wch: 6 },  // N°
       { wch: 15 }, // Servicio
       { wch: 15 }, // Asociado
+      { wch: 18 }, // Zona
       { wch: 16 }, // Central
       { wch: 14 }, // Cable P
       { wch: 10 }, // Par P
@@ -1653,6 +1673,122 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Zonas vs Grupos');
+    await saveXlsxWorkbook(workbook, fileName);
+  };
+
+  // Handler to export ALL consolidated services with their assigned Zona and Clasificación Red to Excel (.xlsx)
+  const handleDownloadAllServicesWithZonesExcel = async () => {
+    if (!excelData || excelData.consolidatedRows.length === 0) {
+      alert('No hay servicios disponibles en el archivo para exportar.');
+      return;
+    }
+
+    const dateTimeStr = getTab1ExportDateTime();
+    const fileName = `Servicios_Con_Zona_${dateTimeStr}.xlsx`;
+
+    const baseHeaders = ['N°', 'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
+    const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
+
+    const exportData = excelData.consolidatedRows.map((item, idx) => {
+      const info = getItemTaskInfo(item);
+      const asoc = extractAsociadoFromItem(item);
+      const prob = extractProblemaFromItem(item);
+      const matchedZone = findMatchingZoneForItem(item, zones);
+      const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+
+      const row: Record<string, any> = {
+        'N°': idx + 1,
+        'Servicio': item.servicio,
+        'Asociado': asoc || '-',
+        'Zona': zonaName,
+        'Central': item.central,
+        'Cable P': item.cableP || '-',
+        'Par P': item.parP || '-',
+        'Cable S': item.cableS || '-',
+        'Par S': item.parS || '-',
+        'Terminal': info.terminal || '-',
+        'Dirección': info.direccion || '-',
+        'Grupo': item.grupo || 'GENERAL',
+        'Clasificación Red': item.networkTypeLabel || '-',
+        'Demora en Días': getDemoraDays(item),
+        'Fecha Reporte': item.fechaReporte || '-',
+        'Afectaciones': info.afectacion || '-',
+        'Tarea o Trabajo': info.taskName || '-',
+        'PROBLEMA': prob || '-'
+      };
+
+      if (auxCols.length > 0) {
+        const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData);
+        auxCols.forEach(colName => {
+          const exportKey = baseHeadersUpperSet.has(colName.toUpperCase()) ? `${colName} (Auxiliar)` : colName;
+          row[exportKey] = auxRec?.[colName] !== undefined && auxRec?.[colName] !== '' ? auxRec[colName] : '-';
+        });
+      }
+
+      return row;
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+    // Force string formatting for Servicio and Asociado so leading zeros are preserved
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:R1');
+    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+      const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
+      if (cellServicio) {
+        cellServicio.t = 's';
+        cellServicio.z = '@';
+      }
+      const cellAsoc = worksheet[XLSX.utils.encode_cell({ r: R, c: 2 })];
+      if (cellAsoc) {
+        cellAsoc.t = 's';
+        cellAsoc.z = '@';
+      }
+    }
+
+    const colWidths = [
+      { wch: 6 },  // N°
+      { wch: 15 }, // Servicio
+      { wch: 15 }, // Asociado
+      { wch: 18 }, // Zona
+      { wch: 16 }, // Central
+      { wch: 14 }, // Cable P
+      { wch: 10 }, // Par P
+      { wch: 14 }, // Cable S
+      { wch: 10 }, // Par S
+      { wch: 18 }, // Terminal
+      { wch: 30 }, // Dirección
+      { wch: 18 }, // Grupo
+      { wch: 18 }, // Clasificación Red
+      { wch: 15 }, // Demora en Días
+      { wch: 14 }, // Fecha Reporte
+      { wch: 22 }, // Afectaciones
+      { wch: 36 }, // Tarea o Trabajo
+      { wch: 22 }  // PROBLEMA
+    ];
+
+    if (auxCols.length > 0) {
+      auxCols.forEach(colName => {
+        colWidths.push({ wch: Math.max(16, colName.length + 4) });
+      });
+    }
+
+    worksheet['!cols'] = colWidths;
+
+    // Header styling
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (worksheet[cellAddress]) {
+        worksheet[cellAddress].s = {
+          fill: { fgColor: { rgb: '065F46' } }, // Emerald 800
+          font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Servicios Zonificados');
     await saveXlsxWorkbook(workbook, fileName);
   };
 
@@ -3239,10 +3375,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   type="button"
                   onClick={handleDownloadZonasMatrixExcel}
                   className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-900/30 cursor-pointer active:scale-95 border border-emerald-400/40"
-                  title="Descargar matriz de Zonas vs Grupos en Excel (.xlsx)"
+                  title="Descargar matriz resumen de Zonas vs Grupos en Excel (.xlsx)"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Descargar Excel</span>
+                  <span>Descargar Matriz</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadAllServicesWithZonesExcel}
+                  className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-blue-900/30 cursor-pointer active:scale-95 border border-blue-400/40"
+                  title="Descargar todos los servicios asignados a su respectiva Zona y Clasificación Red en Excel (.xlsx)"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-blue-200" />
+                  <span>Descargar Servicios con Zona</span>
                 </button>
               </div>
             </div>
@@ -3954,8 +4099,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         <CableClassificationView
           rules={cableRules}
           onRulesUpdated={handleRulesUpdated}
-          availableCables={excelData?.uniqueCables || []}
+          availableCables={excelData?.uniqueCableP?.length ? excelData.uniqueCableP : (excelData?.uniqueCables || [])}
           availableCentrales={excelData?.uniqueCentrales || []}
+          consolidatedRows={excelData?.consolidatedRows || []}
+          fileName={excelData?.fileName}
+          onForceResync={() => handleRulesUpdated(cableRules)}
         />
       )}
 
@@ -3991,6 +4139,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           onFileUpload={handleFileUpload}
           isParsing={isParsing}
           auxiliaryData={auxiliaryData}
+          zones={zones}
         />
       )}
 
@@ -4099,12 +4248,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               {/* Copy Table Button with all columns including auxiliary ones */}
               <CopyTableButton
                 headers={[
-                  'N°', 'SERVICIO', 'ASOCIADO', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA',
+                  'N°', 'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA',
                   ...(auxiliaryData?.extraColumnNames || [])
                 ]}
                 rows={[
                   ...displayModalServices.map((s, idx) => {
                     const info = getItemTaskInfo(s);
+                    const matchedZone = findMatchingZoneForItem(s, zones);
+                    const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
                     const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData);
                     const auxVals = (auxiliaryData?.extraColumnNames || []).map(col => {
                       const v = auxRec?.[col];
@@ -4114,6 +4265,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       (idx + 1).toString(),
                       s.servicio,
                       extractAsociadoFromItem(s) || '-',
+                      zonaName,
                       s.central,
                       s.cableP || '-',
                       s.parP || '-',
@@ -4131,7 +4283,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       ...auxVals
                     ];
                   }),
-                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
+                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
                 ]}
                 label="Copiar Servicios"
               />
@@ -4144,6 +4296,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <tr>
                     <th className="py-3 px-3 text-center text-slate-500 w-12">#</th>
                     <th className="py-3 px-4 text-white font-black">Servicio / abonado</th>
+                    <th className="py-3 px-4 text-emerald-400 font-bold">Zona</th>
                     <th className="py-3 px-4">Central</th>
                     <th className="py-3 px-4 text-cyan-400">Cable P / Par P</th>
                     <th className="py-3 px-4 text-indigo-400">Cable S / Par S</th>
@@ -4166,13 +4319,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {displayModalServices.length === 0 ? (
                     <tr>
-                      <td colSpan={14 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-8 text-center text-slate-500 font-bold">
+                      <td colSpan={15 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-8 text-center text-slate-500 font-bold">
                         No se encontraron servicios consolidados para este filtro.
                       </td>
                     </tr>
                   ) : (
                     displayModalServices.map((item, idx) => {
                       const info = getItemTaskInfo(item);
+                      const matchedZone = findMatchingZoneForItem(item, zones);
+                      const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+
                       return (
                         <tr key={`${item.id}_${idx}`} className="hover:bg-slate-800/50 transition-colors">
                           <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
@@ -4184,6 +4340,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 <span className="text-cyan-400 font-bold">{extractAsociadoFromItem(item)}</span>
                               </div>
                             )}
+                          </td>
+                          <td className="py-3 px-4 font-semibold text-emerald-300 whitespace-nowrap">
+                            <span className="bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded text-[11px]">
+                              {zonaName}
+                            </span>
                           </td>
                           <td className="py-3 px-4 font-semibold text-white">{item.central}</td>
                           <td className="py-3 px-4 text-cyan-300 font-mono">
