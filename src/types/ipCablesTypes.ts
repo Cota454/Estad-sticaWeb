@@ -125,11 +125,24 @@ export interface CableTaskServiceDetailRow {
 }
 
 /**
+ * Información de un archivo individual cargado en el módulo complementario/auxiliar
+ */
+export interface AuxiliaryExcelFileInfo {
+  fileName: string;
+  totalRows: number;
+  columnsCount: number;
+  uploadedAt: string;
+}
+
+/**
  * Estructura de datos para el archivo Excel Auxiliar / Complementario en el 2do recuadro.
  * Permite cruzar por SERVICIO y adjuntar columnas arbitrarias a las descargas y vistas.
+ * Soporta múltiples archivos simultáneos y acumulativos con combinación de columnas.
  */
 export interface AuxiliaryExcelData {
   fileName: string;
+  fileNames?: string[];
+  filesInfo?: AuxiliaryExcelFileInfo[];
   totalRows: number;
   matchedServicesCount?: number;
   extraColumnNames: string[];

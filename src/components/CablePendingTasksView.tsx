@@ -589,7 +589,22 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           const problemaVal = extractProblemaFromItem(matchedRow);
           const matchedZone = findMatchingZoneForItem(matchedRow, zones);
           const zonaVal = matchedZone ? matchedZone.name : 'Sin Zonificar';
-          const clasifRedVal = matchedRow.networkTypeLabel || (matchedRow.networkType === 'flexible' ? 'Red Flexible' : '-');
+          let clasifRedVal = matchedRow.networkTypeLabel || (matchedRow.networkType === 'flexible' ? 'Red Flexible' : 'Red Rígida');
+          if (
+            !clasifRedVal ||
+            clasifRedVal === 'Otra Red / General' ||
+            clasifRedVal === 'Otra Red' ||
+            clasifRedVal === 'General' ||
+            clasifRedVal === '-' ||
+            clasifRedVal === 'Sin clasificar'
+          ) {
+            clasifRedVal = 'Red Rígida';
+          }
+
+          const isFlex = matchedRow.networkType === 'flexible' || clasifRedVal.toLowerCase().includes('flexible');
+          const rawSVal = String(cableS || '').trim();
+          const hasCableS = rawSVal !== '' && rawSVal !== '-' && rawSVal.toUpperCase() !== 'S/D' && rawSVal.toUpperCase() !== 'SIN CABLE';
+          const finalCableS = hasCableS ? rawSVal : (isFlex ? (matchedRow.flexibleAssignedName || 'Red Flexible') : '-');
 
           rows.push({
             id: rowId,
@@ -601,7 +616,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             clasificacionRed: clasifRedVal,
             cableP: String(cableP),
             parP: String(parP),
-            cableS: String(cableS),
+            cableS: finalCableS,
             parS: String(parS),
             fechaReporte: String(fechaReporte),
             grupo: String(grupo),
@@ -666,7 +681,22 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             const problemaVal = extractProblemaFromItem(matchedRow);
             const matchedZone = findMatchingZoneForItem(matchedRow, zones);
             const zonaVal = matchedZone ? matchedZone.name : 'Sin Zonificar';
-            const clasifRedVal = matchedRow.networkTypeLabel || (matchedRow.networkType === 'flexible' ? 'Red Flexible' : '-');
+            let clasifRedVal = matchedRow.networkTypeLabel || (matchedRow.networkType === 'flexible' ? 'Red Flexible' : 'Red Rígida');
+            if (
+              !clasifRedVal ||
+              clasifRedVal === 'Otra Red / General' ||
+              clasifRedVal === 'Otra Red' ||
+              clasifRedVal === 'General' ||
+              clasifRedVal === '-' ||
+              clasifRedVal === 'Sin clasificar'
+            ) {
+              clasifRedVal = 'Red Rígida';
+            }
+
+            const isFlex = matchedRow.networkType === 'flexible' || clasifRedVal.toLowerCase().includes('flexible');
+            const rawSVal = String(cableS || '').trim();
+            const hasCableS = rawSVal !== '' && rawSVal !== '-' && rawSVal.toUpperCase() !== 'S/D' && rawSVal.toUpperCase() !== 'SIN CABLE';
+            const finalCableS = hasCableS ? rawSVal : (isFlex ? (matchedRow.flexibleAssignedName || 'Red Flexible') : '-');
 
             rows.push({
               id: rowId,
@@ -678,7 +708,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               clasificacionRed: clasifRedVal,
               cableP: String(cableP),
               parP: String(parP),
-              cableS: String(cableS),
+              cableS: finalCableS,
               parS: String(parS),
               fechaReporte: String(fechaReporte),
               grupo: String(grupo),
@@ -883,17 +913,32 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
     const dataForExport = filteredRows.map(r => {
+      let clasifRed = r.clasificacionRed || 'Red Rígida';
+      if (
+        clasifRed === 'Otra Red / General' ||
+        clasifRed === 'Otra Red' ||
+        clasifRed === 'General' ||
+        clasifRed === '-' ||
+        clasifRed === 'Sin clasificar'
+      ) {
+        clasifRed = 'Red Rígida';
+      }
+
+      const isFlex = clasifRed.toLowerCase().includes('flexible');
+      const hasCableS = r.cableS && r.cableS.trim() !== '' && r.cableS.trim() !== '-' && r.cableS.trim().toUpperCase() !== 'S/D' && r.cableS.trim().toUpperCase() !== 'SIN CABLE';
+      const cableSVal = hasCableS ? r.cableS : (isFlex ? 'Red Flexible' : '-');
+
       const rowObj: Record<string, any> = {
         'Servicio': r.servicio,
         'Asociado': r.asociado,
         'Zona': r.zona || 'Sin Zonificar',
         'Cable P': r.cableP,
         'Par P': r.parP,
-        'Cable S': r.cableS,
+        'Cable S': cableSVal,
         'Par S': r.parS,
         'Fecha Reporte': r.fechaReporte,
         'Grupo': r.grupo,
-        'Clasificación Red': r.clasificacionRed || '-',
+        'Clasificación Red': clasifRed,
         'Demora en Días': r.demoraEnDias,
         'Central Telefónica': r.central,
         'Terminal': r.terminal || r.terminalDireccion || '-',

@@ -386,7 +386,7 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
           Ajustes de Clasificación para Cables y Redes
         </h2>
         <p className="text-slate-400 text-xs sm:text-sm">
-          Configure reglas de clasificación para sus servicios. En <strong>Coincidencia Red Flexible</strong>, los patrones se comparan directamente con la columna <strong>Cable P</strong> del Excel y se asigna <strong>Red Flexible</strong> en la columna <strong>Clasificación Red</strong> de la Pestaña 1 y en todos los Excel descargados.
+          Configure reglas de clasificación para sus servicios. En <strong>Coincidencia Red Flexible</strong>, los patrones se comparan con la columna <strong>Cable P</strong> del Excel: se clasifica como <strong>Red Flexible</strong> y, si la columna <strong>Cable S</strong> no contiene datos, se le asigna el nombre de la Red Flexible. Las redes generales se establecen como <strong>Red Rígida</strong>.
         </p>
       </div>
 
@@ -522,7 +522,7 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
             </div>
 
             <p className="text-xs text-slate-400">
-              Los patrones configurados se comparan directamente con la columna <strong>Cable P</strong> del Excel. Si el Cable P coincide con uno de ellos, en la columna Clasificación Red se establecerá <strong>Red Flexible</strong>.
+              Los patrones configurados se comparan directamente con la columna <strong>Cable P</strong> del Excel. Si el Cable P coincide con uno de ellos, en la columna Clasificación Red se establecerá <strong>Red Flexible</strong>, y en la columna <strong>Cable S</strong> se asignará el nombre de la Red Flexible a la que pertenece si no contiene datos.
             </p>
 
             {/* Chips de Cables P detectados en el Excel de Pestaña 1 */}

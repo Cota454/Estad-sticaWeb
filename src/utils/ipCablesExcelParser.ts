@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx-js-style';
 import Papa from 'papaparse';
-import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig, AuxiliaryExcelData } from '../types/ipCablesTypes';
+import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig, AuxiliaryExcelData, AuxiliaryExcelFileInfo } from '../types/ipCablesTypes';
 
 /**
  * Calculates delay in days from item raw data or fechaReporte
@@ -579,7 +579,8 @@ export function classifyNetworkType(
     };
   }
 
-  return { networkType: 'other', networkTypeLabel: 'Otra Red / General' };
+  // Sustitución de Otra Red / General por Red Rígida
+  return { networkType: 'rigida', networkTypeLabel: 'Red Rígida' };
 }
 
 /**
@@ -907,6 +908,40 @@ export async function parseIpCablesExcelFile(
   });
 
   const consolidatedRows = Array.from(consolidatedMap.values());
+
+  // REGLAS SOLICITADAS:
+  // 1. Sustitución de Otra Red/General por Red Rígida en Clasificación Red.
+  // 2. Si Cable P cumple que sea igual a uno de los Patrones de la Red Flexible,
+  //    entonces en la columna Cable S asignarle el nombre de la Red Flexible a que pertenece
+  //    en caso de que en la columna Cable S no contenga datos.
+  consolidatedRows.forEach(r => {
+    // Si la clasificación no es flexible ni outdoor, sustituir por Red Rígida
+    if (
+      !r.networkTypeLabel ||
+      r.networkTypeLabel === 'Otra Red / General' ||
+      r.networkTypeLabel === 'Otra Red' ||
+      r.networkTypeLabel === 'General' ||
+      r.networkTypeLabel === '-' ||
+      r.networkType === 'other'
+    ) {
+      r.networkType = 'rigida';
+      r.networkTypeLabel = 'Red Rígida';
+    }
+
+    // Si es Red Flexible y Cable S no contiene datos, asignarle el nombre de la Red Flexible
+    if (r.networkType === 'flexible' || r.flexibleRuleId || r.flexibleAssignedName) {
+      const hasCableS = r.cableS && r.cableS.trim() !== '' && r.cableS.trim() !== '-' && r.cableS.trim().toUpperCase() !== 'S/D' && r.cableS.trim().toUpperCase() !== 'SIN CABLE';
+      if (!hasCableS) {
+        const assignedFlexName = r.flexibleAssignedName || 'Red Flexible';
+        r.cableS = assignedFlexName;
+        if (r.rawRowData) {
+          r.rawRowData['Cable S'] = assignedFlexName;
+          r.rawRowData['CABLE S'] = assignedFlexName;
+        }
+        r.cable = [r.cableP, r.cableS].filter(Boolean).join(' / ');
+      }
+    }
+  });
 
   // Extract unique metadata
   const uniqueCentralesSet = new Set<string>();
@@ -1254,11 +1289,171 @@ export async function parseAuxiliaryExcel(file: File): Promise<AuxiliaryExcelDat
     validRowsCount++;
   });
 
+  const fileInfo: AuxiliaryExcelFileInfo = {
+    fileName: file.name,
+    totalRows: validRowsCount,
+    columnsCount: extraCols.length,
+    uploadedAt: new Date().toISOString()
+  };
+
   return {
     fileName: file.name,
+    fileNames: [file.name],
+    filesInfo: [fileInfo],
     totalRows: validRowsCount,
     extraColumnNames: extraCols.map(c => c.name),
     recordsByService,
     uploadedAt: new Date().toISOString()
   };
 }
+
+/**
+ * Combina múltiples conjuntos de datos auxiliares (de varios archivos Excel).
+ * Une las columnas adicionales detectadas sin duplicarlas y fusiona los registros por SERVICIO,
+ * permitiendo que cada archivo aporte nuevas columnas e información.
+ */
+export function mergeAuxiliaryExcelDatasets(
+  existing: AuxiliaryExcelData | null | undefined,
+  incoming: AuxiliaryExcelData | AuxiliaryExcelData[]
+): AuxiliaryExcelData {
+  const incomingList = Array.isArray(incoming) ? incoming : [incoming];
+  if (incomingList.length === 0) {
+    if (existing) return existing;
+    throw new Error('No hay datos auxiliares para procesar.');
+  }
+
+  // Lista de archivos individuales acumulados
+  const filesInfo: AuxiliaryExcelFileInfo[] = [];
+  if (existing) {
+    if (existing.filesInfo && existing.filesInfo.length > 0) {
+      filesInfo.push(...existing.filesInfo);
+    } else if (existing.fileName) {
+      filesInfo.push({
+        fileName: existing.fileName,
+        totalRows: existing.totalRows,
+        columnsCount: existing.extraColumnNames.length,
+        uploadedAt: existing.uploadedAt || new Date().toISOString()
+      });
+    }
+  }
+
+  // Columnas adicionales acumuladas conservando el orden de detección
+  const seenCols = new Set<string>();
+  const extraColumnNames: string[] = [];
+
+  if (existing && existing.extraColumnNames) {
+    existing.extraColumnNames.forEach(col => {
+      const colTrim = String(col || '').trim();
+      const colKey = colTrim.toUpperCase();
+      if (colTrim && !seenCols.has(colKey)) {
+        seenCols.add(colKey);
+        extraColumnNames.push(colTrim);
+      }
+    });
+  }
+
+  incomingList.forEach(inc => {
+    if (inc.filesInfo && inc.filesInfo.length > 0) {
+      inc.filesInfo.forEach(fi => filesInfo.push(fi));
+    } else if (inc.fileName) {
+      filesInfo.push({
+        fileName: inc.fileName,
+        totalRows: inc.totalRows,
+        columnsCount: inc.extraColumnNames.length,
+        uploadedAt: inc.uploadedAt || new Date().toISOString()
+      });
+    }
+
+    inc.extraColumnNames.forEach(col => {
+      const colTrim = String(col || '').trim();
+      const colKey = colTrim.toUpperCase();
+      if (colTrim && !seenCols.has(colKey)) {
+        seenCols.add(colKey);
+        extraColumnNames.push(colTrim);
+      }
+    });
+  });
+
+  // Fusión de registros por SERVICIO
+  const recordsByService: Record<string, Record<string, any>> = {};
+  if (existing?.recordsByService) {
+    Object.entries(existing.recordsByService).forEach(([srvKey, rec]) => {
+      recordsByService[srvKey] = { ...rec };
+    });
+  }
+
+  let totalRows = existing ? existing.totalRows : 0;
+
+  incomingList.forEach(inc => {
+    totalRows += inc.totalRows;
+    Object.entries(inc.recordsByService).forEach(([srvKey, newRec]) => {
+      if (!recordsByService[srvKey]) {
+        recordsByService[srvKey] = { ...newRec };
+      } else {
+        const merged = { ...recordsByService[srvKey] };
+        Object.entries(newRec).forEach(([colName, val]) => {
+          if (val !== undefined && val !== null && String(val).trim() !== '') {
+            merged[colName] = val;
+          } else if (merged[colName] === undefined) {
+            merged[colName] = '';
+          }
+        });
+        recordsByService[srvKey] = merged;
+      }
+    });
+  });
+
+  const fileNames = filesInfo.map(f => f.fileName);
+  const summaryFileName = fileNames.length === 1
+    ? fileNames[0]
+    : `${fileNames.length} archivos (${fileNames.slice(0, 3).join(', ')}${fileNames.length > 3 ? '...' : ''})`;
+
+  return {
+    fileName: summaryFileName,
+    fileNames,
+    filesInfo,
+    totalRows,
+    extraColumnNames,
+    recordsByService,
+    uploadedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Procesa múltiples archivos Excel/CSV auxiliares de forma secuencial y los fusiona.
+ */
+export async function parseMultipleAuxiliaryExcels(
+  files: File[],
+  existingData?: AuxiliaryExcelData | null,
+  onProgress?: (current: number, total: number, fileName: string) => void
+): Promise<AuxiliaryExcelData> {
+  if (!files || files.length === 0) {
+    if (existingData) return existingData;
+    throw new Error('No se seleccionaron archivos.');
+  }
+
+  const parsedDatasets: AuxiliaryExcelData[] = [];
+  const errors: string[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (onProgress) {
+      onProgress(i + 1, files.length, file.name);
+    }
+    try {
+      const parsed = await parseAuxiliaryExcel(file);
+      parsedDatasets.push(parsed);
+    } catch (err: any) {
+      console.error(`Error procesando archivo auxiliar "${file.name}":`, err);
+      errors.push(`"${file.name}": ${err.message || 'Error al procesar'}`);
+    }
+  }
+
+  if (parsedDatasets.length === 0) {
+    throw new Error(`Ningún archivo pudo procesarse correctamente.\n${errors.join('\n')}`);
+  }
+
+  const merged = mergeAuxiliaryExcelDatasets(existingData, parsedDatasets);
+  return merged;
+}
+

@@ -36,7 +36,10 @@ import {
   Tag,
   Radio,
   Bell,
-  FilePlus2
+  FilePlus2,
+  Files,
+  FolderPlus,
+  Plus
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
@@ -101,6 +104,8 @@ import {
   optimizeAndSimplifyRows,
   TelefonoTypeFilter,
   parseAuxiliaryExcel,
+  parseMultipleAuxiliaryExcels,
+  mergeAuxiliaryExcelDatasets,
   getAuxiliaryDataForService,
   countAuxiliaryMatches
 } from '../utils/ipCablesExcelParser';
@@ -250,9 +255,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   });
   const [isDataHydrated, setIsDataHydrated] = useState<boolean>(false);
 
-  // Estado para el archivo Excel Auxiliar / Complementario (Cruce por SERVICIO)
+  // Estado para el archivo Excel Auxiliar / Complementario (Cruce por SERVICIO con soporte multi-archivo)
   const [auxiliaryData, setAuxiliaryData] = useState<AuxiliaryExcelData | null>(loadAuxiliaryDataFromStorage);
   const [isParsingAux, setIsParsingAux] = useState<boolean>(false);
+  const [auxProgressText, setAuxProgressText] = useState<string | null>(null);
   const [auxError, setAuxError] = useState<string | null>(null);
   const [auxSuccessMessage, setAuxSuccessMessage] = useState<string | null>(null);
 
@@ -265,11 +271,35 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           const currentRules = loadCableRules();
           const syncedRows = saved.consolidatedRows.map(row => {
             const rawP = row.cableP || (row.rawRowData && row.rawRowData['Cable P']) || row.cable || '';
-            const classification = classifyNetworkType(rawP, row.cableS || '', row.central, currentRules);
+            const currentS = row.cableS || (row.rawRowData && row.rawRowData['Cable S']) || '';
+            const classification = classifyNetworkType(rawP, currentS, row.central, currentRules);
+
+            // Reemplazo solicitado: sustitución de Otra Red / General por Red Rígida
+            let finalNetworkLabel = classification.networkTypeLabel;
+            if (
+              !finalNetworkLabel ||
+              finalNetworkLabel === 'Otra Red / General' ||
+              finalNetworkLabel === 'Otra Red' ||
+              finalNetworkLabel === 'General' ||
+              finalNetworkLabel === '-'
+            ) {
+              finalNetworkLabel = 'Red Rígida';
+            }
+
+            // Si Cable P cumple que sea igual a uno de los Patrones de la Red Flexible,
+            // asignar a Cable S el nombre de la Red Flexible si Cable S no contiene datos.
+            let finalCableS = currentS;
+            const hasCableS = currentS && currentS.trim() !== '' && currentS.trim() !== '-' && currentS.trim().toUpperCase() !== 'S/D' && currentS.trim().toUpperCase() !== 'SIN CABLE';
+            if (classification.networkType === 'flexible' && !hasCableS) {
+              finalCableS = classification.flexibleAssignedName || 'Red Flexible';
+            }
+
             return {
               ...row,
-              networkType: classification.networkType,
-              networkTypeLabel: classification.networkTypeLabel,
+              cableS: finalCableS,
+              cable: [rawP, finalCableS].filter(Boolean).join(' / '),
+              networkType: classification.networkType === 'other' ? 'rigida' : classification.networkType,
+              networkTypeLabel: finalNetworkLabel,
               flexibleRuleId: classification.flexibleRuleId,
               flexibleAssignedName: classification.flexibleAssignedName
             };
@@ -349,32 +379,50 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     return countAuxiliaryMatches(services, auxiliaryData);
   }, [auxiliaryData, excelData]);
 
-  // Handler para subir archivo complementario (Cruce por SERVICIO)
-  const handleAuxiliaryFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const file = files[0];
+  // Handler para subir archivo(s) complementario(s) (Cruce por SERVICIO con soporte multi-archivo)
+  const handleAuxiliaryFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    mode: 'append' | 'replace' = 'append'
+  ) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const files: File[] = Array.from(fileList);
 
     setIsParsingAux(true);
     setAuxError(null);
     setAuxSuccessMessage(null);
+    setAuxProgressText(files.length > 1 ? `Iniciando análisis de ${files.length} archivos...` : 'Procesando archivo...');
 
     try {
-      const parsed = await parseAuxiliaryExcel(file);
+      const baseData = mode === 'replace' ? null : auxiliaryData;
+      const parsed = await parseMultipleAuxiliaryExcels(
+        files,
+        baseData,
+        (current, total, fileName) => {
+          setAuxProgressText(`Analizando archivo ${current} de ${total}: "${fileName}"...`);
+        }
+      );
+
       setAuxiliaryData(parsed);
       saveAuxiliaryDataToStorage(parsed);
 
       const activeServices = (excelData?.consolidatedRows || []).map(r => r.servicio);
       const matches = countAuxiliaryMatches(activeServices, parsed);
       const matchPct = activeServices.length > 0 ? ((matches / activeServices.length) * 100).toFixed(1) : '0';
+
+      const fileCountText = parsed.filesInfo && parsed.filesInfo.length > 1
+        ? `${parsed.filesInfo.length} archivos complementarios combinados`
+        : `Archivo complementario "${parsed.fileName}"`;
+
       setAuxSuccessMessage(
-        `¡Archivo complementario "${parsed.fileName}" cargado exitosamente! Contiene ${parsed.totalRows} filas y ${parsed.extraColumnNames.length} columnas adicionales. Se vincularon ${matches} de ${activeServices.length} servicios del reporte (${matchPct}% de coincidencia).`
+        `¡${fileCountText} procesado(s) exitosamente! Se reunieron ${parsed.extraColumnNames.length} columnas adicionales y ${parsed.totalRows} filas. Se vincularon ${matches} de ${activeServices.length} servicios del reporte activo (${matchPct}% de cobertura).`
       );
     } catch (err: any) {
-      console.error('Error parsing auxiliary Excel:', err);
-      setAuxError(err.message || 'Error al procesar el archivo complementario. Verifique que contenga la columna SERVICIO.');
+      console.error('Error parsing auxiliary Excels:', err);
+      setAuxError(err.message || 'Error al procesar los archivos complementarios. Verifique que contengan la columna SERVICIO.');
     } finally {
       setIsParsingAux(false);
+      setAuxProgressText(null);
       e.target.value = '';
     }
   };
@@ -384,6 +432,34 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     saveAuxiliaryDataToStorage(null);
     setAuxSuccessMessage(null);
     setAuxError(null);
+    setAuxProgressText(null);
+  };
+
+  const handleRemoveAuxiliaryFile = (fileIndex: number) => {
+    if (!auxiliaryData) return;
+    const currentFiles = auxiliaryData.filesInfo || [];
+    if (currentFiles.length <= 1) {
+      handleClearAuxiliaryData();
+      return;
+    }
+    const removedFile = currentFiles[fileIndex];
+    const newFilesInfo = currentFiles.filter((_, idx) => idx !== fileIndex);
+
+    const fileNames = newFilesInfo.map(f => f.fileName);
+    const summaryFileName = fileNames.length === 1
+      ? fileNames[0]
+      : `${fileNames.length} archivos (${fileNames.slice(0, 3).join(', ')}${fileNames.length > 3 ? '...' : ''})`;
+
+    const updatedData: AuxiliaryExcelData = {
+      ...auxiliaryData,
+      fileName: summaryFileName,
+      fileNames,
+      filesInfo: newFilesInfo,
+      totalRows: newFilesInfo.reduce((acc, f) => acc + f.totalRows, 0)
+    };
+    setAuxiliaryData(updatedData);
+    saveAuxiliaryDataToStorage(updatedData);
+    setAuxSuccessMessage(`Se removió "${removedFile.fileName}" de la lista de archivos activos.`);
   };
 
   // Re-run network type classification if rules change
@@ -393,12 +469,35 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     if (excelData) {
       const updatedRows = excelData.consolidatedRows.map(row => {
         const rawP = row.cableP || (row.rawRowData && (row.rawRowData['Cable P'] || row.rawRowData['CABLE P'])) || '';
-        const rawS = row.cableS || (row.rawRowData && (row.rawRowData['Cable S'] || row.rawRowData['CABLE S'])) || '';
-        const classification = classifyNetworkType(rawP, rawS, row.central, newRules);
+        const currentS = row.cableS || (row.rawRowData && (row.rawRowData['Cable S'] || row.rawRowData['CABLE S'])) || '';
+        const classification = classifyNetworkType(rawP, currentS, row.central, newRules);
+
+        // Reemplazo solicitado: sustitución de Otra Red / General por Red Rígida
+        let finalNetworkLabel = classification.networkTypeLabel;
+        if (
+          !finalNetworkLabel ||
+          finalNetworkLabel === 'Otra Red / General' ||
+          finalNetworkLabel === 'Otra Red' ||
+          finalNetworkLabel === 'General' ||
+          finalNetworkLabel === '-'
+        ) {
+          finalNetworkLabel = 'Red Rígida';
+        }
+
+        // Si Cable P cumple que sea igual a uno de los Patrones de la Red Flexible,
+        // asignar a Cable S el nombre de la Red Flexible si Cable S no contiene datos.
+        let finalCableS = currentS;
+        const hasCableS = currentS && currentS.trim() !== '' && currentS.trim() !== '-' && currentS.trim().toUpperCase() !== 'S/D' && currentS.trim().toUpperCase() !== 'SIN CABLE';
+        if (classification.networkType === 'flexible' && !hasCableS) {
+          finalCableS = classification.flexibleAssignedName || 'Red Flexible';
+        }
+
         return {
           ...row,
-          networkType: classification.networkType,
-          networkTypeLabel: classification.networkTypeLabel,
+          cableS: finalCableS,
+          cable: [rawP, finalCableS].filter(Boolean).join(' / '),
+          networkType: classification.networkType === 'other' ? 'rigida' : classification.networkType,
+          networkTypeLabel: finalNetworkLabel,
           flexibleRuleId: classification.flexibleRuleId,
           flexibleAssignedName: classification.flexibleAssignedName
         };
@@ -1425,31 +1524,47 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     // Format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción del filtro) + fecha y hora actual
     const fileName = `IP ${cleanCentral} (${cleanFilter}) ${dateTimeStr}.xlsx`;
 
-    const baseHeaders = ['N°', 'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeaders = ['SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
-    const exportData = displayModalServices.map((item, idx) => {
+    const exportData = displayModalServices.map(item => {
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
       const prob = extractProblemaFromItem(item);
       const matchedZone = findMatchingZoneForItem(item, zones);
       const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
 
+      // Sustitución de Otra Red / General por Red Rígida
+      let clasifRed = item.networkTypeLabel || 'Red Rígida';
+      if (
+        clasifRed === 'Otra Red / General' ||
+        clasifRed === 'Otra Red' ||
+        clasifRed === 'General' ||
+        clasifRed === '-' ||
+        clasifRed === 'Sin clasificar'
+      ) {
+        clasifRed = 'Red Rígida';
+      }
+
+      // Si Cable P cumple con Red Flexible y Cable S no tiene datos, asignar el nombre de la Red Flexible
+      const isFlex = item.networkType === 'flexible' || (item.networkTypeLabel && item.networkTypeLabel.toLowerCase().includes('flexible'));
+      const hasCableS = item.cableS && item.cableS.trim() !== '' && item.cableS.trim() !== '-' && item.cableS.trim().toUpperCase() !== 'S/D' && item.cableS.trim().toUpperCase() !== 'SIN CABLE';
+      const cableSVal = hasCableS ? item.cableS : (isFlex ? (item.flexibleAssignedName || 'Red Flexible') : '-');
+
       const row: Record<string, any> = {
-        'N°': idx + 1,
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
         'Zona': zonaName,
         'Central': item.central,
         'Cable P': item.cableP || '-',
         'Par P': item.parP || '-',
-        'Cable S': item.cableS || '-',
+        'Cable S': cableSVal,
         'Par S': item.parS || '-',
         'Terminal': info.terminal || '-',
         'Dirección': info.direccion || '-',
         'Grupo': item.grupo || 'GENERAL',
-        'Clasificación Red': item.networkTypeLabel || '-',
+        'Clasificación Red': clasifRed,
         'Demora en Días': getDemoraDays(item),
         'Fecha Reporte': item.fechaReporte || '-',
         'Afectaciones': info.afectacion || '-',
@@ -1470,31 +1585,30 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Force string formatting for Servicio and Asociado so leading zeros are preserved
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:R1');
+    // Force string formatting for Servicio and Asociado so leading zeros are preserved (Servicio is col 0, Asociado is col 1)
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Q1');
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-      const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
+      const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 0 })];
       if (cellServicio) {
         cellServicio.t = 's';
         cellServicio.z = '@';
       }
-      const cellAsoc = worksheet[XLSX.utils.encode_cell({ r: R, c: 2 })];
+      const cellAsoc = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
       if (cellAsoc) {
         cellAsoc.t = 's';
         cellAsoc.z = '@';
       }
     }
 
-    // Set responsive column widths
+    // Set responsive column widths (sin columna N°)
     const colWidths = [
-      { wch: 6 },  // N°
       { wch: 15 }, // Servicio
       { wch: 15 }, // Asociado
       { wch: 18 }, // Zona
       { wch: 16 }, // Central
       { wch: 14 }, // Cable P
       { wch: 10 }, // Par P
-      { wch: 14 }, // Cable S
+      { wch: 18 }, // Cable S
       { wch: 10 }, // Par S
       { wch: 18 }, // Terminal
       { wch: 30 }, // Dirección
@@ -1686,31 +1800,47 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const dateTimeStr = getTab1ExportDateTime();
     const fileName = `Servicios_Con_Zona_${dateTimeStr}.xlsx`;
 
-    const baseHeaders = ['N°', 'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeaders = ['SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
-    const exportData = excelData.consolidatedRows.map((item, idx) => {
+    const exportData = excelData.consolidatedRows.map(item => {
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
       const prob = extractProblemaFromItem(item);
       const matchedZone = findMatchingZoneForItem(item, zones);
       const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
 
+      // Sustitución de Otra Red / General por Red Rígida
+      let clasifRed = item.networkTypeLabel || 'Red Rígida';
+      if (
+        clasifRed === 'Otra Red / General' ||
+        clasifRed === 'Otra Red' ||
+        clasifRed === 'General' ||
+        clasifRed === '-' ||
+        clasifRed === 'Sin clasificar'
+      ) {
+        clasifRed = 'Red Rígida';
+      }
+
+      // Si Cable P cumple con Red Flexible y Cable S no tiene datos, asignar el nombre de la Red Flexible
+      const isFlex = item.networkType === 'flexible' || (item.networkTypeLabel && item.networkTypeLabel.toLowerCase().includes('flexible'));
+      const hasCableS = item.cableS && item.cableS.trim() !== '' && item.cableS.trim() !== '-' && item.cableS.trim().toUpperCase() !== 'S/D' && item.cableS.trim().toUpperCase() !== 'SIN CABLE';
+      const cableSVal = hasCableS ? item.cableS : (isFlex ? (item.flexibleAssignedName || 'Red Flexible') : '-');
+
       const row: Record<string, any> = {
-        'N°': idx + 1,
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
         'Zona': zonaName,
         'Central': item.central,
         'Cable P': item.cableP || '-',
         'Par P': item.parP || '-',
-        'Cable S': item.cableS || '-',
+        'Cable S': cableSVal,
         'Par S': item.parS || '-',
         'Terminal': info.terminal || '-',
         'Dirección': info.direccion || '-',
         'Grupo': item.grupo || 'GENERAL',
-        'Clasificación Red': item.networkTypeLabel || '-',
+        'Clasificación Red': clasifRed,
         'Demora en Días': getDemoraDays(item),
         'Fecha Reporte': item.fechaReporte || '-',
         'Afectaciones': info.afectacion || '-',
@@ -1731,15 +1861,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Force string formatting for Servicio and Asociado so leading zeros are preserved
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:R1');
+    // Force string formatting for Servicio and Asociado so leading zeros are preserved (Servicio is col 0, Asociado is col 1)
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Q1');
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-      const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
+      const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 0 })];
       if (cellServicio) {
         cellServicio.t = 's';
         cellServicio.z = '@';
       }
-      const cellAsoc = worksheet[XLSX.utils.encode_cell({ r: R, c: 2 })];
+      const cellAsoc = worksheet[XLSX.utils.encode_cell({ r: R, c: 1 })];
       if (cellAsoc) {
         cellAsoc.t = 's';
         cellAsoc.z = '@';
@@ -1747,14 +1877,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     const colWidths = [
-      { wch: 6 },  // N°
       { wch: 15 }, // Servicio
       { wch: 15 }, // Asociado
       { wch: 18 }, // Zona
       { wch: 16 }, // Central
       { wch: 14 }, // Cable P
       { wch: 10 }, // Par P
-      { wch: 14 }, // Cable S
+      { wch: 18 }, // Cable S
       { wch: 10 }, // Par S
       { wch: 18 }, // Terminal
       { wch: 30 }, // Dirección
@@ -2354,65 +2483,150 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
           </div>
         )}
 
-        {/* SECCIÓN: ARCHIVO COMPLEMENTARIO / AUXILIAR (OPCIONAL - CRUCE POR SERVICIO) */}
+        {/* SECCIÓN: ARCHIVO COMPLEMENTARIO / AUXILIAR (OPCIONAL - CRUCE MULTI-ARCHIVO POR SERVICIO) */}
         <div className="pt-3 border-t border-slate-800">
           <div className="bg-slate-950/80 border border-slate-800/90 rounded-2xl p-4 transition-all">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div className="flex items-start sm:items-center space-x-3">
                 <div className="p-2.5 bg-violet-500/20 text-violet-400 border border-violet-500/30 rounded-xl shrink-0">
-                  <FilePlus2 className="w-5 h-5" />
+                  <Files className="w-5 h-5" />
                 </div>
                 <div className="space-y-0.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-extrabold text-xs text-white">Excel Complementario (Opcional - Cruce por SERVICIO)</span>
+                    <span className="font-extrabold text-xs text-white">Excel Complementario (Opcional - Cruce Multi-Archivo por SERVICIO)</span>
                     {auxiliaryData ? (
-                      <span className="bg-violet-500/20 text-violet-300 border border-violet-500/40 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center space-x-1 shadow-sm">
+                      <span className="bg-violet-500/20 text-violet-300 border border-violet-500/40 px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm">
                         <CheckCircle2 className="w-3 h-3 text-violet-400 shrink-0" />
-                        <span>Activo: <strong>{auxiliaryData.fileName}</strong></span>
+                        <span>
+                          {auxiliaryData.filesInfo && auxiliaryData.filesInfo.length > 1
+                            ? `${auxiliaryData.filesInfo.length} archivos activos`
+                            : `Activo: ${auxiliaryData.fileName}`}
+                        </span>
                       </span>
                     ) : (
                       <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded-md font-medium">
-                        Sin archivo auxiliar cargado
+                        Sin archivos auxiliares cargados
                       </span>
                     )}
                   </div>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Sube un Excel adicional con la columna <strong>SERVICIO</strong> y columnas extra (Cliente, Técnico, Folio, etc.). El sistema vinculará cada servicio y agregará esas columnas a todos los Excel que descargues.
+                    Sube uno o varios archivos Excel adicionales con la columna <strong>SERVICIO</strong> y columnas extra (Cliente, Técnico, Folio, etc.). El sistema analizará cada archivo y acumulará todas sus columnas en las descargas y reportes.
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2 shrink-0">
-                <label className="cursor-pointer bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-lg shadow-violet-600/20 border border-violet-400/30 flex items-center space-x-1.5 cursor-pointer">
-                  {isParsingAux ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  <span>{isParsingAux ? 'Procesando...' : auxiliaryData ? 'Cambiar Excel Complementario' : 'Subir Excel Complementario'}</span>
-                  <input
-                    type="file"
-                    accept=".xlsx, .xls, .csv"
-                    onChange={handleAuxiliaryFileUpload}
-                    disabled={isParsingAux}
-                    className="hidden"
-                  />
-                </label>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {!auxiliaryData ? (
+                  <label className="cursor-pointer bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-lg shadow-violet-600/20 border border-violet-400/30 flex items-center space-x-1.5 cursor-pointer">
+                    {isParsingAux ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                    <span>{isParsingAux ? (auxProgressText || 'Procesando Excels...') : 'Subir Excel(s) Complementarios'}</span>
+                    <input
+                      type="file"
+                      accept=".xlsx, .xls, .csv"
+                      multiple
+                      onChange={(e) => handleAuxiliaryFileUpload(e, 'replace')}
+                      disabled={isParsingAux}
+                      className="hidden"
+                    />
+                  </label>
+                ) : (
+                  <>
+                    {/* Botón para anexar más archivos adicionales */}
+                    <label className="cursor-pointer bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs px-3 py-2 rounded-xl transition-all shadow-lg shadow-violet-600/20 border border-violet-400/30 flex items-center space-x-1.5 cursor-pointer">
+                      {isParsingAux ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      <span>{isParsingAux ? (auxProgressText || 'Procesando...') : '+ Agregar más Excel(s)'}</span>
+                      <input
+                        type="file"
+                        accept=".xlsx, .xls, .csv"
+                        multiple
+                        onChange={(e) => handleAuxiliaryFileUpload(e, 'append')}
+                        disabled={isParsingAux}
+                        className="hidden"
+                      />
+                    </label>
 
-                {auxiliaryData && (
-                  <button
-                    onClick={handleClearAuxiliaryData}
-                    className="p-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                    title="Quitar archivo complementario"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                    {/* Botón para reemplazar todo desde cero */}
+                    <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-2.5 py-2 rounded-xl border border-slate-700 transition-all flex items-center space-x-1 cursor-pointer" title="Reemplazar todos los archivos complementarios">
+                      <RotateCcw className="w-3 h-3 text-slate-400" />
+                      <span>Reemplazar</span>
+                      <input
+                        type="file"
+                        accept=".xlsx, .xls, .csv"
+                        multiple
+                        onChange={(e) => handleAuxiliaryFileUpload(e, 'replace')}
+                        disabled={isParsingAux}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {/* Botón para limpiar todos los archivos */}
+                    <button
+                      onClick={handleClearAuxiliaryData}
+                      className="p-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                      title="Quitar todos los archivos complementarios"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
                 )}
               </div>
             </div>
 
-            {/* Métricas y columnas detectadas del archivo complementario */}
+            {/* Mensaje de progreso durante procesamiento */}
+            {isParsingAux && auxProgressText && (
+              <div className="mt-2.5 p-2.5 bg-violet-500/10 border border-violet-500/30 text-violet-300 rounded-xl text-xs font-semibold flex items-center space-x-2 animate-pulse">
+                <RefreshCw className="w-4 h-4 text-violet-400 animate-spin shrink-0" />
+                <span>{auxProgressText}</span>
+              </div>
+            )}
+
+            {/* Métricas y columnas detectadas de los archivos complementarios */}
             {auxiliaryData && (
-              <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-2.5">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-3">
+                {/* Lista de archivos cargados */}
+                {auxiliaryData.filesInfo && auxiliaryData.filesInfo.length > 0 && (
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Archivos complementarios activos ({auxiliaryData.filesInfo.length}):
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {auxiliaryData.filesInfo.map((file, fIdx) => (
+                        <div
+                          key={`${file.fileName}_${fIdx}`}
+                          className="flex items-center space-x-2 bg-slate-900/90 border border-slate-800 px-2.5 py-1.5 rounded-xl text-xs"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                          <div className="flex flex-col">
+                            <span className="font-bold text-white text-[11px] truncate max-w-[200px]" title={file.fileName}>
+                              {file.fileName}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {file.totalRows} filas • {file.columnsCount} cols extra
+                            </span>
+                          </div>
+                          {auxiliaryData.filesInfo && auxiliaryData.filesInfo.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAuxiliaryFile(fIdx)}
+                              className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors cursor-pointer ml-1"
+                              title={`Remover "${file.fileName}"`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
                   <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400 text-[10px] font-bold">FILAS EN AUXILIAR:</span>
+                    <span className="text-slate-400 text-[10px] font-bold">ARCHIVOS:</span>
+                    <strong className="text-violet-300 font-mono text-xs">{auxiliaryData.filesInfo?.length || 1}</strong>
+                  </div>
+                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400 text-[10px] font-bold">TOTAL FILAS:</span>
                     <strong className="text-violet-300 font-mono text-xs">{auxiliaryData.totalRows}</strong>
                   </div>
                   <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
@@ -2422,8 +2636,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       {excelData?.uniqueServicesCount ? ` (${(((auxiliaryMatchesCount) / excelData.uniqueServicesCount) * 100).toFixed(1)}%)` : ''}
                     </strong>
                   </div>
-                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between col-span-2 sm:col-span-1">
-                    <span className="text-slate-400 text-[10px] font-bold">COLUMNAS DETECTADAS:</span>
+                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400 text-[10px] font-bold">COLUMNAS ANEXADAS:</span>
                     <strong className="text-amber-300 font-mono text-xs">{auxiliaryData.extraColumnNames.length} columnas</strong>
                   </div>
                 </div>
@@ -2431,7 +2645,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 {/* Badges de columnas que se añadirán a las descargas */}
                 <div className="flex flex-wrap items-center gap-1.5 pt-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-                    Columnas anexadas a los Excel:
+                    Columnas acumuladas anexadas a todos los Excel:
                   </span>
                   {auxiliaryData.extraColumnNames.map(col => (
                     <span
@@ -4245,14 +4459,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 />
               </div>
 
-              {/* Copy Table Button with all columns including auxiliary ones */}
+              {/* Copy Table Button with all columns including auxiliary ones (sin columna N°) */}
               <CopyTableButton
                 headers={[
-                  'N°', 'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'TIPO RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA',
+                  'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA',
                   ...(auxiliaryData?.extraColumnNames || [])
                 ]}
                 rows={[
-                  ...displayModalServices.map((s, idx) => {
+                  ...displayModalServices.map(s => {
                     const info = getItemTaskInfo(s);
                     const matchedZone = findMatchingZoneForItem(s, zones);
                     const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
@@ -4261,20 +4475,35 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       const v = auxRec?.[col];
                       return v !== undefined && v !== '' ? String(v) : '-';
                     });
+
+                    let clasifRed = s.networkTypeLabel || 'Red Rígida';
+                    if (
+                      clasifRed === 'Otra Red / General' ||
+                      clasifRed === 'Otra Red' ||
+                      clasifRed === 'General' ||
+                      clasifRed === '-' ||
+                      clasifRed === 'Sin clasificar'
+                    ) {
+                      clasifRed = 'Red Rígida';
+                    }
+
+                    const isFlex = s.networkType === 'flexible' || (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes('flexible'));
+                    const hasCableS = s.cableS && s.cableS.trim() !== '' && s.cableS.trim() !== '-' && s.cableS.trim().toUpperCase() !== 'S/D' && s.cableS.trim().toUpperCase() !== 'SIN CABLE';
+                    const cableSVal = hasCableS ? s.cableS : (isFlex ? (s.flexibleAssignedName || 'Red Flexible') : '-');
+
                     return [
-                      (idx + 1).toString(),
                       s.servicio,
                       extractAsociadoFromItem(s) || '-',
                       zonaName,
                       s.central,
                       s.cableP || '-',
                       s.parP || '-',
-                      s.cableS || '-',
+                      cableSVal,
                       s.parS || '-',
                       info.terminal || '-',
                       info.direccion || '-',
                       s.grupo || 'GENERAL',
-                      s.networkTypeLabel || '-',
+                      clasifRed,
                       `${getDemoraDays(s)} días`,
                       s.fechaReporte || '-',
                       info.afectacion || '-',
@@ -4283,7 +4512,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       ...auxVals
                     ];
                   }),
-                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
+                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
                 ]}
                 label="Copiar Servicios"
               />
@@ -4368,15 +4597,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           <td className="py-3 px-4 text-indigo-300 font-bold">{item.grupo || 'GENERAL'}</td>
                           <td className="py-3 px-4">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                              item.networkType === 'rigida'
-                                ? 'bg-amber-950/60 border-amber-800/60 text-amber-300'
-                                : item.networkType === 'flexible'
+                              item.networkType === 'flexible'
                                 ? 'bg-blue-950/60 border-blue-800/60 text-blue-300'
                                 : item.networkType === 'outdoor'
                                 ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300'
-                                : 'bg-slate-800 border-slate-700 text-slate-400'
+                                : 'bg-amber-950/60 border-amber-800/60 text-amber-300'
                             }`}>
-                              {item.networkTypeLabel || 'Sin clasificar'}
+                              {item.networkTypeLabel && item.networkTypeLabel !== 'Otra Red / General' && item.networkTypeLabel !== 'Sin clasificar'
+                                ? item.networkTypeLabel
+                                : 'Red Rígida'}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
