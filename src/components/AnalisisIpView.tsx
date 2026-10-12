@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
+import { buildTablaDinamicaWorksheet } from '../utils/excelPivotHelper';
 
 import { ExecutiveReportModal } from './ExecutiveReportModal';
 import { FloatingReportFAB } from './FloatingReportFAB';
@@ -678,6 +679,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setTpoServFilterActive(false);
     setIsOptimized(false);
   };
+
+  // Interruptor para alternar la visualización entre Matriz de Reportes (Centrales) y Matriz de Zonificación (Zonas)
+  const [activeMatrixTab, setActiveMatrixTab] = useState<'centrales' | 'zonas'>('centrales');
 
   // Synchronized state for independent Afectaciones & Cable Tasks
   const [cableTasks, setCableTasks] = useState<CablePendingTask[]>(loadCablePendingTasks);
@@ -1715,6 +1719,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Centrales vs Grupos');
+    const wsDinamica = buildTablaDinamicaWorksheet(matrixCentralesData, matrixZonasData);
+    XLSX.utils.book_append_sheet(workbook, wsDinamica, 'TablaDinamica');
     await saveXlsxWorkbook(workbook, fileName);
   };
 
@@ -1787,6 +1793,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Zonas vs Grupos');
+    const wsDinamica = buildTablaDinamicaWorksheet(matrixCentralesData, matrixZonasData);
+    XLSX.utils.book_append_sheet(workbook, wsDinamica, 'TablaDinamica');
     await saveXlsxWorkbook(workbook, fileName);
   };
 
@@ -1917,7 +1925,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Servicios Zonificados');
+    worksheet['!autofilter'] = { ref: worksheet['!ref'] || 'A1:Q1' };
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Datos');
+
+    // Hoja 2: TablaDinamica con Matriz de Reportes y Matriz de Zonificación sincronizadas
+    const wsDinamica = buildTablaDinamicaWorksheet(matrixCentralesData, matrixZonasData);
+    XLSX.utils.book_append_sheet(workbook, wsDinamica, 'TablaDinamica');
+
     await saveXlsxWorkbook(workbook, fileName);
   };
 
@@ -2888,59 +2902,6 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
             </div>
 
-            {/* Recuadro de Optimización (Teléfono vs Asociado) */}
-            <div className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-              isOptimized
-                ? 'bg-amber-950/30 border-amber-500/60 shadow-lg shadow-amber-500/10'
-                : 'bg-slate-950 border-slate-800 hover:border-slate-700/80'
-            }`}>
-              <div className="flex items-start md:items-center space-x-3">
-                <div className={`p-2.5 rounded-xl border shrink-0 ${
-                  isOptimized
-                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                    : 'bg-slate-800/80 text-slate-400 border-slate-700'
-                }`}>
-                  <Zap className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-extrabold text-sm text-white flex items-center space-x-1.5">
-                      <span>Recuadro para Optimizar (Teléfono / Asociado)</span>
-                    </span>
-                    {isOptimized ? (
-                      <span className="bg-amber-500/25 text-amber-300 border border-amber-500/50 text-[10px] px-2.5 py-0.5 rounded-md font-black tracking-wide">
-                        {optimizationStats.difference > 0
-                          ? `✨ OPTIMIZADO (-${optimizationStats.difference} DUPLICADOS ASOCIADOS)`
-                          : '✨ OPTIMIZADO (SIN CRUCES DETECTADOS)'}
-                      </span>
-                    ) : (
-                      <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded-md font-semibold">
-                        Inactivo
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Compara las columnas <strong>Teléfono</strong> y <strong>Asociado</strong> para detectar servicios coincidentes y simplificarlos a un único registro consolidado.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/60">
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isOptimized}
-                    onChange={(e) => setIsOptimized(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-12 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
-                  <span className="ml-2.5 text-xs font-black uppercase text-slate-200">
-                    {isOptimized ? 'Optimizado' : 'Normal'}
-                  </span>
-                </label>
-              </div>
-            </div>
-
             {/* Notificación flotante / banner de confirmación para TPO SERV */}
             {tpoServNotification && tpoServNotification.visible && (
               <div className="p-3.5 bg-gradient-to-r from-emerald-950 via-teal-950 to-slate-900 border border-emerald-500/60 rounded-2xl flex items-center justify-between text-xs text-emerald-200 shadow-xl shadow-emerald-950/50 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -3354,9 +3315,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </div>
               </div>
 
-              {/* ACTION BAR: 🔎 Buscar + ↺ Restablecer con Micro-feedback y estado Pendiente */}
+              {/* ACTION BAR: 🔎 Buscar + Recuadro para Optimizar + ↺ Restablecer + Interruptor de Matrices */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2.5">
                   <button
                     type="button"
                     onClick={handleApplyMatrixSearch}
@@ -3381,6 +3342,30 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     )}
                   </button>
 
+                  {/* Botón Recuadro para Optimizar Teléfono / Asociado en la misma fila */}
+                  <button
+                    type="button"
+                    onClick={() => setIsOptimized(!isOptimized)}
+                    className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-sm active:scale-95 ${
+                      isOptimized
+                        ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/50 shadow-amber-500/10'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
+                    }`}
+                    title="Compara las columnas Teléfono y Asociado para consolidar servicios coincidentes en un único registro"
+                  >
+                    <Zap className={`w-3.5 h-3.5 ${isOptimized ? 'text-amber-400 fill-amber-400' : 'text-slate-400'}`} />
+                    <span>Recuadro para Optimizar Teléfono / Asociado</span>
+                    {isOptimized ? (
+                      <span className="ml-1 px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black text-[9px] rounded-full uppercase tracking-wide">
+                        {optimizationStats.difference > 0 ? `-${optimizationStats.difference}` : 'ACTIVO'}
+                      </span>
+                    ) : (
+                      <span className="ml-1 text-[10px] text-slate-400 font-normal">
+                        (Normal)
+                      </span>
+                    )}
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleResetMatrixSearch}
@@ -3390,6 +3375,36 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
                     <span>Restablecer Filtros</span>
                   </button>
+
+                  {/* Interruptor de Matrices al lado de Restablecer Filtros */}
+                  <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 shadow-inner">
+                    <button
+                      type="button"
+                      onClick={() => setActiveMatrixTab('centrales')}
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        activeMatrixTab === 'centrales'
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                      }`}
+                      title="Mostrar Matriz de Reportes: Centrales Telefónicas vs Grupos"
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>Matriz de Reportes</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveMatrixTab('zonas')}
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        activeMatrixTab === 'zonas'
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                      }`}
+                      title="Mostrar Matriz de Zonificación: Zonas Configuradas vs Grupos"
+                    >
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Matriz de Zonificación</span>
+                    </button>
+                  </div>
                 </div>
 
                 {hasPendingMatrixChanges && (
@@ -3401,7 +3416,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             </div>
           </div>
 
-          {/* Table 1: Centrales Telefónicas vs GRUPO */}
+          {/* TABLAS MATRICIALES UNIFICADAS: Controladas por el interruptor */}
+          {activeMatrixTab === 'centrales' && (
           <div id="section-centrales" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
               <div>
@@ -3552,8 +3568,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </table>
             </div>
           </div>
+          )}
 
           {/* Table 2: Zonificación vs GRUPO */}
+          {activeMatrixTab === 'zonas' && (
           <div id="section-zonas" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
               <div>
@@ -3816,6 +3834,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </table>
             </div>
           </div>
+          )}
 
         </div>
       )}
