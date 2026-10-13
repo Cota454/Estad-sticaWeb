@@ -39,14 +39,15 @@ import {
   FilePlus2,
   Files,
   FolderPlus,
-  Plus
+  Plus,
+  Star
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { saveXlsxWorkbook } from '../utils/fileDownloadHelper';
 import { buildTablaDinamicaWorksheet } from '../utils/excelPivotHelper';
 
 import { ExecutiveReportModal } from './ExecutiveReportModal';
-import { FloatingReportFAB } from './FloatingReportFAB';
+import { FloatingPriorityFAB } from './FloatingPriorityFAB';
 import { CablePendingTasksView } from './CablePendingTasksView';
 import { CableAfectacionesModal } from './CableAfectacionesModal';
 
@@ -108,7 +109,8 @@ import {
   parseMultipleAuxiliaryExcels,
   mergeAuxiliaryExcelDatasets,
   getAuxiliaryDataForService,
-  countAuxiliaryMatches
+  countAuxiliaryMatches,
+  createPriorityServiceMatcher
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -373,11 +375,11 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setExcelData(null);
   };
 
-  // Conteo de coincidencias entre el Excel Auxiliar y los servicios del Excel principal activo
+  // Conteo de coincidencias entre el Excel Auxiliar y los servicios del Excel principal activo (con fallback a Asociado)
   const auxiliaryMatchesCount = useMemo(() => {
     if (!auxiliaryData || !excelData || !excelData.consolidatedRows) return 0;
-    const services = excelData.consolidatedRows.map(r => r.servicio);
-    return countAuxiliaryMatches(services, auxiliaryData);
+    const items = excelData.consolidatedRows.map(r => ({ servicio: r.servicio, asociado: r.asociado }));
+    return countAuxiliaryMatches(items, auxiliaryData);
   }, [auxiliaryData, excelData]);
 
   // Handler para subir archivo(s) complementario(s) (Cruce por SERVICIO con soporte multi-archivo)
@@ -407,16 +409,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       setAuxiliaryData(parsed);
       saveAuxiliaryDataToStorage(parsed);
 
-      const activeServices = (excelData?.consolidatedRows || []).map(r => r.servicio);
-      const matches = countAuxiliaryMatches(activeServices, parsed);
-      const matchPct = activeServices.length > 0 ? ((matches / activeServices.length) * 100).toFixed(1) : '0';
+      const activeItems = (excelData?.consolidatedRows || []).map(r => ({ servicio: r.servicio, asociado: r.asociado }));
+      const matches = countAuxiliaryMatches(activeItems, parsed);
+      const matchPct = activeItems.length > 0 ? ((matches / activeItems.length) * 100).toFixed(1) : '0';
 
       const fileCountText = parsed.filesInfo && parsed.filesInfo.length > 1
         ? `${parsed.filesInfo.length} archivos complementarios combinados`
         : `Archivo complementario "${parsed.fileName}"`;
 
       setAuxSuccessMessage(
-        `¡${fileCountText} procesado(s) exitosamente! Se reunieron ${parsed.extraColumnNames.length} columnas adicionales y ${parsed.totalRows} filas. Se vincularon ${matches} de ${activeServices.length} servicios del reporte activo (${matchPct}% de cobertura).`
+        `¡${fileCountText} procesado(s) exitosamente! Se reunieron ${parsed.extraColumnNames.length} columnas adicionales y ${parsed.totalRows} filas. Se vincularon ${matches} de ${activeItems.length} servicios del reporte activo (${matchPct}% de cobertura).`
       );
     } catch (err: any) {
       console.error('Error parsing auxiliary Excels:', err);
@@ -535,6 +537,20 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [showTpoServModal, setShowTpoServModal] = useState<boolean>(false);
   const [customTpoServInput, setCustomTpoServInput] = useState<string>('');
   const [tpoServNotification, setTpoServNotification] = useState<{ visible: boolean; message: string; count: number } | null>(null);
+
+  // Filtro independiente de Servicios PRIORIDAD
+  const [priorityFilterActive, setPriorityFilterActive] = useState<boolean>(false);
+
+  // Matcher optimizado para comprobar si un registro es de PRIORIDAD
+  const isPriorityItem = useMemo(() => {
+    return createPriorityServiceMatcher(cableRules?.priorityServices);
+  }, [cableRules?.priorityServices]);
+
+  // Conteo de registros que coinciden con los Servicios PRIORIDAD en el Excel activo
+  const priorityServicesReportedCount = useMemo(() => {
+    if (!excelData || !excelData.consolidatedRows) return 0;
+    return excelData.consolidatedRows.filter(r => isPriorityItem(r.servicio, r.asociado)).length;
+  }, [excelData, isPriorityItem]);
 
   const [draftMatrixDemoraFilter, setDraftMatrixDemoraFilter] = useState<string>('all');
   const [draftMatrixManualDate, setDraftMatrixManualDate] = useState<string>('');
@@ -804,9 +820,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     return baseRows.filter(item => {
-      // 2. Telefono Column Type Filter (Todos / Teléfono: solo números / TxD Dato: al menos una letra)
+      // 2. Telefono Column Type Filter (Todos / Teléfono: solo números / TxD Dato: al menos una letra / Prioridad)
       if (matrixTelefonoFilter !== 'all') {
-        if (!matchTelefonoTypeFilter(item, matrixTelefonoFilter)) return false;
+        if (!matchTelefonoTypeFilter(item, matrixTelefonoFilter, isPriorityItem)) return false;
       }
 
       // 3. Demora Filter / Manual Date Filter
@@ -878,9 +894,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
+      // 8. Filtro por Servicios PRIORIDAD
+      if (priorityFilterActive) {
+        if (!isPriorityItem(item.servicio, item.asociado)) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, tpoServFilterActive, tpoServPatterns, cableAfectaciones, cableTasks]);
+  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, tpoServFilterActive, tpoServPatterns, cableAfectaciones, cableTasks, priorityFilterActive, isPriorityItem]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -1406,6 +1429,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     if (!telVal || telVal === 'all') return null;
     if (telVal === 'telefono') return 'Teléfono';
     if (telVal === 'txd_dato') return 'TxD Dato';
+    if (telVal === 'prioridad') return 'Servicios PRIORIDAD';
     return telVal;
   };
 
@@ -1451,6 +1475,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     if (tpoServFilterActive) {
       options.push(`TPO SERV (${tpoServPatterns.join(', ')})`);
+    }
+
+    if (priorityFilterActive) {
+      options.push('Servicios PRIORIDAD');
     }
 
     return options;
@@ -1556,6 +1584,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const hasCableS = item.cableS && item.cableS.trim() !== '' && item.cableS.trim() !== '-' && item.cableS.trim().toUpperCase() !== 'S/D' && item.cableS.trim().toUpperCase() !== 'SIN CABLE';
       const cableSVal = hasCableS ? item.cableS : (isFlex ? (item.flexibleAssignedName || 'Red Flexible') : '-');
 
+      const isPriority = isPriorityItem(item.servicio, item.asociado);
+      let afectacionVal = info.afectacion && info.afectacion !== '-' ? info.afectacion : '';
+      if (isPriority) {
+        afectacionVal = afectacionVal ? `PRIORIDAD - ${afectacionVal}` : 'PRIORIDAD';
+      } else if (!afectacionVal) {
+        afectacionVal = '-';
+      }
+
       const row: Record<string, any> = {
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
@@ -1571,13 +1607,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Clasificación Red': clasifRed,
         'Demora en Días': getDemoraDays(item),
         'Fecha Reporte': item.fechaReporte || '-',
-        'Afectaciones': info.afectacion || '-',
+        'Afectaciones': afectacionVal,
         'Tarea o Trabajo': info.taskName || '-',
         'PROBLEMA': prob || '-'
       };
 
       if (auxCols.length > 0) {
-        const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData);
+        const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData, item.asociado);
         auxCols.forEach(colName => {
           const exportKey = baseHeadersUpperSet.has(colName.toUpperCase()) ? `${colName} (Auxiliar)` : colName;
           row[exportKey] = auxRec?.[colName] !== undefined && auxRec?.[colName] !== '' ? auxRec[colName] : '-';
@@ -1644,6 +1680,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         };
       }
     }
+
+    // Styled rows: Color amarillo suave y letra roja para Servicios PRIORIDAD
+    displayModalServices.forEach((item, idx) => {
+      const rowIdx = idx + 1;
+      const isPriority = isPriorityItem(item.servicio, item.asociado);
+      if (isPriority) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cellAddress = XLSX.utils.encode_cell({ r: rowIdx, c: C });
+          if (!worksheet[cellAddress]) {
+            worksheet[cellAddress] = { t: 's', v: '' };
+          }
+          worksheet[cellAddress].s = {
+            fill: { fgColor: { rgb: 'FFF9C4' } }, // Amarillo suave (soft yellow)
+            font: { bold: true, color: { rgb: 'DC2626' }, sz: 10 }, // Letra roja (red text)
+            alignment: { vertical: 'center' }
+          };
+        }
+      }
+    });
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Servicios');
@@ -1836,6 +1891,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const hasCableS = item.cableS && item.cableS.trim() !== '' && item.cableS.trim() !== '-' && item.cableS.trim().toUpperCase() !== 'S/D' && item.cableS.trim().toUpperCase() !== 'SIN CABLE';
       const cableSVal = hasCableS ? item.cableS : (isFlex ? (item.flexibleAssignedName || 'Red Flexible') : '-');
 
+      const isPriority = isPriorityItem(item.servicio, item.asociado);
+      let afectacionVal = info.afectacion && info.afectacion !== '-' ? info.afectacion : '';
+      if (isPriority) {
+        afectacionVal = afectacionVal ? `PRIORIDAD - ${afectacionVal}` : 'PRIORIDAD';
+      } else if (!afectacionVal) {
+        afectacionVal = '-';
+      }
+
       const row: Record<string, any> = {
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
@@ -1851,13 +1914,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Clasificación Red': clasifRed,
         'Demora en Días': getDemoraDays(item),
         'Fecha Reporte': item.fechaReporte || '-',
-        'Afectaciones': info.afectacion || '-',
+        'Afectaciones': afectacionVal,
         'Tarea o Trabajo': info.taskName || '-',
         'PROBLEMA': prob || '-'
       };
 
       if (auxCols.length > 0) {
-        const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData);
+        const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData, item.asociado);
         auxCols.forEach(colName => {
           const exportKey = baseHeadersUpperSet.has(colName.toUpperCase()) ? `${colName} (Auxiliar)` : colName;
           row[exportKey] = auxRec?.[colName] !== undefined && auxRec?.[colName] !== '' ? auxRec[colName] : '-';
@@ -1923,6 +1986,25 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         };
       }
     }
+
+    // Styled rows: Color amarillo suave y letra roja para Servicios PRIORIDAD en hoja Datos
+    excelData.consolidatedRows.forEach((item, idx) => {
+      const rowIdx = idx + 1;
+      const isPriority = isPriorityItem(item.servicio, item.asociado);
+      if (isPriority) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cellAddress = XLSX.utils.encode_cell({ r: rowIdx, c: C });
+          if (!worksheet[cellAddress]) {
+            worksheet[cellAddress] = { t: 's', v: '' };
+          }
+          worksheet[cellAddress].s = {
+            fill: { fgColor: { rgb: 'FFF9C4' } }, // Amarillo suave (soft yellow)
+            font: { bold: true, color: { rgb: 'DC2626' }, sz: 10 }, // Letra roja (red text)
+            alignment: { vertical: 'center' }
+          };
+        }
+      }
+    });
 
     const workbook = XLSX.utils.book_new();
     worksheet['!autofilter'] = { ref: worksheet['!ref'] || 'A1:Q1' };
@@ -2713,7 +2795,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <div>
                   <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
                     <span>Filtros de Análisis para Matrices</span>
-                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || isOptimized) && (
+                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || tpoServFilterActive || priorityFilterActive || isOptimized) && (
                       <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
                         {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
                       </span>
@@ -2725,7 +2807,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || tpoServFilterActive || isOptimized) && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || tpoServFilterActive || priorityFilterActive || isOptimized) && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
@@ -2737,6 +2819,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     setMatrixTelefonoFilter('all');
                     setMatrixAfectacionFilter('all');
                     setTpoServFilterActive(false);
+                    setPriorityFilterActive(false);
                     setIsOptimized(false);
                   }}
                   className="flex items-center space-x-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer w-fit"
@@ -3004,8 +3087,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 </div>
               </div>
 
-              {/* Botón interactivo de filtro */}
-              <div className="flex items-center space-x-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/60">
+              {/* Botones interactivos de filtro: TPO SERV y Servicios PRIORIDAD */}
+              <div className="flex flex-wrap items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/60">
                 <button
                   type="button"
                   onClick={handleToggleTpoServFilter}
@@ -3024,6 +3107,31 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       : 'bg-slate-900 text-emerald-400 border border-emerald-500/30'
                   }`}>
                     {matchingTpoServCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPriorityFilterActive(!priorityFilterActive)}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-lg active:scale-95 ${
+                    priorityFilterActive
+                      ? 'bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-slate-950 font-black shadow-amber-500/30 ring-2 ring-amber-300'
+                      : priorityServicesReportedCount > 0
+                      ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-500/60 shadow-md shadow-amber-950/50'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                  }`}
+                  title="Presione para ver únicamente los Servicios PRIORIDAD reportados en este archivo"
+                >
+                  <Star className={`w-4 h-4 ${priorityFilterActive || priorityServicesReportedCount > 0 ? 'fill-amber-300 text-amber-300' : 'text-slate-400'}`} />
+                  <span>{priorityFilterActive ? 'Solo PRIORIDAD Activo' : 'Solo Servicios PRIORIDAD'}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                    priorityFilterActive
+                      ? 'bg-slate-950 text-amber-300'
+                      : priorityServicesReportedCount > 0
+                      ? 'bg-red-900 text-red-200 border border-red-500/50 animate-pulse'
+                      : 'bg-slate-900 text-slate-400 border border-slate-700'
+                  }`}>
+                    {priorityServicesReportedCount}
                   </span>
                 </button>
               </div>
@@ -3167,6 +3275,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     <option value="all">Todos los Servicios</option>
                     <option value="telefono">📞 Teléfono (Solo números)</option>
                     <option value="txd_dato">💻 TxD Dato (Con letras)</option>
+                    <option value="prioridad">⭐ Servicios PRIORIDAD ({priorityServicesReportedCount})</option>
                   </select>
                 </div>
 
@@ -4489,7 +4598,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     const info = getItemTaskInfo(s);
                     const matchedZone = findMatchingZoneForItem(s, zones);
                     const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
-                    const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData);
+                    const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData, s.asociado);
                     const auxVals = (auxiliaryData?.extraColumnNames || []).map(col => {
                       const v = auxRec?.[col];
                       return v !== undefined && v !== '' ? String(v) : '-';
@@ -4510,6 +4619,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     const hasCableS = s.cableS && s.cableS.trim() !== '' && s.cableS.trim() !== '-' && s.cableS.trim().toUpperCase() !== 'S/D' && s.cableS.trim().toUpperCase() !== 'SIN CABLE';
                     const cableSVal = hasCableS ? s.cableS : (isFlex ? (s.flexibleAssignedName || 'Red Flexible') : '-');
 
+                    const isPriority = isPriorityItem(s.servicio, s.asociado);
+                    let afectacionVal = info.afectacion && info.afectacion !== '-' ? info.afectacion : '';
+                    if (isPriority) {
+                      afectacionVal = afectacionVal ? `PRIORIDAD - ${afectacionVal}` : 'PRIORIDAD';
+                    } else if (!afectacionVal) {
+                      afectacionVal = '-';
+                    }
+
                     return [
                       s.servicio,
                       extractAsociadoFromItem(s) || '-',
@@ -4525,7 +4642,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       clasifRed,
                       `${getDemoraDays(s)} días`,
                       s.fechaReporte || '-',
-                      info.afectacion || '-',
+                      afectacionVal,
                       info.taskName || '-',
                       extractProblemaFromItem(s) || '-',
                       ...auxVals
@@ -4576,12 +4693,30 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       const info = getItemTaskInfo(item);
                       const matchedZone = findMatchingZoneForItem(item, zones);
                       const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+                      const isPriority = isPriorityItem(item.servicio, item.asociado);
 
                       return (
-                        <tr key={`${item.id}_${idx}`} className="hover:bg-slate-800/50 transition-colors">
+                        <tr
+                          key={`${item.id}_${idx}`}
+                          className={`transition-colors ${
+                            isPriority
+                              ? 'bg-amber-400/15 hover:bg-amber-400/25 border-l-4 border-l-red-500 text-red-200'
+                              : 'hover:bg-slate-800/50'
+                          }`}
+                        >
                           <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
-                          <td className="py-3 px-4 font-bold text-amber-300 font-mono">
-                            <div>{item.servicio}</div>
+                          <td className="py-3 px-4 font-bold font-mono">
+                            <div className="flex items-center space-x-1.5">
+                              <span className={isPriority ? 'text-red-400 font-black' : 'text-amber-300'}>
+                                {item.servicio}
+                              </span>
+                              {isPriority && (
+                                <span className="inline-flex items-center space-x-1 bg-amber-400/30 text-red-400 border border-red-500/50 text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm animate-pulse">
+                                  <Star className="w-3 h-3 fill-red-400 text-red-400" />
+                                  <span>PRIORIDAD</span>
+                                </span>
+                              )}
+                            </div>
                             {extractAsociadoFromItem(item) && (
                               <div className="text-[10px] text-cyan-300 font-mono font-normal flex items-center space-x-1 mt-0.5">
                                 <span className="text-slate-400">Asoc:</span>
@@ -4634,7 +4769,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             {item.fechaReporte || '-'}
                           </td>
                           <td className="py-3 px-4 text-xs">
-                            {info.hasAfectacion ? (
+                            {isPriority ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-400/25 border border-red-500/60 text-red-300 shadow-sm" title={info.afectacion}>
+                                <Star className="w-3 h-3 mr-1 fill-red-400 text-red-400 shrink-0" />
+                                <span>{info.hasAfectacion ? `PRIORIDAD - ${info.afectacion}` : 'PRIORIDAD'}</span>
+                              </span>
+                            ) : info.hasAfectacion ? (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-950/70 border border-rose-500/50 text-rose-300 shadow-sm" title={info.afectacion}>
                                 <AlertTriangle className="w-3 h-3 mr-1 text-rose-400 shrink-0" />
                                 <span className="truncate max-w-[130px]">{info.afectacion}</span>
@@ -4659,7 +4799,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             {extractProblemaFromItem(item) || '-'}
                           </td>
                           {(auxiliaryData?.extraColumnNames || []).map(col => {
-                            const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData);
+                            const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData, item.asociado);
                             const val = auxRec?.[col];
                             return (
                               <td key={col} className="py-3 px-4 text-xs font-mono text-violet-200 bg-violet-950/10 whitespace-nowrap">
@@ -4690,10 +4830,15 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         </div>
       )}
 
-      {/* Floating Action Button for Creating Executive Report */}
-      <FloatingReportFAB
+      {/* Botón Flotante Inteligente para Notificaciones de Servicios PRIORIDAD y Tipo SERV */}
+      <FloatingPriorityFAB
+        priorityCount={priorityServicesReportedCount}
+        tpoServCount={matchingTpoServCount}
+        priorityFilterActive={priorityFilterActive}
+        tpoServFilterActive={tpoServFilterActive}
+        onTogglePriorityFilter={() => setPriorityFilterActive(!priorityFilterActive)}
+        onToggleTpoServFilter={handleToggleTpoServFilter}
         onOpenReportModal={() => setIsReportModalOpen(true)}
-        totalRecordsCount={excelData?.consolidatedRows.length || 0}
       />
 
       {/* Modal for Creating Report (Análisis de las IP + fecha + hora + segundos) */}

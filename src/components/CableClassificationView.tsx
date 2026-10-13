@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { CableClassificationRules, IpCableRow } from '../types/ipCablesTypes';
 import { saveCableRules } from '../utils/ipCablesStorage';
-import { cleanCableName, isCableExactMatch } from '../utils/ipCablesExcelParser';
+import { cleanCableName, isCableExactMatch, createPriorityServiceMatcher } from '../utils/ipCablesExcelParser';
 import {
   Sliders,
   Plus,
@@ -14,7 +14,11 @@ import {
   Info,
   RefreshCw,
   CheckCircle2,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Star,
+  ClipboardPaste,
+  Search,
+  AlertTriangle
 } from 'lucide-react';
 
 interface CableClassificationViewProps {
@@ -39,10 +43,13 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
   // Notification toast state
   const [syncToast, setSyncToast] = useState<string | null>(null);
 
-  // Red Rígida Input
-  const [newRigidaInput, setNewRigidaInput] = useState<string>('');
-  const [editingRigidaIdx, setEditingRigidaIdx] = useState<number | null>(null);
-  const [editRigidaVal, setEditRigidaVal] = useState<string>('');
+  // Servicios PRIORIDAD State (Cuadro 1)
+  const [newPriorityInput, setNewPriorityInput] = useState<string>('');
+  const [editingPriorityIdx, setEditingPriorityIdx] = useState<number | null>(null);
+  const [editPriorityVal, setEditPriorityVal] = useState<string>('');
+  const [isBulkPasteOpen, setIsBulkPasteOpen] = useState<boolean>(false);
+  const [bulkPasteText, setBulkPasteText] = useState<string>('');
+  const [prioritySearchTerm, setPrioritySearchTerm] = useState<string>('');
 
   // Red Flexible Input
   const [flexPattern, setFlexPattern] = useState<string>('');
@@ -124,50 +131,112 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
   };
 
   // ------------------------------------
-  // 1. RED RÍGIDA HANDLERS
+  // 1. SERVICIOS PRIORIDAD (Cuadro 1)
   // ------------------------------------
-  const handleAddRigida = () => {
-    if (!newRigidaInput.trim()) return;
-    const parts = newRigidaInput.split(',');
-    const currentList = [...rules.rigidaCables];
+  const priorityList = useMemo(() => rules.priorityServices || [], [rules.priorityServices]);
+
+  // Conteo de coincidencias en el reporte cargado activo
+  const { priorityReportedCounts, totalReportedPriorityMatches } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let total = 0;
+    if (!consolidatedRows || consolidatedRows.length === 0 || priorityList.length === 0) {
+      return { priorityReportedCounts: counts, totalReportedPriorityMatches: 0 };
+    }
+    priorityList.forEach(item => {
+      const singleMatcher = createPriorityServiceMatcher([item]);
+      const matchedRows = consolidatedRows.filter(r => singleMatcher(r.servicio, r.asociado));
+      counts[item] = matchedRows.length;
+      total += matchedRows.length;
+    });
+    return { priorityReportedCounts: counts, totalReportedPriorityMatches: total };
+  }, [priorityList, consolidatedRows]);
+
+  const handleAddPriority = () => {
+    if (!newPriorityInput.trim()) return;
+    const parts = newPriorityInput.split(/[\n,;]+/);
+    const currentList = [...priorityList];
+    let addedCount = 0;
 
     parts.forEach(p => {
       const trimmed = p.trim().toUpperCase();
       if (trimmed && !currentList.includes(trimmed)) {
         currentList.push(trimmed);
+        addedCount++;
       }
     });
 
-    const updated = { ...rules, rigidaCables: currentList };
-    saveCableRules(updated);
-    onRulesUpdated(updated);
-    setNewRigidaInput('');
+    if (addedCount > 0) {
+      const updated = { ...rules, priorityServices: currentList };
+      saveCableRules(updated);
+      onRulesUpdated(updated);
+      triggerToast(`Se añadieron ${addedCount} servicio(s) PRIORIDAD.`);
+    }
+    setNewPriorityInput('');
   };
 
-  const handleStartEditRigida = (idx: number, currentVal: string) => {
-    setEditingRigidaIdx(idx);
-    setEditRigidaVal(currentVal);
+  const handleBulkPastePriority = () => {
+    if (!bulkPasteText.trim()) return;
+    const parts = bulkPasteText.split(/[\r\n,;\t]+/);
+    const currentList = [...priorityList];
+    let addedCount = 0;
+
+    parts.forEach(p => {
+      const trimmed = p.trim().toUpperCase();
+      if (trimmed && !currentList.includes(trimmed)) {
+        currentList.push(trimmed);
+        addedCount++;
+      }
+    });
+
+    if (addedCount > 0) {
+      const updated = { ...rules, priorityServices: currentList };
+      saveCableRules(updated);
+      onRulesUpdated(updated);
+      triggerToast(`Carga masiva completada: ${addedCount} nuevo(s) servicio(s) PRIORIDAD guardados.`);
+    } else {
+      triggerToast('No se encontraron nuevos servicios válidos para agregar.');
+    }
+    setBulkPasteText('');
+    setIsBulkPasteOpen(false);
   };
 
-  const handleSaveEditRigida = (idx: number) => {
-    const trimmed = editRigidaVal.trim().toUpperCase();
+  const handleStartEditPriority = (idx: number, currentVal: string) => {
+    setEditingPriorityIdx(idx);
+    setEditPriorityVal(currentVal);
+  };
+
+  const handleSaveEditPriority = (idx: number) => {
+    const trimmed = editPriorityVal.trim().toUpperCase();
     if (!trimmed) return;
 
-    const updatedList = [...rules.rigidaCables];
+    const updatedList = [...priorityList];
     updatedList[idx] = trimmed;
 
-    const updated = { ...rules, rigidaCables: updatedList };
+    const updated = { ...rules, priorityServices: updatedList };
     saveCableRules(updated);
     onRulesUpdated(updated);
-    setEditingRigidaIdx(null);
+    setEditingPriorityIdx(null);
+    triggerToast('Servicio PRIORIDAD actualizado correctamente.');
   };
 
-  const handleRemoveRigida = (idx: number) => {
-    const updatedList = rules.rigidaCables.filter((_, i) => i !== idx);
-    const updated = { ...rules, rigidaCables: updatedList };
+  const handleRemovePriority = (idx: number) => {
+    const updatedList = priorityList.filter((_, i) => i !== idx);
+    const updated = { ...rules, priorityServices: updatedList };
     saveCableRules(updated);
     onRulesUpdated(updated);
-    if (editingRigidaIdx === idx) setEditingRigidaIdx(null);
+    if (editingPriorityIdx === idx) setEditingPriorityIdx(null);
+    triggerToast('Servicio PRIORIDAD eliminado.');
+  };
+
+  const handleClearAllPriority = () => {
+    if (priorityList.length === 0) return;
+    if (window.confirm('¿Está seguro de eliminar TODOS los servicios de la lista PRIORIDAD?')) {
+      const updated = { ...rules, priorityServices: [] };
+      saveCableRules(updated);
+      onRulesUpdated(updated);
+      setEditingPriorityIdx(null);
+      triggerToast('Se eliminaron todos los servicios PRIORIDAD.');
+    }
   };
 
   // ------------------------------------
@@ -392,114 +461,221 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        {/* 1. Panel RED RÍGIDA */}
+        {/* 1. Panel SERVICIOS PRIORIDAD */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white shadow-lg space-y-4 flex flex-col justify-between">
           <div className="space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center space-x-2">
-                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-xl border border-blue-500/30">
-                  <Cable className="w-5 h-5" />
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <Star className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-sm text-white">1. Cables de Red Rígida</h3>
-                  <span className="text-[10px] text-blue-400 font-mono">Coincidencia en Columna CABLE</span>
+                  <h3 className="font-extrabold text-sm text-white">1. Servicios PRIORIDAD</h3>
+                  <span className="text-[10px] text-amber-400 font-mono font-bold">Coincidencia en SERVICIO y ASOCIADO</span>
                 </div>
               </div>
-              <span className="text-xs bg-blue-900/60 text-blue-200 border border-blue-700/50 px-2.5 py-0.5 rounded-full font-bold">
-                {rules.rigidaCables.length} cables
-              </span>
+              <div className="flex flex-col items-end">
+                <span className="text-xs bg-amber-950/80 text-amber-300 border border-amber-700/60 px-2.5 py-0.5 rounded-full font-bold">
+                  {priorityList.length} configurados
+                </span>
+                {totalReportedPriorityMatches > 0 && (
+                  <span className="text-[10px] text-red-400 font-extrabold animate-pulse mt-0.5">
+                    🚨 {totalReportedPriorityMatches} reportados activos
+                  </span>
+                )}
+              </div>
             </div>
 
             <p className="text-xs text-slate-400">
-              Añada nombres directos o cables separados por coma (ej. <code>CR-101, CR-102</code>).
+              Añada números de teléfono o abonados críticos. Se detectarán automáticamente en reportes, se resaltarán en amarillo suave y letra roja en Excel y en la web, y se marcarán como <strong>PRIORIDAD</strong> en Afectaciones.
             </p>
 
-            {/* Input Form */}
-            <div className="flex items-center space-x-2">
-              <input
-                type="text"
-                placeholder="Cable(s) (ej: CR-101, CR-102)"
-                value={newRigidaInput}
-                onChange={(e) => setNewRigidaInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddRigida();
-                  }
-                }}
-                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase focus:outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={handleAddRigida}
-                className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shrink-0 cursor-pointer"
-              >
-                + Añadir
-              </button>
+            {/* Input Form & Acciones */}
+            <div className="space-y-2">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  placeholder="Servicio(s) (ej: 48210001, 78301234)"
+                  value={newPriorityInput}
+                  onChange={(e) => setNewPriorityInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddPriority();
+                    }
+                  }}
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase focus:outline-none focus:border-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddPriority}
+                  className="px-3.5 py-2.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md shrink-0 cursor-pointer active:scale-95"
+                >
+                  + Añadir
+                </button>
+              </div>
+
+              {/* Botones de Carga Masiva y Limpiar */}
+              <div className="flex items-center justify-between text-xs pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkPasteOpen(!isBulkPasteOpen)}
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-xl text-[11px] font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
+                >
+                  <ClipboardPaste className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isBulkPasteOpen ? 'Ocultar Pegado Masivo' : '📋 Pegar Columna de Excel'}</span>
+                </button>
+
+                {priorityList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllPriority}
+                    className="text-[11px] text-slate-500 hover:text-rose-400 transition-colors font-medium cursor-pointer"
+                  >
+                    Limpiar todo
+                  </button>
+                )}
+              </div>
+
+              {/* Área de Pegado Masivo */}
+              {isBulkPasteOpen && (
+                <div className="p-3 bg-slate-950 rounded-2xl border border-amber-500/40 space-y-2 animate-in fade-in">
+                  <span className="text-[11px] font-bold text-amber-300 block">
+                    Pegar lista masiva (una por línea o separados por coma):
+                  </span>
+                  <textarea
+                    rows={4}
+                    value={bulkPasteText}
+                    onChange={(e) => setBulkPasteText(e.target.value)}
+                    placeholder="48210001&#10;48210002&#10;48210003..."
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500 resize-none"
+                  />
+                  <div className="flex justify-end space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsBulkPasteOpen(false);
+                        setBulkPasteText('');
+                      }}
+                      className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleBulkPastePriority}
+                      className="px-3.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-lg cursor-pointer shadow"
+                    >
+                      Guardar Servicios
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Buscador interno si hay más de 4 servicios */}
+            {priorityList.length > 4 && (
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Buscar en la lista..."
+                  value={prioritySearchTerm}
+                  onChange={(e) => setPrioritySearchTerm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            )}
 
             {/* List */}
             <div className="space-y-1.5 max-h-64 overflow-y-auto p-2 bg-slate-950 rounded-2xl border border-slate-800">
-              {rules.rigidaCables.length === 0 ? (
-                <div className="text-xs text-slate-500 p-2 text-center">No hay cables de Red Rígida configurados.</div>
+              {priorityList.length === 0 ? (
+                <div className="text-xs text-slate-500 p-4 text-center italic">
+                  No hay servicios de PRIORIDAD configurados.
+                </div>
               ) : (
-                rules.rigidaCables.map((cb, idx) => (
-                  <div
-                    key={`${cb}_${idx}`}
-                    className="p-2 rounded-xl bg-slate-900 border border-slate-800/80 text-xs font-mono"
-                  >
-                    {editingRigidaIdx === idx ? (
-                      <div className="flex items-center space-x-1.5">
-                        <input
-                          type="text"
-                          value={editRigidaVal}
-                          onChange={(e) => setEditRigidaVal(e.target.value)}
-                          className="flex-1 bg-slate-950 border border-blue-500 p-1.5 rounded text-xs text-white font-mono uppercase"
-                        />
-                        <button
-                          onClick={() => handleSaveEditRigida(idx)}
-                          className="p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded cursor-pointer"
-                          title="Guardar"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setEditingRigidaIdx(null)}
-                          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded cursor-pointer"
-                          title="Cancelar"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                priorityList
+                  .filter(srv => !prioritySearchTerm || srv.toUpperCase().includes(prioritySearchTerm.trim().toUpperCase()))
+                  .map((srv, originalIdx) => {
+                    const actualIdx = priorityList.indexOf(srv);
+                    const matchCount = priorityReportedCounts[srv] || 0;
+                    const isReported = matchCount > 0;
+
+                    return (
+                      <div
+                        key={`${srv}_${actualIdx}`}
+                        className={`p-2 rounded-xl border text-xs font-mono transition-all ${
+                          isReported
+                            ? 'bg-amber-950/40 border-amber-500/50 text-amber-200 shadow-sm'
+                            : 'bg-slate-900 border-slate-800/80 text-slate-300'
+                        }`}
+                      >
+                        {editingPriorityIdx === actualIdx ? (
+                          <div className="flex items-center space-x-1.5">
+                            <input
+                              type="text"
+                              value={editPriorityVal}
+                              onChange={(e) => setEditPriorityVal(e.target.value)}
+                              className="flex-1 bg-slate-950 border border-amber-500 p-1.5 rounded text-xs text-white font-mono uppercase"
+                            />
+                            <button
+                              onClick={() => handleSaveEditPriority(actualIdx)}
+                              className="p-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded cursor-pointer"
+                              title="Guardar"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setEditingPriorityIdx(null)}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded cursor-pointer"
+                              title="Cancelar"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between font-bold">
+                            <div className="flex items-center space-x-2 truncate">
+                              <Star className={`w-3.5 h-3.5 shrink-0 ${isReported ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
+                              <span className={isReported ? 'text-amber-300 font-black' : 'text-slate-200'}>{srv}</span>
+                              {isReported ? (
+                                <span className="bg-red-950/80 text-red-300 border border-red-500/60 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider animate-pulse">
+                                  🚨 Reportado ({matchCount})
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-600 font-normal">
+                                  No reportado
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center space-x-1 shrink-0 ml-2">
+                              <button
+                                onClick={() => handleStartEditPriority(actualIdx, srv)}
+                                className="p-1 hover:text-amber-400 text-slate-400 transition-colors cursor-pointer"
+                                title="Editar servicio"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleRemovePriority(actualIdx)}
+                                className="p-1 hover:text-rose-400 text-slate-500 transition-colors cursor-pointer"
+                                title="Eliminar de prioridad"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="flex items-center justify-between font-bold text-blue-300">
-                        <span>{cb}</span>
-                        <div className="flex items-center space-x-1">
-                          <button
-                            onClick={() => handleStartEditRigida(idx, cb)}
-                            className="p-1 hover:text-blue-400 text-slate-400 transition-colors cursor-pointer"
-                            title="Editar cable"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleRemoveRigida(idx)}
-                            className="p-1 hover:text-rose-400 text-slate-500 transition-colors cursor-pointer"
-                            title="Eliminar cable"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))
+                    );
+                  })
               )}
             </div>
           </div>
 
           <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/80 text-[11px] text-slate-400 flex items-start space-x-2">
-            <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-            <span>Coincidencia directa en la columna <strong>CABLE</strong> del Excel.</span>
+            <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>Coincide contra columnas <strong>SERVICIO</strong> y <strong>ASOCIADO</strong>. Se resalta en amarillo suave con letra roja en Excel y la Web.</span>
           </div>
         </div>
 

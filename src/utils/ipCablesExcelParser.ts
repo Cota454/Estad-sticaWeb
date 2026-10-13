@@ -365,15 +365,24 @@ export function extractTpoServFromItem(item: IpCableRow): string {
   return '';
 }
 
-export type TelefonoTypeFilter = 'all' | 'telefono' | 'txd_dato';
+export type TelefonoTypeFilter = 'all' | 'telefono' | 'txd_dato' | 'prioridad';
 
 /**
  * Evaluates whether an item matches the Teléfono column filter:
  * - 'telefono': Only numbers in the Teléfono column (taking into account whitespace)
  * - 'txd_dato': At least one letter in the Teléfono column (taking into account whitespace)
  */
-export function matchTelefonoTypeFilter(item: IpCableRow, filter: TelefonoTypeFilter): boolean {
+export function matchTelefonoTypeFilter(
+  item: IpCableRow,
+  filter: TelefonoTypeFilter,
+  priorityMatcher?: (service?: any, asociado?: any) => boolean
+): boolean {
   if (filter === 'all') return true;
+
+  if (filter === 'prioridad') {
+    if (!priorityMatcher) return false;
+    return priorityMatcher(item.servicio, item.asociado);
+  }
 
   const rawTel = extractTelefonoFromItem(item);
   if (!rawTel) return false;
@@ -1096,33 +1105,65 @@ export function extractDigitsService(service: any): string {
 
 /**
  * Busca y retorna el registro correspondiente en el Excel Auxiliar para un servicio dado.
+ * Si no encuentra coincidencia por servicio, revisa contra la columna o valor Asociado.
+ * 
  * Aplica coincidencia inteligente en cascada:
- * 1. Coincidencia exacta en mayúsculas
- * 2. Coincidencia numérica (solo dígitos)
- * 3. Coincidencia numérica sin ceros a la izquierda
+ * 1. Coincidencia exacta en mayúsculas por SERVICIO
+ * 2. Coincidencia numérica (solo dígitos) por SERVICIO
+ * 3. Coincidencia numérica sin ceros a la izquierda por SERVICIO
+ * 4. Fallback: Si no hubo coincidencia por servicio y se proporciona un asociado,
+ *    se repite la cascada buscando por el valor del ASOCIADO.
  */
 export function getAuxiliaryDataForService(
   service: string | number | undefined | null,
-  auxData: AuxiliaryExcelData | null | undefined
+  auxData: AuxiliaryExcelData | null | undefined,
+  asociado?: string | number | undefined | null
 ): Record<string, any> | undefined {
-  if (!auxData || !service) return undefined;
-  const rawKey = normalizeServiceKey(service);
-  if (!rawKey) return undefined;
+  if (!auxData) return undefined;
 
-  // 1. Clave exacta
-  if (auxData.recordsByService[rawKey]) {
-    return auxData.recordsByService[rawKey];
+  // 1. Intento por SERVICIO principal
+  if (service !== undefined && service !== null) {
+    const rawKey = normalizeServiceKey(service);
+    if (rawKey) {
+      // 1.1 Clave exacta
+      if (auxData.recordsByService[rawKey]) {
+        return auxData.recordsByService[rawKey];
+      }
+
+      // 1.2 Por dígitos
+      const digits = extractDigitsService(rawKey);
+      if (digits) {
+        if (auxData.recordsByService[digits]) {
+          return auxData.recordsByService[digits];
+        }
+        const noLeadingZeros = digits.replace(/^0+/, '');
+        if (noLeadingZeros && auxData.recordsByService[noLeadingZeros]) {
+          return auxData.recordsByService[noLeadingZeros];
+        }
+      }
+    }
   }
 
-  // 2. Por dígitos
-  const digits = extractDigitsService(rawKey);
-  if (digits) {
-    if (auxData.recordsByService[digits]) {
-      return auxData.recordsByService[digits];
-    }
-    const noLeadingZeros = digits.replace(/^0+/, '');
-    if (noLeadingZeros && auxData.recordsByService[noLeadingZeros]) {
-      return auxData.recordsByService[noLeadingZeros];
+  // 2. Fallback por ASOCIADO si no se encontró por SERVICIO
+  if (asociado !== undefined && asociado !== null) {
+    const rawAsocKey = normalizeServiceKey(asociado);
+    if (rawAsocKey) {
+      // 2.1 Clave exacta de asociado
+      if (auxData.recordsByService[rawAsocKey]) {
+        return auxData.recordsByService[rawAsocKey];
+      }
+
+      // 2.2 Por dígitos de asociado
+      const asocDigits = extractDigitsService(rawAsocKey);
+      if (asocDigits) {
+        if (auxData.recordsByService[asocDigits]) {
+          return auxData.recordsByService[asocDigits];
+        }
+        const asocNoLeadingZeros = asocDigits.replace(/^0+/, '');
+        if (asocNoLeadingZeros && auxData.recordsByService[asocNoLeadingZeros]) {
+          return auxData.recordsByService[asocNoLeadingZeros];
+        }
+      }
     }
   }
 
@@ -1130,24 +1171,90 @@ export function getAuxiliaryDataForService(
 }
 
 /**
- * Cuenta la cantidad de servicios de un array que tienen coincidencia en el archivo auxiliar
+ * Cuenta la cantidad de registros que tienen coincidencia en el archivo auxiliar
+ * (soporta array de servicios o array de objetos { servicio, asociado }).
  */
 export function countAuxiliaryMatches(
-  activeServices: (string | number)[],
+  activeItems: (string | number | { servicio?: string | number; asociado?: string | number })[],
   auxData: AuxiliaryExcelData | null | undefined
 ): number {
-  if (!auxData || !activeServices || activeServices.length === 0) return 0;
+  if (!auxData || !activeItems || activeItems.length === 0) return 0;
   let count = 0;
   const seen = new Set<string>();
-  activeServices.forEach(srv => {
-    const rawKey = normalizeServiceKey(srv);
+  activeItems.forEach(item => {
+    let srv: string | number | undefined | null;
+    let asoc: string | number | undefined | null;
+
+    if (typeof item === 'object' && item !== null) {
+      srv = item.servicio;
+      asoc = item.asociado;
+    } else {
+      srv = item as string | number;
+    }
+
+    const rawKey = normalizeServiceKey(srv || asoc);
     if (!rawKey || seen.has(rawKey)) return;
     seen.add(rawKey);
-    if (getAuxiliaryDataForService(srv, auxData)) {
+    if (getAuxiliaryDataForService(srv, auxData, asoc)) {
       count++;
     }
   });
   return count;
+}
+
+/**
+ * Crea un comprobador optimizado para determinar si un servicio o asociado
+ * coincide con la lista de Servicios PRIORIDAD.
+ */
+export function createPriorityServiceMatcher(priorityList: string[] | undefined | null) {
+  if (!priorityList || priorityList.length === 0) {
+    return (_service?: any, _asociado?: any) => false;
+  }
+  const exactSet = new Set<string>();
+  const digitsSet = new Set<string>();
+  const noZerosSet = new Set<string>();
+
+  priorityList.forEach(p => {
+    const raw = normalizeServiceKey(p);
+    if (raw) exactSet.add(raw);
+    const d = extractDigitsService(p);
+    if (d) {
+      digitsSet.add(d);
+      const nz = d.replace(/^0+/, '');
+      if (nz) noZerosSet.add(nz);
+    }
+  });
+
+  return (service: string | number | undefined | null, asociado?: string | number | undefined | null): boolean => {
+    const test = (val: string | number | undefined | null): boolean => {
+      if (val === undefined || val === null) return false;
+      const raw = normalizeServiceKey(val);
+      if (!raw) return false;
+      if (exactSet.has(raw)) return true;
+      const d = extractDigitsService(raw);
+      if (d) {
+        if (digitsSet.has(d)) return true;
+        const nz = d.replace(/^0+/, '');
+        if (nz && noZerosSet.has(nz)) return true;
+      }
+      return false;
+    };
+
+    return test(service) || test(asociado);
+  };
+}
+
+/**
+ * Determina directamente si un servicio o asociado coincide con la lista de PRIORIDAD.
+ */
+export function isPriorityServiceMatch(
+  service: string | number | undefined | null,
+  priorityList: string[] | undefined | null,
+  asociado?: string | number | undefined | null
+): boolean {
+  if (!priorityList || priorityList.length === 0) return false;
+  const matcher = createPriorityServiceMatcher(priorityList);
+  return matcher(service, asociado);
 }
 
 /**
@@ -1252,15 +1359,35 @@ export async function parseAuxiliaryExcel(file: File): Promise<AuxiliaryExcelDat
   const dataRows = rawMatrix.slice(headerRowIndex + 1);
   let validRowsCount = 0;
 
+  // Detectar si en el propio archivo complementario existe una columna de ASOCIADO
+  let asociadoColIdx = -1;
+  headerRow.forEach((col, idx) => {
+    if (idx === servicioColIdx) return;
+    const cVal = String(col || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (
+      cVal === 'asociado' ||
+      cVal === 'telefono asociado' ||
+      cVal === 'tel_asociado' ||
+      cVal === 'num_asociado' ||
+      cVal === 'numero asociado' ||
+      cVal === 'servicio asociado'
+    ) {
+      asociadoColIdx = idx;
+    }
+  });
+
   dataRows.forEach(row => {
     if (!row || row.length === 0) return;
     const srvCell = row[servicioColIdx];
-    if (srvCell === undefined || srvCell === null || String(srvCell).trim() === '') return;
+    const asocCell = asociadoColIdx !== -1 ? row[asociadoColIdx] : undefined;
 
-    const srvStr = String(srvCell).trim();
-    const exactKey = srvStr.toUpperCase();
-    const digitsKey = srvStr.replace(/\D/g, '');
-    const cleanDigitsKey = digitsKey.replace(/^0+/, '');
+    // Al menos debe tener servicio o asociado
+    if (
+      (srvCell === undefined || srvCell === null || String(srvCell).trim() === '') &&
+      (asocCell === undefined || asocCell === null || String(asocCell).trim() === '')
+    ) {
+      return;
+    }
 
     const record: Record<string, any> = {};
     extraCols.forEach(({ idx, name }) => {
@@ -1275,17 +1402,44 @@ export async function parseAuxiliaryExcel(file: File): Promise<AuxiliaryExcelDat
       record[name] = cellVal;
     });
 
-    recordsByService[exactKey] = record;
-    if (digitsKey && digitsKey !== exactKey) {
-      if (!recordsByService[digitsKey]) {
-        recordsByService[digitsKey] = record;
+    // Indexar por columna de Servicio del complementario
+    if (srvCell !== undefined && srvCell !== null && String(srvCell).trim() !== '') {
+      const srvStr = String(srvCell).trim();
+      const exactKey = srvStr.toUpperCase();
+      const digitsKey = srvStr.replace(/\D/g, '');
+      const cleanDigitsKey = digitsKey.replace(/^0+/, '');
+
+      recordsByService[exactKey] = record;
+      if (digitsKey && digitsKey !== exactKey) {
+        if (!recordsByService[digitsKey]) {
+          recordsByService[digitsKey] = record;
+        }
+      }
+      if (cleanDigitsKey && cleanDigitsKey !== exactKey && cleanDigitsKey !== digitsKey) {
+        if (!recordsByService[cleanDigitsKey]) {
+          recordsByService[cleanDigitsKey] = record;
+        }
       }
     }
-    if (cleanDigitsKey && cleanDigitsKey !== exactKey && cleanDigitsKey !== digitsKey) {
-      if (!recordsByService[cleanDigitsKey]) {
-        recordsByService[cleanDigitsKey] = record;
+
+    // Indexar también por columna de Asociado del complementario si existe
+    if (asocCell !== undefined && asocCell !== null && String(asocCell).trim() !== '') {
+      const asocStr = String(asocCell).trim();
+      const asocExact = asocStr.toUpperCase();
+      const asocDigits = asocStr.replace(/\D/g, '');
+      const asocCleanDigits = asocDigits.replace(/^0+/, '');
+
+      if (!recordsByService[asocExact]) {
+        recordsByService[asocExact] = record;
+      }
+      if (asocDigits && !recordsByService[asocDigits]) {
+        recordsByService[asocDigits] = record;
+      }
+      if (asocCleanDigits && !recordsByService[asocCleanDigits]) {
+        recordsByService[asocCleanDigits] = record;
       }
     }
+
     validRowsCount++;
   });
 

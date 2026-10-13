@@ -948,7 +948,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       };
 
       if (auxCols.length > 0) {
-        const auxRec = getAuxiliaryDataForService(r.servicio, auxiliaryData);
+        const auxRec = getAuxiliaryDataForService(r.servicio, auxiliaryData, r.asociado);
         auxCols.forEach(colName => {
           const exportKey = baseHeadersUpperSet.has(colName.toUpperCase()) ? `${colName} (Auxiliar)` : colName;
           rowObj[exportKey] = auxRec?.[colName] !== undefined && auxRec?.[colName] !== '' ? auxRec[colName] : '-';
@@ -1034,7 +1034,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     ];
 
     const lines = filteredRows.map(r => {
-      const auxRec = getAuxiliaryDataForService(r.servicio, auxiliaryData);
+      const auxRec = getAuxiliaryDataForService(r.servicio, auxiliaryData, r.asociado);
       const auxVals = auxCols.map(col => {
         const v = auxRec?.[col];
         return v !== undefined && v !== '' ? String(v) : '-';
@@ -2170,7 +2170,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
                         {/* Columnas Auxiliares */}
                         {(auxiliaryData?.extraColumnNames || []).map(col => {
-                          const auxRec = getAuxiliaryDataForService(row.servicio, auxiliaryData);
+                          const auxRec = getAuxiliaryDataForService(row.servicio, auxiliaryData, row.asociado);
                           const val = auxRec?.[col];
                           return (
                             <td key={col} className="py-2.5 px-3 text-center font-mono text-violet-200 text-xs bg-violet-950/10 whitespace-nowrap">

@@ -16,6 +16,7 @@ export interface ZoneConfig {
 
 export interface CableClassificationRules {
   rigidaCables: string[]; // List of exact names or prefixes for Red Rígida
+  priorityServices?: string[]; // Lista de números de servicios prioritarios (PRIORIDAD)
   flexibleRules: { id: string; pattern: string; assignedName: string }[]; // Match in CABLE column
   outdoorRules: { id: string; centralPattern: string; assignedName: string }[]; // Match in CENTRAL TELEFONICA column
 }

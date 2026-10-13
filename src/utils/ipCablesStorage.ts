@@ -35,6 +35,7 @@ export const DEFAULT_ZONES: ZoneConfig[] = [
 
 export const DEFAULT_CABLE_RULES: CableClassificationRules = {
   rigidaCables: ['CR-101', 'CR-102', 'CR-103', 'RIGIDA-01', 'RED RIGIDA', 'CABLE-01', 'CABLE-02'],
+  priorityServices: [],
   flexibleRules: [
     { id: 'f1', pattern: 'CF-', assignedName: 'Red Flexible Coaxial/FO' },
     { id: 'f2', pattern: 'FLEX', assignedName: 'Red Flexible Multipar' },
@@ -74,7 +75,15 @@ export function loadCableRules(): CableClassificationRules {
     const raw = localStorage.getItem(CABLE_RULES_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.rigidaCables) return parsed;
+      if (parsed) {
+        if (!Array.isArray(parsed.priorityServices)) {
+          parsed.priorityServices = [];
+        }
+        if (!Array.isArray(parsed.rigidaCables)) {
+          parsed.rigidaCables = DEFAULT_CABLE_RULES.rigidaCables;
+        }
+        return parsed;
+      }
     }
   } catch (e) {
     console.error('Error loading cable rules from localStorage', e);
