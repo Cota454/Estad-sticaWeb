@@ -1,5 +1,6 @@
 import { ZoneConfig, CableClassificationRules, IpCableExcelParseResult, CablePendingTask, CableAfectacion, IpCableRow } from '../types/ipCablesTypes';
 import { getIdbItem, setIdbItem, deleteIdbItem } from './indexedDbStorage';
+import { cleanCableName, isCableExactMatch } from './ipCablesExcelParser';
 
 const ZONES_STORAGE_KEY = 'telecomstat_ip_zones_v1';
 const CABLE_RULES_STORAGE_KEY = 'telecomstat_cable_rules_v1';
@@ -319,18 +320,125 @@ export function saveCableAfectaciones(afectaciones: CableAfectacion[]): void {
 }
 
 /**
+ * Normaliza cualquier formato de fecha a string comparable YYYY-MM-DD.
+ * Soporta Date, números de Excel, YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, fechas con hora, etc.
+ */
+export function parseDateToComparableYMD(rawDate: any): string {
+  if (rawDate === undefined || rawDate === null || rawDate === '') return '';
+  if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
+    const y = rawDate.getFullYear();
+    const m = String(rawDate.getMonth() + 1).padStart(2, '0');
+    const d = String(rawDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof rawDate === 'number') {
+    // Excel serial date number (ej: 45212)
+    const dateObj = new Date((rawDate - (25567 + 2)) * 86400 * 1000);
+    if (!isNaN(dateObj.getTime())) {
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  }
+
+  const str = String(rawDate).trim();
+  if (!str) return '';
+
+  // 1. Extraer YYYY-MM-DD o YYYY/MM/DD (con hora opcional)
+  const ymdMatch = str.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+  if (ymdMatch) {
+    const y = ymdMatch[1];
+    const m = ymdMatch[2].padStart(2, '0');
+    const d = ymdMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 2. Extraer DD/MM/YYYY o DD-MM-YYYY (con hora opcional)
+  const dmyMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (dmyMatch) {
+    const d = dmyMatch[1].padStart(2, '0');
+    const m = dmyMatch[2].padStart(2, '0');
+    const y = dmyMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  // 3. Fallback con Date nativo
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  return '';
+}
+
+/**
+ * Extrae y normaliza a YYYY-MM-DD la fecha de reporte de una fila/servicio IP Cable.
+ */
+export function extractItemReportDate(item: IpCableRow): string {
+  // 1. Probar campo formal fechaReporte
+  if (item.fechaReporte) {
+    const d = parseDateToComparableYMD(item.fechaReporte);
+    if (d) return d;
+  }
+
+  // 2. Probar en rawRowData del Excel
+  const raw = item.rawRowData || {};
+  for (const [key, val] of Object.entries(raw)) {
+    const k = key.trim().toUpperCase();
+    if (
+      k.includes('FECHA') ||
+      k.includes('DATE') ||
+      k === 'F_REPORTE' ||
+      k === 'F.REPORTE' ||
+      k === 'REPORTE' ||
+      k === 'FECHA REPORTE'
+    ) {
+      const d = parseDateToComparableYMD(val);
+      if (d) return d;
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Comprueba si la fecha del reporte cae dentro de la ventana de tiempo especificada.
+ */
+export function isReportDateWithinRange(itemDateYMD: string, startDate?: string, endDate?: string): boolean {
+  const normStart = parseDateToComparableYMD(startDate);
+  const normEnd = parseDateToComparableYMD(endDate);
+
+  // Si no se definió ni inicio ni fin, la afectación es permanente
+  if (!normStart && !normEnd) return true;
+
+  // Si el servicio cuenta con fecha de reporte identificada
+  if (itemDateYMD) {
+    if (normStart && itemDateYMD < normStart) return false;
+    if (normEnd && itemDateYMD > normEnd) return false;
+    return true;
+  }
+
+  // Si la afectación exige rango de fecha pero el servicio no tiene fecha, no coincide
+  return false;
+}
+
+/**
  * Resuelve la Afectación aplicable a un servicio/fila IP Cable.
- * Evalúa en orden de prioridad:
- * 1. Afectaciones independientes (por servicio específico, por cable, por central o global).
- * 2. Tarea técnica asignada que tenga afectación activada (retrocompatibilidad).
- * 3. Columna AFECTACIONES original del archivo Excel (si existe en rawRowData).
+ *
+ * REGLA FUNDAMENTAL:
+ * Las afectaciones que se encuentran dentro del rango de fecha se le asignan automáticamente
+ * sin importar si tiene o no tarea asociada. La prioridad absoluta de las afectaciones es
+ * que se encuentren dentro del rango de fecha.
  */
 export function resolveItemAfectacion(
   item: IpCableRow,
   afectaciones: CableAfectacion[] = [],
   tasks?: CablePendingTask[]
-): { afectacion: string; afectacionRecord?: CableAfectacion } {
-  const itemDate = (item.fechaReporte || '').trim().slice(0, 10);
+): { afectacion: string; afectacionRecord?: CableAfectacion; matchDetail?: string } {
   const raw = item.rawRowData || {};
   let asociadoVal = item.asociado || '';
   if (!asociadoVal) {
@@ -341,117 +449,192 @@ export function resolveItemAfectacion(
       }
     }
   }
-  const itemServicio = (item.telefono || item.servicio || '').trim().toUpperCase();
-  const itemAsociado = (asociadoVal || '').trim().toUpperCase();
-  const itemCable = (item.cable || '').trim().toUpperCase();
-  const itemCableP = (item.cableP || '').trim().toUpperCase();
-  const itemCableS = (item.cableS || '').trim().toUpperCase();
-  const itemCentral = (item.central || '').trim().toUpperCase();
 
-  const normalizeDate = (d?: string): string => {
-    if (!d) return '';
-    const clean = d.trim().slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) {
-      const [dd, mm, yyyy] = clean.split('/');
-      return `${yyyy}-${mm}-${dd}`;
+  const itemServicio = (item.telefono || item.servicio || '').toString().trim().toUpperCase();
+  const itemAsociado = (asociadoVal || '').toString().trim().toUpperCase();
+  const itemCable = (item.cable || '').toString().trim().toUpperCase();
+  const itemCableP = (item.cableP || '').toString().trim().toUpperCase();
+  const itemCableS = (item.cableS || '').toString().trim().toUpperCase();
+  const itemCentral = (item.central || '').toString().trim().toUpperCase();
+
+  const itemDateYMD = extractItemReportDate(item);
+
+  // Helper para comprobar coincidencia por Cable
+  const matchesCableTarget = (targetCable?: string): boolean => {
+    if (!targetCable) return false;
+    const cleanTarget = cleanCableName(targetCable).trim().toUpperCase();
+    if (!cleanTarget) return false;
+
+    const cableValues = [itemCableP, itemCableS, itemCable].filter(Boolean);
+    for (const cv of cableValues) {
+      if (isCableExactMatch(cv, cleanTarget)) return true;
+      const cleanCv = cleanCableName(cv).trim().toUpperCase();
+      if (cleanCv === cleanTarget) return true;
+      const parts = cleanCv.split(/[\/,;|\-]+/).map(p => p.trim());
+      if (parts.includes(cleanTarget)) return true;
     }
-    return clean;
+    return false;
   };
 
-  const normItemDate = normalizeDate(itemDate);
-
-  const isDateInRange = (startDate?: string, endDate?: string): boolean => {
-    if (!startDate && !endDate) return true;
-    if (!normItemDate) return true; // Si no hay fecha de reporte, aplica por defecto
-    const normStart = normalizeDate(startDate);
-    const normEnd = normalizeDate(endDate);
-    if (normStart && normItemDate < normStart) return false;
-    if (normEnd && normItemDate > normEnd) return false;
-    return true;
+  // Helper para comprobar coincidencia por Central
+  const matchesCentralTarget = (targetCentral?: string): boolean => {
+    if (!targetCentral) return false;
+    const cleanTarget = targetCentral.trim().toUpperCase();
+    if (!cleanTarget || !itemCentral) return false;
+    if (itemCentral === cleanTarget) return true;
+    const centralParts = itemCentral.split(/[\/,;|\-]+/).map(p => p.trim());
+    return centralParts.includes(cleanTarget);
   };
 
-  // 1. Verificar Afectaciones independientes activas
-  for (const af of afectaciones) {
-    if (af.activo === false) {
-      continue;
-    }
-    if (!isDateInRange(af.fechaInicio, af.fechaFin)) {
-      continue;
-    }
+  // Helper para comprobar coincidencia por Servicio puntual
+  const matchesServiceTarget = (serviceNumbers?: string[]): boolean => {
+    if (!serviceNumbers || serviceNumbers.length === 0) return false;
+    const srvDigits = itemServicio.replace(/\D/g, '');
+    const asocDigits = itemAsociado.replace(/\D/g, '');
 
-    // A) Scope 'services': número de servicio específico
-    if (af.scope === 'services' && af.serviceNumbers && af.serviceNumbers.length > 0) {
-      const match = af.serviceNumbers.some(srv => {
-        const cleanSrv = srv.trim().toUpperCase();
-        if (!cleanSrv) return false;
-        if (cleanSrv === itemServicio || cleanSrv === itemAsociado) return true;
-        const srvDigits = cleanSrv.replace(/\D/g, '');
-        const itemDigits = itemServicio.replace(/\D/g, '');
-        return srvDigits.length > 3 && itemDigits.length > 3 && (itemDigits === srvDigits || itemDigits.endsWith(srvDigits));
-      });
-      if (match) {
-        return { afectacion: af.motivo, afectacionRecord: af };
+    return serviceNumbers.some(srv => {
+      const cleanSrv = srv.trim().toUpperCase();
+      if (!cleanSrv) return false;
+      if (cleanSrv === itemServicio || cleanSrv === itemAsociado) return true;
+      const targetDigits = cleanSrv.replace(/\D/g, '');
+      if (targetDigits.length > 3) {
+        if (srvDigits && (srvDigits === targetDigits || srvDigits.replace(/^0+/, '') === targetDigits.replace(/^0+/, ''))) return true;
+        if (asocDigits && (asocDigits === targetDigits || asocDigits.replace(/^0+/, '') === targetDigits.replace(/^0+/, ''))) return true;
       }
-    }
+      return false;
+    });
+  };
 
-    // B) Scope 'cable': cable completo
-    if (af.scope === 'cable' && af.cable) {
-      const targetCable = af.cable.trim().toUpperCase();
-      if (
-        (itemCable && itemCable === targetCable) ||
-        (itemCableP && itemCableP === targetCable) ||
-        (itemCableS && itemCableS === targetCable)
-      ) {
-        return { afectacion: af.motivo, afectacionRecord: af };
+  // Lista de afectaciones activas
+  const activeAfectaciones = (afectaciones || []).filter(a => a.activo !== false && Boolean(a.motivo?.trim()));
+
+  // =========================================================================
+  // FASE 1: PRIORIDAD MÁXIMA - AFECTACIONES DENTRO DEL RANGO DE FECHA
+  // Se asignan AUTOMÁTICAMENTE a cualquier reporte dentro de su ventana de fecha,
+  // SIN requerir que exista una tarea creada/asociada.
+  // =========================================================================
+
+  // 1.1 Servicios puntuales dentro del rango de fecha
+  for (const af of activeAfectaciones) {
+    if (af.scope === 'services' && (af.fechaInicio || af.fechaFin)) {
+      if (isReportDateWithinRange(itemDateYMD, af.fechaInicio, af.fechaFin) && matchesServiceTarget(af.serviceNumbers)) {
+        return {
+          afectacion: af.motivo.trim(),
+          afectacionRecord: af,
+          matchDetail: `Servicio puntual (${af.fechaInicio || 'Inicio'} a ${af.fechaFin || 'Sin fin'})`
+        };
       }
-    }
-
-    // C) Scope 'central': central telefónica completa
-    if (af.scope === 'central' && af.central) {
-      const targetCentral = af.central.trim().toUpperCase();
-      if (itemCentral && itemCentral === targetCentral) {
-        return { afectacion: af.motivo, afectacionRecord: af };
-      }
-    }
-
-    // D) Scope 'global': se aplica a TODO en general en dicho recuadro
-    if (af.scope === 'global') {
-      return { afectacion: af.motivo, afectacionRecord: af };
     }
   }
 
-  // 2. Retrocompatibilidad: buscar en tareas técnicas
+  // 1.2 Por Cable dentro del rango de fecha
+  for (const af of activeAfectaciones) {
+    if (af.scope === 'cable' && af.cable && (af.fechaInicio || af.fechaFin)) {
+      if (isReportDateWithinRange(itemDateYMD, af.fechaInicio, af.fechaFin) && matchesCableTarget(af.cable)) {
+        return {
+          afectacion: af.motivo.trim(),
+          afectacionRecord: af,
+          matchDetail: `Cable ${af.cable} (${af.fechaInicio || 'Inicio'} a ${af.fechaFin || 'Sin fin'})`
+        };
+      }
+    }
+  }
+
+  // 1.3 Por Central dentro del rango de fecha
+  for (const af of activeAfectaciones) {
+    if (af.scope === 'central' && af.central && (af.fechaInicio || af.fechaFin)) {
+      if (isReportDateWithinRange(itemDateYMD, af.fechaInicio, af.fechaFin) && matchesCentralTarget(af.central)) {
+        return {
+          afectacion: af.motivo.trim(),
+          afectacionRecord: af,
+          matchDetail: `Central ${af.central} (${af.fechaInicio || 'Inicio'} a ${af.fechaFin || 'Sin fin'})`
+        };
+      }
+    }
+  }
+
+  // 1.4 Global (Todo el sector/recuadro) dentro del rango de fecha
+  for (const af of activeAfectaciones) {
+    if (af.scope === 'global' && (af.fechaInicio || af.fechaFin)) {
+      if (isReportDateWithinRange(itemDateYMD, af.fechaInicio, af.fechaFin)) {
+        return {
+          afectacion: af.motivo.trim(),
+          afectacionRecord: af,
+          matchDetail: `Afectación Global (${af.fechaInicio || 'Inicio'} a ${af.fechaFin || 'Sin fin'})`
+        };
+      }
+    }
+  }
+
+  // =========================================================================
+  // FASE 2: AFECTACIONES CONFIGURADAS EN TAREAS TÉCNICAS DENTRO DEL RANGO DE FECHA
+  // =========================================================================
   if (tasks && tasks.length > 0) {
     for (const task of tasks) {
       if (!task.hasAfectacion || !task.afectacionMotivo) continue;
-      if (!isDateInRange(task.afectacionFechaInicio, task.afectacionFechaFin)) continue;
-
-      const taskCable = (task.cable || '').trim().toUpperCase();
-      const sharesCable =
-        (itemCable && itemCable === taskCable) ||
-        (itemCableP && itemCableP === taskCable) ||
-        (itemCableS && itemCableS === taskCable);
-
-      const sharesService = task.serviceNumbers?.some(sn => {
-        const cleanSn = sn.trim().toUpperCase();
-        return cleanSn === itemServicio || cleanSn === itemAsociado;
-      });
-
-      if (sharesCable || sharesService) {
-        return { afectacion: task.afectacionMotivo.trim() };
+      if (task.afectacionFechaInicio || task.afectacionFechaFin) {
+        if (!isReportDateWithinRange(itemDateYMD, task.afectacionFechaInicio, task.afectacionFechaFin)) continue;
+        const sharesCable = matchesCableTarget(task.cable);
+        const sharesService = matchesServiceTarget(task.serviceNumbers);
+        if (sharesCable || sharesService) {
+          return {
+            afectacion: task.afectacionMotivo.trim(),
+            matchDetail: `Tarea técnica en rango (${task.afectacionFechaInicio || 'Inicio'} a ${task.afectacionFechaFin || 'Sin fin'})`
+          };
+        }
       }
     }
   }
 
-  // 3. Revisar si en rawRowData del Excel original existe una columna AFECTACIONES
+  // =========================================================================
+  // FASE 3: AFECTACIONES INDEPENDIENTES PERMANENTES (SIN RESTRICCIÓN DE FECHAS)
+  // =========================================================================
+  for (const af of activeAfectaciones) {
+    if (!af.fechaInicio && !af.fechaFin) {
+      if (af.scope === 'services' && matchesServiceTarget(af.serviceNumbers)) {
+        return { afectacion: af.motivo.trim(), afectacionRecord: af, matchDetail: 'Servicio puntual (Permanente)' };
+      }
+      if (af.scope === 'cable' && af.cable && matchesCableTarget(af.cable)) {
+        return { afectacion: af.motivo.trim(), afectacionRecord: af, matchDetail: `Cable ${af.cable} (Permanente)` };
+      }
+      if (af.scope === 'central' && af.central && matchesCentralTarget(af.central)) {
+        return { afectacion: af.motivo.trim(), afectacionRecord: af, matchDetail: `Central ${af.central} (Permanente)` };
+      }
+      if (af.scope === 'global') {
+        return { afectacion: af.motivo.trim(), afectacionRecord: af, matchDetail: 'Global (Permanente)' };
+      }
+    }
+  }
+
+  // =========================================================================
+  // FASE 4: AFECTACIONES DE TAREAS TÉCNICAS PERMANENTES (Retrocompatibilidad)
+  // =========================================================================
+  if (tasks && tasks.length > 0) {
+    for (const task of tasks) {
+      if (!task.hasAfectacion || !task.afectacionMotivo) continue;
+      if (!task.afectacionFechaInicio && !task.afectacionFechaFin) {
+        const sharesCable = matchesCableTarget(task.cable);
+        const sharesService = matchesServiceTarget(task.serviceNumbers);
+        if (sharesCable || sharesService) {
+          return {
+            afectacion: task.afectacionMotivo.trim(),
+            matchDetail: 'Tarea técnica (Permanente)'
+          };
+        }
+      }
+    }
+  }
+
+  // =========================================================================
+  // FASE 5: COLUMNA AFECTACIONES ORIGINAL DEL ARCHIVO EXCEL
+  // =========================================================================
   if (item.rawRowData) {
     for (const [key, val] of Object.entries(item.rawRowData)) {
       const k = key.trim().toUpperCase();
       if (k.includes('AFECTACION') || k.includes('AFECTACIÓN') || k === 'MOTIVO') {
         const v = String(val || '').trim();
         if (v && v !== '-' && v.toUpperCase() !== 'NULL' && v.toUpperCase() !== 'UNDEFINED' && v.toLowerCase() !== 'sin afectacion') {
-          return { afectacion: v };
+          return { afectacion: v, matchDetail: 'Columna Excel original' };
         }
       }
     }

@@ -1263,6 +1263,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       afectacion,
       hasTask: Boolean(matchedTask),
       hasAfectacion: afectacion !== '-',
+      afectacionDetail: afecRes.matchDetail,
       terminal,
       direccion
     };
@@ -4770,12 +4771,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           </td>
                           <td className="py-3 px-4 text-xs">
                             {isPriority ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-400/25 border border-red-500/60 text-red-300 shadow-sm" title={info.afectacion}>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-400/25 border border-red-500/60 text-red-300 shadow-sm" title={info.afectacionDetail ? `${info.afectacion} (${info.afectacionDetail})` : info.afectacion}>
                                 <Star className="w-3 h-3 mr-1 fill-red-400 text-red-400 shrink-0" />
                                 <span>{info.hasAfectacion ? `PRIORIDAD - ${info.afectacion}` : 'PRIORIDAD'}</span>
                               </span>
                             ) : info.hasAfectacion ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-950/70 border border-rose-500/50 text-rose-300 shadow-sm" title={info.afectacion}>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-950/70 border border-rose-500/50 text-rose-300 shadow-sm" title={info.afectacionDetail ? `${info.afectacion} (${info.afectacionDetail})` : info.afectacion}>
                                 <AlertTriangle className="w-3 h-3 mr-1 text-rose-400 shrink-0" />
                                 <span className="truncate max-w-[130px]">{info.afectacion}</span>
                               </span>
