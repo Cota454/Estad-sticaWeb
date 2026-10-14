@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx-js-style';
 import Papa from 'papaparse';
-import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig, AuxiliaryExcelData, AuxiliaryExcelFileInfo } from '../types/ipCablesTypes';
+import { IpCableRow, IpCableExcelParseResult, CableClassificationRules, ZoneConfig, AuxiliaryExcelData, AuxiliaryExcelFileInfo, PriorityServiceItem } from '../types/ipCablesTypes';
 
 /**
  * Calculates delay in days from item raw data or fechaReporte
@@ -1205,8 +1205,9 @@ export function countAuxiliaryMatches(
 /**
  * Crea un comprobador optimizado para determinar si un servicio o asociado
  * coincide con la lista de Servicios PRIORIDAD.
+ * Soporta tanto cadenas de texto como objetos PriorityServiceItem ({ service, comment }).
  */
-export function createPriorityServiceMatcher(priorityList: string[] | undefined | null) {
+export function createPriorityServiceMatcher(priorityList: (string | PriorityServiceItem)[] | undefined | null) {
   if (!priorityList || priorityList.length === 0) {
     return (_service?: any, _asociado?: any) => false;
   }
@@ -1214,7 +1215,9 @@ export function createPriorityServiceMatcher(priorityList: string[] | undefined 
   const digitsSet = new Set<string>();
   const noZerosSet = new Set<string>();
 
-  priorityList.forEach(p => {
+  priorityList.forEach(item => {
+    const p = typeof item === 'string' ? item : item?.service;
+    if (!p) return;
     const raw = normalizeServiceKey(p);
     if (raw) exactSet.add(raw);
     const d = extractDigitsService(p);
@@ -1245,16 +1248,85 @@ export function createPriorityServiceMatcher(priorityList: string[] | undefined 
 }
 
 /**
+ * Obtiene el comentario de un servicio o asociado si coincide con la lista de Servicios PRIORIDAD.
+ */
+export function getPriorityServiceComment(
+  service: string | number | undefined | null,
+  priorityList: (string | PriorityServiceItem)[] | undefined | null,
+  asociado?: string | number | undefined | null
+): string {
+  if (!priorityList || priorityList.length === 0) return '';
+  for (const item of priorityList) {
+    const srvStr = typeof item === 'string' ? item : item?.service;
+    const comment = typeof item === 'string' ? '' : (item?.comment || '');
+    if (!srvStr) continue;
+    const singleMatcher = createPriorityServiceMatcher([srvStr]);
+    if (singleMatcher(service, asociado)) {
+      return comment.trim();
+    }
+  }
+  return '';
+}
+
+/**
  * Determina directamente si un servicio o asociado coincide con la lista de PRIORIDAD.
  */
 export function isPriorityServiceMatch(
   service: string | number | undefined | null,
-  priorityList: string[] | undefined | null,
+  priorityList: (string | PriorityServiceItem)[] | undefined | null,
   asociado?: string | number | undefined | null
 ): boolean {
   if (!priorityList || priorityList.length === 0) return false;
   const matcher = createPriorityServiceMatcher(priorityList);
   return matcher(service, asociado);
+}
+
+/**
+ * Limpia y normaliza el campo Terminal para Red Flexible:
+ * 1. Elimina espacios en blanco, guiones y caracteres especiales.
+ * 2. Toma los dos últimos caracteres de la columna Cable S.
+ * 3. Si el Terminal limpio contiene esos dos últimos caracteres (Opción B):
+ *    Se quitan solo esos dos caracteres del Terminal; y si queda vacío o es '-', se deja en blanco ('').
+ */
+export function cleanFlexibleTerminal(rawTerminal: any, rawCableS: any): string {
+  if (rawTerminal === undefined || rawTerminal === null) return '';
+  const strTerminal = String(rawTerminal).trim();
+  if (!strTerminal || strTerminal === '-') return '';
+
+  // 1. Eliminar espacios en blanco, guiones y caracteres especiales de la columna Terminal (dejar solo caracteres alfanuméricos)
+  const cleanTerminal = strTerminal.replace(/[^a-zA-Z0-9]/g, '').trim();
+  if (!cleanTerminal || cleanTerminal === '-') return '';
+
+  // 2. Extraer los dos últimos valores de la columna Cable S
+  const strCS = String(rawCableS || '').trim();
+  if (!strCS || strCS === '-' || strCS.toUpperCase() === 'SIN CABLE' || strCS.toUpperCase() === 'S/D') {
+    return cleanTerminal;
+  }
+
+  // Limpiar Cable S de caracteres especiales para tomar sus 2 últimos valores reales
+  const cleanCS = strCS.replace(/[^a-zA-Z0-9]/g, '').trim();
+  if (cleanCS.length < 2) {
+    return cleanTerminal;
+  }
+
+  const lastTwo = cleanCS.slice(-2);
+
+  // 3. Si en el terminal limpio se contienen esos dos últimos valores (Opción B: quitar solo esos dos caracteres)
+  const lastTwoUpper = lastTwo.toUpperCase();
+  const cleanTerminalUpper = cleanTerminal.toUpperCase();
+
+  if (cleanTerminalUpper.includes(lastTwoUpper)) {
+    // Reemplazar de forma insensible a mayúsculas solo la ocurrencia de esos dos caracteres
+    const escaped = lastTwo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'gi');
+    const stripped = cleanTerminal.replace(regex, '').trim();
+    if (!stripped || stripped === '-') {
+      return ''; // Dejar en blanco si queda vacío
+    }
+    return stripped;
+  }
+
+  return cleanTerminal;
 }
 
 /**

@@ -110,7 +110,9 @@ import {
   mergeAuxiliaryExcelDatasets,
   getAuxiliaryDataForService,
   countAuxiliaryMatches,
-  createPriorityServiceMatcher
+  createPriorityServiceMatcher,
+  getPriorityServiceComment,
+  cleanFlexibleTerminal
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -1254,7 +1256,14 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const afecRes = resolveItemAfectacion(item, cableAfectaciones, cableTasks);
     const afectacion = afecRes.afectacion;
 
-    const terminal = extractTerminalFromItem(item) || (matchedTask?.terminalDireccion ? matchedTask.terminalDireccion : '-');
+    const isFlex = item.networkType === 'flexible' || (item.networkTypeLabel && item.networkTypeLabel.toLowerCase().includes('flexible'));
+    const rawTerminal = extractTerminalFromItem(item) || (matchedTask?.terminalDireccion ? matchedTask.terminalDireccion : '');
+    let terminal = rawTerminal;
+    if (isFlex) {
+      terminal = cleanFlexibleTerminal(rawTerminal, item.cableS);
+    } else {
+      if (!terminal) terminal = '-';
+    }
     const direccion = extractDireccionFromItem(item) || '-';
 
     return {
@@ -1561,6 +1570,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
+    const hasPriorityInExport = displayModalServices.some(item => isPriorityItem(item.servicio, item.asociado));
+
     const exportData = displayModalServices.map(item => {
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
@@ -1602,7 +1613,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Par P': item.parP || '-',
         'Cable S': cableSVal,
         'Par S': item.parS || '-',
-        'Terminal': info.terminal || '-',
+        'Terminal': info.terminal || '',
         'Dirección': info.direccion || '-',
         'Grupo': item.grupo || 'GENERAL',
         'Clasificación Red': clasifRed,
@@ -1612,6 +1623,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Tarea o Trabajo': info.taskName || '-',
         'PROBLEMA': prob || '-'
       };
+
+      // Columna adicional solo en caso de existir un servicio PRIORIDAD
+      if (hasPriorityInExport) {
+        row['Comentario Prioridad'] = isPriority
+          ? (getPriorityServiceComment(item.servicio, cableRules.priorityServices, item.asociado) || 'PRIORIDAD')
+          : '-';
+      }
 
       if (auxCols.length > 0) {
         const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData, item.asociado);
@@ -1661,6 +1679,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       { wch: 36 }, // Tarea o Trabajo
       { wch: 22 }  // PROBLEMA
     ];
+
+    if (hasPriorityInExport) {
+      colWidths.push({ wch: 30 }); // Comentario Prioridad
+    }
 
     if (auxCols.length > 0) {
       auxCols.forEach(colName => {
@@ -1868,6 +1890,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
+    const hasPriorityInExport = excelData.consolidatedRows.some(item => isPriorityItem(item.servicio, item.asociado));
+
     const exportData = excelData.consolidatedRows.map(item => {
       const info = getItemTaskInfo(item);
       const asoc = extractAsociadoFromItem(item);
@@ -1909,7 +1933,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Par P': item.parP || '-',
         'Cable S': cableSVal,
         'Par S': item.parS || '-',
-        'Terminal': info.terminal || '-',
+        'Terminal': info.terminal || '',
         'Dirección': info.direccion || '-',
         'Grupo': item.grupo || 'GENERAL',
         'Clasificación Red': clasifRed,
@@ -1919,6 +1943,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         'Tarea o Trabajo': info.taskName || '-',
         'PROBLEMA': prob || '-'
       };
+
+      // Columna adicional solo en caso de existir un servicio PRIORIDAD
+      if (hasPriorityInExport) {
+        row['Comentario Prioridad'] = isPriority
+          ? (getPriorityServiceComment(item.servicio, cableRules.priorityServices, item.asociado) || 'PRIORIDAD')
+          : '-';
+      }
 
       if (auxCols.length > 0) {
         const auxRec = getAuxiliaryDataForService(item.servicio, auxiliaryData, item.asociado);
@@ -1967,6 +1998,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       { wch: 36 }, // Tarea o Trabajo
       { wch: 22 }  // PROBLEMA
     ];
+
+    if (hasPriorityInExport) {
+      colWidths.push({ wch: 30 }); // Comentario Prioridad
+    }
 
     if (auxCols.length > 0) {
       auxCols.forEach(colName => {
@@ -4589,70 +4624,78 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
 
               {/* Copy Table Button with all columns including auxiliary ones (sin columna N°) */}
-              <CopyTableButton
-                headers={[
-                  'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA',
-                  ...(auxiliaryData?.extraColumnNames || [])
-                ]}
-                rows={[
-                  ...displayModalServices.map(s => {
-                    const info = getItemTaskInfo(s);
-                    const matchedZone = findMatchingZoneForItem(s, zones);
-                    const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
-                    const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData, s.asociado);
-                    const auxVals = (auxiliaryData?.extraColumnNames || []).map(col => {
-                      const v = auxRec?.[col];
-                      return v !== undefined && v !== '' ? String(v) : '-';
-                    });
+              {(() => {
+                const hasPriorityInModal = displayModalServices.some(s => isPriorityItem(s.servicio, s.asociado));
+                return (
+                  <CopyTableButton
+                    headers={[
+                      'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES',
+                      ...(hasPriorityInModal ? ['COMENTARIO PRIORIDAD'] : []),
+                      'TAREA O TRABAJO', 'PROBLEMA',
+                      ...(auxiliaryData?.extraColumnNames || [])
+                    ]}
+                    rows={[
+                      ...displayModalServices.map(s => {
+                        const info = getItemTaskInfo(s);
+                        const matchedZone = findMatchingZoneForItem(s, zones);
+                        const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+                        const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData, s.asociado);
+                        const auxVals = (auxiliaryData?.extraColumnNames || []).map(col => {
+                          const v = auxRec?.[col];
+                          return v !== undefined && v !== '' ? String(v) : '-';
+                        });
 
-                    let clasifRed = s.networkTypeLabel || 'Red Rígida';
-                    if (
-                      clasifRed === 'Otra Red / General' ||
-                      clasifRed === 'Otra Red' ||
-                      clasifRed === 'General' ||
-                      clasifRed === '-' ||
-                      clasifRed === 'Sin clasificar'
-                    ) {
-                      clasifRed = 'Red Rígida';
-                    }
+                        let clasifRed = s.networkTypeLabel || 'Red Rígida';
+                        if (
+                          clasifRed === 'Otra Red / General' ||
+                          clasifRed === 'Otra Red' ||
+                          clasifRed === 'General' ||
+                          clasifRed === '-' ||
+                          clasifRed === 'Sin clasificar'
+                        ) {
+                          clasifRed = 'Red Rígida';
+                        }
 
-                    const isFlex = s.networkType === 'flexible' || (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes('flexible'));
-                    const hasCableS = s.cableS && s.cableS.trim() !== '' && s.cableS.trim() !== '-' && s.cableS.trim().toUpperCase() !== 'S/D' && s.cableS.trim().toUpperCase() !== 'SIN CABLE';
-                    const cableSVal = hasCableS ? s.cableS : (isFlex ? (s.flexibleAssignedName || 'Red Flexible') : '-');
+                        const isFlex = s.networkType === 'flexible' || (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes('flexible'));
+                        const hasCableS = s.cableS && s.cableS.trim() !== '' && s.cableS.trim() !== '-' && s.cableS.trim().toUpperCase() !== 'S/D' && s.cableS.trim().toUpperCase() !== 'SIN CABLE';
+                        const cableSVal = hasCableS ? s.cableS : (isFlex ? (s.flexibleAssignedName || 'Red Flexible') : '-');
 
-                    const isPriority = isPriorityItem(s.servicio, s.asociado);
-                    let afectacionVal = info.afectacion && info.afectacion !== '-' ? info.afectacion : '';
-                    if (isPriority) {
-                      afectacionVal = afectacionVal ? `PRIORIDAD - ${afectacionVal}` : 'PRIORIDAD';
-                    } else if (!afectacionVal) {
-                      afectacionVal = '-';
-                    }
+                        const isPriority = isPriorityItem(s.servicio, s.asociado);
+                        let afectacionVal = info.afectacion && info.afectacion !== '-' ? info.afectacion : '';
+                        if (isPriority) {
+                          afectacionVal = afectacionVal ? `PRIORIDAD - ${afectacionVal}` : 'PRIORIDAD';
+                        } else if (!afectacionVal) {
+                          afectacionVal = '-';
+                        }
 
-                    return [
-                      s.servicio,
-                      extractAsociadoFromItem(s) || '-',
-                      zonaName,
-                      s.central,
-                      s.cableP || '-',
-                      s.parP || '-',
-                      cableSVal,
-                      s.parS || '-',
-                      info.terminal || '-',
-                      info.direccion || '-',
-                      s.grupo || 'GENERAL',
-                      clasifRed,
-                      `${getDemoraDays(s)} días`,
-                      s.fechaReporte || '-',
-                      afectacionVal,
-                      info.taskName || '-',
-                      extractProblemaFromItem(s) || '-',
-                      ...auxVals
-                    ];
-                  }),
-                  ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
-                ]}
-                label="Copiar Servicios"
-              />
+                        return [
+                          s.servicio,
+                          extractAsociadoFromItem(s) || '-',
+                          zonaName,
+                          s.central,
+                          s.cableP || '-',
+                          s.parP || '-',
+                          cableSVal,
+                          s.parS || '-',
+                          info.terminal || '-',
+                          info.direccion || '-',
+                          s.grupo || 'GENERAL',
+                          clasifRed,
+                          `${getDemoraDays(s)} días`,
+                          s.fechaReporte || '-',
+                          afectacionVal,
+                          ...(hasPriorityInModal ? [isPriority ? (getPriorityServiceComment(s.servicio, cableRules.priorityServices, s.asociado) || 'PRIORIDAD') : '-'] : []),
+                          info.taskName || '-',
+                          extractProblemaFromItem(s) || '-',
+                          ...auxVals
+                        ];
+                      }),
+                      ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...(hasPriorityInModal ? ['-'] : []), '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
+                    ]}
+                    label="Copiar Servicios"
+                  />
+                );
+              })()}
             </div>
 
             {/* Table Container */}
@@ -4718,6 +4761,12 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 </span>
                               )}
                             </div>
+                            {isPriority && getPriorityServiceComment(item.servicio, cableRules.priorityServices, item.asociado) && (
+                              <div className="text-[10px] text-amber-300/90 font-sans font-medium flex items-center space-x-1 mt-0.5">
+                                <span className="text-amber-500 font-bold">Caso:</span>
+                                <span className="truncate">{getPriorityServiceComment(item.servicio, cableRules.priorityServices, item.asociado)}</span>
+                              </div>
+                            )}
                             {extractAsociadoFromItem(item) && (
                               <div className="text-[10px] text-cyan-300 font-mono font-normal flex items-center space-x-1 mt-0.5">
                                 <span className="text-slate-400">Asoc:</span>
@@ -4738,7 +4787,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                             {item.cableS || '-'}{item.parS ? <span className="text-slate-400 font-sans text-[10px] ml-1">({item.parS})</span> : ''}
                           </td>
                           <td className="py-3 px-4 text-slate-300 font-mono text-xs">
-                            {info.terminal !== '-' ? (
+                            {info.terminal && info.terminal !== '-' ? (
                               <span className="text-white font-bold bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
                                 {info.terminal}
                               </span>

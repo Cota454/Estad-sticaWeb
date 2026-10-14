@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { CableClassificationRules, IpCableRow } from '../types/ipCablesTypes';
+import { CableClassificationRules, IpCableRow, PriorityServiceItem } from '../types/ipCablesTypes';
 import { saveCableRules } from '../utils/ipCablesStorage';
 import { cleanCableName, isCableExactMatch, createPriorityServiceMatcher } from '../utils/ipCablesExcelParser';
 import {
@@ -45,10 +45,14 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
 
   // Servicios PRIORIDAD State (Cuadro 1)
   const [newPriorityInput, setNewPriorityInput] = useState<string>('');
+  const [newPriorityComment, setNewPriorityComment] = useState<string>('');
+  const [priorityError, setPriorityError] = useState<string>('');
   const [editingPriorityIdx, setEditingPriorityIdx] = useState<number | null>(null);
   const [editPriorityVal, setEditPriorityVal] = useState<string>('');
+  const [editPriorityComment, setEditPriorityComment] = useState<string>('');
   const [isBulkPasteOpen, setIsBulkPasteOpen] = useState<boolean>(false);
   const [bulkPasteText, setBulkPasteText] = useState<string>('');
+  const [bulkPasteDefaultComment, setBulkPasteDefaultComment] = useState<string>('');
   const [prioritySearchTerm, setPrioritySearchTerm] = useState<string>('');
 
   // Red Flexible Input
@@ -133,7 +137,12 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
   // ------------------------------------
   // 1. SERVICIOS PRIORIDAD (Cuadro 1)
   // ------------------------------------
-  const priorityList = useMemo(() => rules.priorityServices || [], [rules.priorityServices]);
+  const priorityList: PriorityServiceItem[] = useMemo(() => {
+    return (rules.priorityServices || []).map(p => {
+      if (typeof p === 'string') return { service: p.trim(), comment: '' };
+      return { service: String(p?.service || '').trim(), comment: String(p?.comment || '').trim() };
+    }).filter(p => Boolean(p.service));
+  }, [rules.priorityServices]);
 
   // Conteo de coincidencias en el reporte cargado activo
   const { priorityReportedCounts, totalReportedPriorityMatches } = useMemo(() => {
@@ -143,74 +152,124 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
       return { priorityReportedCounts: counts, totalReportedPriorityMatches: 0 };
     }
     priorityList.forEach(item => {
-      const singleMatcher = createPriorityServiceMatcher([item]);
+      const singleMatcher = createPriorityServiceMatcher([item.service]);
       const matchedRows = consolidatedRows.filter(r => singleMatcher(r.servicio, r.asociado));
-      counts[item] = matchedRows.length;
+      counts[item.service] = matchedRows.length;
       total += matchedRows.length;
     });
     return { priorityReportedCounts: counts, totalReportedPriorityMatches: total };
   }, [priorityList, consolidatedRows]);
 
   const handleAddPriority = () => {
-    if (!newPriorityInput.trim()) return;
-    const parts = newPriorityInput.split(/[\n,;]+/);
-    const currentList = [...priorityList];
-    let addedCount = 0;
+    setPriorityError('');
+    const cleanSrv = newPriorityInput.trim().toUpperCase();
+    const cleanComment = newPriorityComment.trim();
 
-    parts.forEach(p => {
-      const trimmed = p.trim().toUpperCase();
-      if (trimmed && !currentList.includes(trimmed)) {
-        currentList.push(trimmed);
-        addedCount++;
-      }
-    });
-
-    if (addedCount > 0) {
-      const updated = { ...rules, priorityServices: currentList };
-      saveCableRules(updated);
-      onRulesUpdated(updated);
-      triggerToast(`Se añadieron ${addedCount} servicio(s) PRIORIDAD.`);
+    if (!cleanSrv) {
+      setPriorityError('Debe ingresar el número de servicio.');
+      return;
     }
+    if (!cleanComment) {
+      setPriorityError('El comentario o nombre de caso es obligatorio.');
+      return;
+    }
+
+    const currentList = [...priorityList];
+    const existingIdx = currentList.findIndex(p => p.service === cleanSrv);
+    if (existingIdx >= 0) {
+      currentList[existingIdx] = { service: cleanSrv, comment: cleanComment };
+      triggerToast(`Servicio ${cleanSrv} actualizado con nuevo comentario.`);
+    } else {
+      currentList.push({ service: cleanSrv, comment: cleanComment });
+      triggerToast(`Servicio PRIORIDAD ${cleanSrv} añadido.`);
+    }
+
+    const updated = { ...rules, priorityServices: currentList };
+    saveCableRules(updated);
+    onRulesUpdated(updated);
     setNewPriorityInput('');
+    setNewPriorityComment('');
+    setPriorityError('');
   };
 
   const handleBulkPastePriority = () => {
+    setPriorityError('');
     if (!bulkPasteText.trim()) return;
-    const parts = bulkPasteText.split(/[\r\n,;\t]+/);
+
+    const lines = bulkPasteText.split(/[\r\n]+/);
     const currentList = [...priorityList];
     let addedCount = 0;
+    let updatedCount = 0;
 
-    parts.forEach(p => {
-      const trimmed = p.trim().toUpperCase();
-      if (trimmed && !currentList.includes(trimmed)) {
-        currentList.push(trimmed);
-        addedCount++;
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      let srv = '';
+      let comment = '';
+
+      if (trimmed.includes('\t')) {
+        const parts = trimmed.split('\t');
+        srv = (parts[0] || '').trim().toUpperCase();
+        comment = parts.slice(1).join(' ').trim();
+      } else if (trimmed.includes(';') || trimmed.includes(',')) {
+        const parts = trimmed.split(/[;,]/);
+        srv = (parts[0] || '').trim().toUpperCase();
+        comment = parts.slice(1).join(' ').trim();
+      } else {
+        srv = trimmed.toUpperCase();
+        comment = bulkPasteDefaultComment.trim() || 'Caso Prioritario';
+      }
+
+      if (!comment && bulkPasteDefaultComment.trim()) {
+        comment = bulkPasteDefaultComment.trim();
+      }
+      if (!comment) {
+        comment = 'Caso Prioritario';
+      }
+
+      if (srv) {
+        const existingIdx = currentList.findIndex(p => p.service === srv);
+        if (existingIdx >= 0) {
+          currentList[existingIdx] = { service: srv, comment };
+          updatedCount++;
+        } else {
+          currentList.push({ service: srv, comment });
+          addedCount++;
+        }
       }
     });
 
-    if (addedCount > 0) {
+    if (addedCount > 0 || updatedCount > 0) {
       const updated = { ...rules, priorityServices: currentList };
       saveCableRules(updated);
       onRulesUpdated(updated);
-      triggerToast(`Carga masiva completada: ${addedCount} nuevo(s) servicio(s) PRIORIDAD guardados.`);
+      triggerToast(`Carga masiva: ${addedCount} añadidos, ${updatedCount} actualizados.`);
     } else {
-      triggerToast('No se encontraron nuevos servicios válidos para agregar.');
+      triggerToast('No se encontraron servicios válidos.');
     }
     setBulkPasteText('');
+    setBulkPasteDefaultComment('');
     setIsBulkPasteOpen(false);
   };
 
-  const handleStartEditPriority = (idx: number, currentVal: string) => {
+  const handleStartEditPriority = (idx: number, item: PriorityServiceItem) => {
     setEditingPriorityIdx(idx);
-    setEditPriorityVal(currentVal);
+    setEditPriorityVal(item.service);
+    setEditPriorityComment(item.comment);
   };
 
   const handleSaveEditPriority = (idx: number) => {
-    const trimmed = editPriorityVal.trim().toUpperCase();
-    if (!trimmed) return;
+    const trimmedSrv = editPriorityVal.trim().toUpperCase();
+    const trimmedComment = editPriorityComment.trim();
+    if (!trimmedSrv) return;
+    if (!trimmedComment) {
+      alert('El comentario o nombre de caso es obligatorio.');
+      return;
+    }
 
     const updatedList = [...priorityList];
-    updatedList[idx] = trimmed;
+    updatedList[idx] = { service: trimmedSrv, comment: trimmedComment };
 
     const updated = { ...rules, priorityServices: updatedList };
     saveCableRules(updated);
@@ -487,33 +546,72 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
             </div>
 
             <p className="text-xs text-slate-400">
-              Añada números de teléfono o abonados críticos. Se detectarán automáticamente en reportes, se resaltarán en amarillo suave y letra roja en Excel y en la web, y se marcarán como <strong>PRIORIDAD</strong> en Afectaciones.
+              Añada números de teléfono o abonados críticos con su <strong>comentario o nombre de caso</strong> (obligatorio). Se detectarán automáticamente en reportes, se resaltarán en amarillo suave y letra roja en Excel y la web, y en las descargas se incluirá la columna <strong>CASO PRIORIDAD</strong>.
             </p>
+
+            {/* Error Message if Validation Fails */}
+            {priorityError && (
+              <div className="p-2.5 bg-rose-950/80 border border-rose-500/50 rounded-xl text-rose-300 text-xs flex items-center space-x-1.5 animate-in fade-in">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                <span>{priorityError}</span>
+              </div>
+            )}
 
             {/* Input Form & Acciones */}
             <div className="space-y-2">
-              <div className="flex items-center space-x-2">
-                <input
-                  type="text"
-                  placeholder="Servicio(s) (ej: 48210001, 78301234)"
-                  value={newPriorityInput}
-                  onChange={(e) => setNewPriorityInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddPriority();
-                    }
-                  }}
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase focus:outline-none focus:border-amber-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddPriority}
-                  className="px-3.5 py-2.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md shrink-0 cursor-pointer active:scale-95"
-                >
-                  + Añadir
-                </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                    Número de Servicio <span className="text-rose-400">*</span>:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. 48210001"
+                    value={newPriorityInput}
+                    onChange={(e) => {
+                      setNewPriorityInput(e.target.value);
+                      if (priorityError) setPriorityError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddPriority();
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                    Comentario / Nombre Caso <span className="text-rose-400">*</span>:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Cliente VIP - Hospital"
+                    value={newPriorityComment}
+                    onChange={(e) => {
+                      setNewPriorityComment(e.target.value);
+                      if (priorityError) setPriorityError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddPriority();
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
               </div>
+
+              <button
+                type="button"
+                onClick={handleAddPriority}
+                className="w-full py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md cursor-pointer active:scale-95 flex items-center justify-center space-x-1"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Añadir Servicio PRIORIDAD</span>
+              </button>
 
               {/* Botones de Carga Masiva y Limpiar */}
               <div className="flex items-center justify-between text-xs pt-1">
@@ -523,7 +621,7 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
                   className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-xl text-[11px] font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
                 >
                   <ClipboardPaste className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{isBulkPasteOpen ? 'Ocultar Pegado Masivo' : '📋 Pegar Columna de Excel'}</span>
+                  <span>{isBulkPasteOpen ? 'Ocultar Pegado Masivo' : '📋 Pegar desde Excel (Servicio + Comentario)'}</span>
                 </button>
 
                 {priorityList.length > 0 && (
@@ -539,23 +637,38 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
 
               {/* Área de Pegado Masivo */}
               {isBulkPasteOpen && (
-                <div className="p-3 bg-slate-950 rounded-2xl border border-amber-500/40 space-y-2 animate-in fade-in">
-                  <span className="text-[11px] font-bold text-amber-300 block">
-                    Pegar lista masiva (una por línea o separados por coma):
-                  </span>
+                <div className="p-3 bg-slate-950 rounded-2xl border border-amber-500/40 space-y-2.5 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-300 block">
+                      Pegar lista desde Excel (admite 2 columnas: Servicio [Tab] Comentario):
+                    </span>
+                  </div>
                   <textarea
                     rows={4}
                     value={bulkPasteText}
                     onChange={(e) => setBulkPasteText(e.target.value)}
-                    placeholder="48210001&#10;48210002&#10;48210003..."
+                    placeholder="48210001&#9;Cliente VIP Hospital&#10;48210002&#9;Fiscalía Central&#10;48210003..."
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500 resize-none"
                   />
-                  <div className="flex justify-end space-x-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-medium block mb-1">
+                      Comentario por defecto (si la línea solo contiene el número):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Caso Prioritario Lote 1"
+                      value={bulkPasteDefaultComment}
+                      onChange={(e) => setBulkPasteDefaultComment(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="flex justify-end space-x-2 pt-1">
                     <button
                       type="button"
                       onClick={() => {
                         setIsBulkPasteOpen(false);
                         setBulkPasteText('');
+                        setBulkPasteDefaultComment('');
                       }}
                       className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg cursor-pointer"
                     >
@@ -573,13 +686,13 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
               )}
             </div>
 
-            {/* Buscador interno si hay más de 4 servicios */}
-            {priorityList.length > 4 && (
+            {/* Buscador interno por servicio o comentario */}
+            {priorityList.length > 2 && (
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
                 <input
                   type="text"
-                  placeholder="Buscar en la lista..."
+                  placeholder="Buscar por número o comentario de caso..."
                   value={prioritySearchTerm}
                   onChange={(e) => setPrioritySearchTerm(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
@@ -595,64 +708,89 @@ export const CableClassificationView: React.FC<CableClassificationViewProps> = (
                 </div>
               ) : (
                 priorityList
-                  .filter(srv => !prioritySearchTerm || srv.toUpperCase().includes(prioritySearchTerm.trim().toUpperCase()))
-                  .map((srv, originalIdx) => {
-                    const actualIdx = priorityList.indexOf(srv);
-                    const matchCount = priorityReportedCounts[srv] || 0;
+                  .filter(item => {
+                    if (!prioritySearchTerm) return true;
+                    const q = prioritySearchTerm.trim().toUpperCase();
+                    return item.service.toUpperCase().includes(q) || item.comment.toUpperCase().includes(q);
+                  })
+                  .map((item, originalIdx) => {
+                    const actualIdx = priorityList.findIndex(p => p.service === item.service);
+                    const matchCount = priorityReportedCounts[item.service] || 0;
                     const isReported = matchCount > 0;
 
                     return (
                       <div
-                        key={`${srv}_${actualIdx}`}
-                        className={`p-2 rounded-xl border text-xs font-mono transition-all ${
+                        key={`${item.service}_${actualIdx}`}
+                        className={`p-2.5 rounded-xl border text-xs font-mono transition-all ${
                           isReported
                             ? 'bg-amber-950/40 border-amber-500/50 text-amber-200 shadow-sm'
                             : 'bg-slate-900 border-slate-800/80 text-slate-300'
                         }`}
                       >
                         {editingPriorityIdx === actualIdx ? (
-                          <div className="flex items-center space-x-1.5">
-                            <input
-                              type="text"
-                              value={editPriorityVal}
-                              onChange={(e) => setEditPriorityVal(e.target.value)}
-                              className="flex-1 bg-slate-950 border border-amber-500 p-1.5 rounded text-xs text-white font-mono uppercase"
-                            />
-                            <button
-                              onClick={() => handleSaveEditPriority(actualIdx)}
-                              className="p-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded cursor-pointer"
-                              title="Guardar"
-                            >
-                              <Save className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => setEditingPriorityIdx(null)}
-                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded cursor-pointer"
-                              title="Cancelar"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              <input
+                                type="text"
+                                value={editPriorityVal}
+                                onChange={(e) => setEditPriorityVal(e.target.value)}
+                                placeholder="Servicio"
+                                className="bg-slate-950 border border-amber-500 p-1.5 rounded text-xs text-white font-mono uppercase"
+                              />
+                              <input
+                                type="text"
+                                value={editPriorityComment}
+                                onChange={(e) => setEditPriorityComment(e.target.value)}
+                                placeholder="Comentario / Caso"
+                                className="bg-slate-950 border border-amber-500 p-1.5 rounded text-xs text-white font-sans"
+                              />
+                            </div>
+                            <div className="flex justify-end space-x-1.5">
+                              <button
+                                onClick={() => setEditingPriorityIdx(null)}
+                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                onClick={() => handleSaveEditPriority(actualIdx)}
+                                className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded cursor-pointer flex items-center space-x-1"
+                              >
+                                <Save className="w-3 h-3" />
+                                <span>Guardar</span>
+                              </button>
+                            </div>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between font-bold">
-                            <div className="flex items-center space-x-2 truncate">
-                              <Star className={`w-3.5 h-3.5 shrink-0 ${isReported ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
-                              <span className={isReported ? 'text-amber-300 font-black' : 'text-slate-200'}>{srv}</span>
-                              {isReported ? (
-                                <span className="bg-red-950/80 text-red-300 border border-red-500/60 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider animate-pulse">
-                                  🚨 Reportado ({matchCount})
+                          <div className="flex items-start justify-between">
+                            <div className="space-y-1 truncate pr-2">
+                              <div className="flex items-center space-x-2">
+                                <Star className={`w-3.5 h-3.5 shrink-0 ${isReported ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
+                                <span className={isReported ? 'text-amber-300 font-black' : 'text-slate-200 font-bold'}>
+                                  {item.service}
                                 </span>
-                              ) : (
-                                <span className="text-[10px] text-slate-600 font-normal">
-                                  No reportado
-                                </span>
+                                {isReported ? (
+                                  <span className="bg-red-950/80 text-red-300 border border-red-500/60 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider animate-pulse">
+                                    🚨 Reportado ({matchCount})
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-slate-600 font-normal">
+                                    No reportado
+                                  </span>
+                                )}
+                              </div>
+                              {item.comment && (
+                                <div className="text-[11px] font-sans text-amber-300/90 font-medium truncate flex items-center space-x-1">
+                                  <span className="text-amber-500 font-bold text-[10px]">Caso:</span>
+                                  <span className="truncate">{item.comment}</span>
+                                </div>
                               )}
                             </div>
-                            <div className="flex items-center space-x-1 shrink-0 ml-2">
+                            <div className="flex items-center space-x-1 shrink-0">
                               <button
-                                onClick={() => handleStartEditPriority(actualIdx, srv)}
+                                onClick={() => handleStartEditPriority(actualIdx, item)}
                                 className="p-1 hover:text-amber-400 text-slate-400 transition-colors cursor-pointer"
-                                title="Editar servicio"
+                                title="Editar servicio y comentario"
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>

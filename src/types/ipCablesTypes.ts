@@ -14,9 +14,14 @@ export interface ZoneConfig {
   color?: string;
 }
 
+export interface PriorityServiceItem {
+  service: string;
+  comment: string; // Comentario o nombre del caso (obligatorio)
+}
+
 export interface CableClassificationRules {
   rigidaCables: string[]; // List of exact names or prefixes for Red Rígida
-  priorityServices?: string[]; // Lista de números de servicios prioritarios (PRIORIDAD)
+  priorityServices?: (string | PriorityServiceItem)[]; // Lista de servicios prioritarios (PRIORIDAD) con comentario de caso
   flexibleRules: { id: string; pattern: string; assignedName: string }[]; // Match in CABLE column
   outdoorRules: { id: string; centralPattern: string; assignedName: string }[]; // Match in CENTRAL TELEFONICA column
 }

@@ -79,6 +79,18 @@ export function loadCableRules(): CableClassificationRules {
       if (parsed) {
         if (!Array.isArray(parsed.priorityServices)) {
           parsed.priorityServices = [];
+        } else {
+          parsed.priorityServices = parsed.priorityServices
+            .map((item: any) => {
+              if (typeof item === 'string') {
+                return { service: item.trim(), comment: '' };
+              }
+              return {
+                service: String(item?.service || '').trim(),
+                comment: String(item?.comment || '').trim()
+              };
+            })
+            .filter((item: any) => Boolean(item.service));
         }
         if (!Array.isArray(parsed.rigidaCables)) {
           parsed.rigidaCables = DEFAULT_CABLE_RULES.rigidaCables;
