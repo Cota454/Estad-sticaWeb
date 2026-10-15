@@ -2530,292 +2530,41 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         </div>
       </div>
 
-      {/* Excel File Upload Banner Card */}
-      <div id="section-summary" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white shadow-xl space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          
-          <div className="flex items-center space-x-3">
-            <div className="p-3 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-2xl shrink-0">
-              <FileSpreadsheet className="w-6 h-6" />
-            </div>
-            <div className="space-y-0.5">
-              <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-sm text-white">Cargar Archivo Excel de Datos</span>
-                {excelData && (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>Cargado: <strong>{excelData.fileName}</strong> • Guardado permanente</span>
-                  </span>
-                )}
-              </div>
-              <p className="text-slate-400 text-xs">
-                Regla: <strong>Ignora las primeras 3 filas</strong>. La <strong>4ª fila</strong> contiene los encabezados. Consolida datos repetidos en la columna <strong>SERVICIO</strong>.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2 shrink-0">
-            <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-emerald-600/20 border border-emerald-400/30 flex items-center space-x-2">
-              {isParsing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              <span>{isParsing ? 'Procesando Excel...' : 'Subir Excel (.xlsx)'}</span>
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={handleFileUpload}
-                disabled={isParsing}
-                className="hidden"
-              />
-            </label>
-
-            {!excelData ? (
-              <button
-                onClick={handleLoadSampleData}
-                className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl border border-slate-700 transition-all"
-              >
-                Cargar Muestra
-              </button>
-            ) : (
-              <button
-                onClick={handleClearExcelData}
-                className="p-2.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition-all"
-                title="Limpiar datos Excel"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-        </div>
-
-        {parseError && (
-          <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold flex items-center space-x-2">
+      {/* Alertas y Notificaciones de procesamiento si aplican */}
+      {parseError && (
+        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-2xl text-xs font-semibold flex items-center justify-between shadow-lg">
+          <div className="flex items-center space-x-2">
             <Info className="w-4 h-4 text-rose-400 shrink-0" />
             <span>{parseError}</span>
           </div>
-        )}
-
-        {excelData && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-800 text-xs">
-            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block text-[10px] uppercase font-bold">Filas Leídas:</span>
-              <strong className="text-amber-400 font-mono text-sm">{excelData.totalRowsRead}</strong>
-            </div>
-            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block text-[10px] uppercase font-bold">Servicios Consolidados:</span>
-              <strong className="text-emerald-400 font-mono text-sm">{excelData.uniqueServicesCount}</strong>
-            </div>
-            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block text-[10px] uppercase font-bold">Centrales Únicas:</span>
-              <strong className="text-blue-400 font-mono text-sm">{excelData.uniqueCentrales.length}</strong>
-            </div>
-            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block text-[10px] uppercase font-bold">Cables Identificados:</span>
-              <strong className="text-indigo-400 font-mono text-sm">{excelData.uniqueCables.length}</strong>
-            </div>
-          </div>
-        )}
-
-        {/* SECCIÓN: ARCHIVO COMPLEMENTARIO / AUXILIAR (OPCIONAL - CRUCE MULTI-ARCHIVO POR SERVICIO) */}
-        <div className="pt-3 border-t border-slate-800">
-          <div className="bg-slate-950/80 border border-slate-800/90 rounded-2xl p-4 transition-all">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div className="flex items-start sm:items-center space-x-3">
-                <div className="p-2.5 bg-violet-500/20 text-violet-400 border border-violet-500/30 rounded-xl shrink-0">
-                  <Files className="w-5 h-5" />
-                </div>
-                <div className="space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-extrabold text-xs text-white">Excel Complementario (Opcional - Cruce Multi-Archivo por SERVICIO)</span>
-                    {auxiliaryData ? (
-                      <span className="bg-violet-500/20 text-violet-300 border border-violet-500/40 px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm">
-                        <CheckCircle2 className="w-3 h-3 text-violet-400 shrink-0" />
-                        <span>
-                          {auxiliaryData.filesInfo && auxiliaryData.filesInfo.length > 1
-                            ? `${auxiliaryData.filesInfo.length} archivos activos`
-                            : `Activo: ${auxiliaryData.fileName}`}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded-md font-medium">
-                        Sin archivos auxiliares cargados
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Sube uno o varios archivos Excel adicionales con la columna <strong>SERVICIO</strong> y columnas extra (Cliente, Técnico, Folio, etc.). El sistema analizará cada archivo y acumulará todas sus columnas en las descargas y reportes.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                {!auxiliaryData ? (
-                  <label className="cursor-pointer bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-lg shadow-violet-600/20 border border-violet-400/30 flex items-center space-x-1.5 cursor-pointer">
-                    {isParsingAux ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                    <span>{isParsingAux ? (auxProgressText || 'Procesando Excels...') : 'Subir Excel(s) Complementarios'}</span>
-                    <input
-                      type="file"
-                      accept=".xlsx, .xls, .csv"
-                      multiple
-                      onChange={(e) => handleAuxiliaryFileUpload(e, 'replace')}
-                      disabled={isParsingAux}
-                      className="hidden"
-                    />
-                  </label>
-                ) : (
-                  <>
-                    {/* Botón para anexar más archivos adicionales */}
-                    <label className="cursor-pointer bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs px-3 py-2 rounded-xl transition-all shadow-lg shadow-violet-600/20 border border-violet-400/30 flex items-center space-x-1.5 cursor-pointer">
-                      {isParsingAux ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                      <span>{isParsingAux ? (auxProgressText || 'Procesando...') : '+ Agregar más Excel(s)'}</span>
-                      <input
-                        type="file"
-                        accept=".xlsx, .xls, .csv"
-                        multiple
-                        onChange={(e) => handleAuxiliaryFileUpload(e, 'append')}
-                        disabled={isParsingAux}
-                        className="hidden"
-                      />
-                    </label>
-
-                    {/* Botón para reemplazar todo desde cero */}
-                    <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-2.5 py-2 rounded-xl border border-slate-700 transition-all flex items-center space-x-1 cursor-pointer" title="Reemplazar todos los archivos complementarios">
-                      <RotateCcw className="w-3 h-3 text-slate-400" />
-                      <span>Reemplazar</span>
-                      <input
-                        type="file"
-                        accept=".xlsx, .xls, .csv"
-                        multiple
-                        onChange={(e) => handleAuxiliaryFileUpload(e, 'replace')}
-                        disabled={isParsingAux}
-                        className="hidden"
-                      />
-                    </label>
-
-                    {/* Botón para limpiar todos los archivos */}
-                    <button
-                      onClick={handleClearAuxiliaryData}
-                      className="p-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                      title="Quitar todos los archivos complementarios"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Mensaje de progreso durante procesamiento */}
-            {isParsingAux && auxProgressText && (
-              <div className="mt-2.5 p-2.5 bg-violet-500/10 border border-violet-500/30 text-violet-300 rounded-xl text-xs font-semibold flex items-center space-x-2 animate-pulse">
-                <RefreshCw className="w-4 h-4 text-violet-400 animate-spin shrink-0" />
-                <span>{auxProgressText}</span>
-              </div>
-            )}
-
-            {/* Métricas y columnas detectadas de los archivos complementarios */}
-            {auxiliaryData && (
-              <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-3">
-                {/* Lista de archivos cargados */}
-                {auxiliaryData.filesInfo && auxiliaryData.filesInfo.length > 0 && (
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                      Archivos complementarios activos ({auxiliaryData.filesInfo.length}):
-                    </span>
-                    <div className="flex flex-wrap gap-2">
-                      {auxiliaryData.filesInfo.map((file, fIdx) => (
-                        <div
-                          key={`${file.fileName}_${fIdx}`}
-                          className="flex items-center space-x-2 bg-slate-900/90 border border-slate-800 px-2.5 py-1.5 rounded-xl text-xs"
-                        >
-                          <FileSpreadsheet className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                          <div className="flex flex-col">
-                            <span className="font-bold text-white text-[11px] truncate max-w-[200px]" title={file.fileName}>
-                              {file.fileName}
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {file.totalRows} filas • {file.columnsCount} cols extra
-                            </span>
-                          </div>
-                          {auxiliaryData.filesInfo && auxiliaryData.filesInfo.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveAuxiliaryFile(fIdx)}
-                              className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors cursor-pointer ml-1"
-                              title={`Remover "${file.fileName}"`}
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400 text-[10px] font-bold">ARCHIVOS:</span>
-                    <strong className="text-violet-300 font-mono text-xs">{auxiliaryData.filesInfo?.length || 1}</strong>
-                  </div>
-                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400 text-[10px] font-bold">TOTAL FILAS:</span>
-                    <strong className="text-violet-300 font-mono text-xs">{auxiliaryData.totalRows}</strong>
-                  </div>
-                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400 text-[10px] font-bold">SERVICIOS VINCULADOS:</span>
-                    <strong className="text-emerald-400 font-mono text-xs">
-                      {auxiliaryMatchesCount} / {excelData?.uniqueServicesCount || 0}
-                      {excelData?.uniqueServicesCount ? ` (${(((auxiliaryMatchesCount) / excelData.uniqueServicesCount) * 100).toFixed(1)}%)` : ''}
-                    </strong>
-                  </div>
-                  <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400 text-[10px] font-bold">COLUMNAS ANEXADAS:</span>
-                    <strong className="text-amber-300 font-mono text-xs">{auxiliaryData.extraColumnNames.length} columnas</strong>
-                  </div>
-                </div>
-
-                {/* Badges de columnas que se añadirán a las descargas */}
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-                    Columnas acumuladas anexadas a todos los Excel:
-                  </span>
-                  {auxiliaryData.extraColumnNames.map(col => (
-                    <span
-                      key={col}
-                      className="px-2 py-0.5 bg-violet-950/60 text-violet-200 border border-violet-700/50 rounded-md text-[10px] font-mono font-bold"
-                    >
-                      + {col}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {auxError && (
-              <div className="mt-2.5 p-2.5 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold flex items-center space-x-2">
-                <Info className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>{auxError}</span>
-              </div>
-            )}
-
-            {auxSuccessMessage && (
-              <div className="mt-2.5 p-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-xl text-xs font-semibold flex items-center justify-between space-x-2">
-                <div className="flex items-center space-x-2 truncate">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="truncate">{auxSuccessMessage}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAuxSuccessMessage(null)}
-                  className="text-emerald-400 hover:text-white p-0.5 rounded cursor-pointer shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-          </div>
+          <button onClick={() => setParseError(null)} className="text-rose-400 hover:text-white p-1 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
-      </div>
+      )}
+
+      {auxError && (
+        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-2xl text-xs font-semibold flex items-center space-x-2 shadow-lg">
+          <Info className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{auxError}</span>
+        </div>
+      )}
+
+      {auxSuccessMessage && (
+        <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-2xl text-xs font-semibold flex items-center justify-between space-x-2 shadow-lg">
+          <div className="flex items-center space-x-2 truncate">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate">{auxSuccessMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAuxSuccessMessage(null)}
+            className="text-emerald-400 hover:text-white p-0.5 rounded cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* PESTAÑA 1: MATRICES (CENTRALES Y ZONAS VS GRUPOS) */}
       {activeTab === 'matrices' && (
@@ -3054,123 +2803,64 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
             )}
 
             {/* BOTÓN FILTRO TPO SERV (NAUTA HOGAR PLUS y personalizables) */}
-            <div className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-              tpoServFilterActive
-                ? 'bg-emerald-950/30 border-emerald-500/60 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/30'
-                : 'bg-slate-950 border-slate-800 hover:border-slate-700/80'
-            }`}>
-              <div className="flex items-start md:items-center space-x-3">
-                <div className={`p-2.5 rounded-xl border shrink-0 ${
+            {/* Botones de Filtro Rápido: Columna TPO SERV y Servicios PRIORIDAD (sin recuadro grande) */}
+            <div className="flex flex-wrap items-center gap-2.5 py-1">
+              <button
+                type="button"
+                onClick={handleToggleTpoServFilter}
+                className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-md active:scale-95 ${
                   tpoServFilterActive
-                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                    : 'bg-slate-800/80 text-slate-400 border-slate-700'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30 ring-2 ring-emerald-400/50'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-emerald-500/50'
+                }`}
+                title="Presione para aplicar o retirar el filtro de Columna TPO SERV"
+              >
+                <Radio className={`w-4 h-4 ${tpoServFilterActive ? 'text-emerald-200 animate-pulse' : 'text-slate-400'}`} />
+                <span>{tpoServFilterActive ? 'Filtro TPO SERV Activo' : 'Filtrar por TPO SERV'}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                  tpoServFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-slate-900 text-emerald-400 border border-emerald-500/30'
                 }`}>
-                  <Radio className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-extrabold text-sm text-white flex items-center space-x-1.5">
-                      <span>Filtro de Columna "TPO SERV"</span>
-                    </span>
-                    {tpoServFilterActive ? (
-                      <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-500/50 text-[10px] px-2.5 py-0.5 rounded-md font-black tracking-wide flex items-center space-x-1">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                        <span>ACTIVO ({matchingTpoServCount} SERVICIOS COINCIDENTES)</span>
-                      </span>
-                    ) : (
-                      <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded-md font-semibold">
-                        Inactivo (Total coincidentes: {matchingTpoServCount})
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Filtra la columna <strong>TPO SERV</strong> por los tipos seleccionados (por defecto <strong>NAUTA HOGAR PLUS</strong> y permite agregar otros tipos).
-                  </p>
+                  {matchingTpoServCount}
+                </span>
+              </button>
 
-                  {/* Badges de tipos de servicio configurados */}
-                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                    {tpoServPatterns.map(pat => (
-                      <span
-                        key={pat}
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 rounded-lg text-[11px] font-bold font-mono"
-                      >
-                        <Tag className="w-3 h-3 text-emerald-400" />
-                        <span>{pat}</span>
-                        {tpoServPatterns.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRemoveTpoServPattern(pat);
-                            }}
-                            className="hover:text-red-400 ml-1 text-slate-400 cursor-pointer"
-                            title={`Quitar "${pat}"`}
-                          >
-                            ×
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setShowTpoServModal(true)}
-                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded-lg text-[10px] font-bold flex items-center space-x-1 transition-colors cursor-pointer"
-                      title="Agregar otros tipos de servicio a filtrar"
-                    >
-                      <span>+ Agregar / Cambiar Tipos</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowTpoServModal(true)}
+                className="px-3 py-2.5 bg-slate-800/80 hover:bg-slate-700 text-emerald-300 hover:text-white border border-slate-700 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-sm"
+                title="Configurar tipos de servicio a incluir en el filtro TPO SERV"
+              >
+                <Tag className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Tipos:</span>
+                <span className="font-mono">{tpoServPatterns.length}</span>
+              </button>
 
-              {/* Botones interactivos de filtro: TPO SERV y Servicios PRIORIDAD */}
-              <div className="flex flex-wrap items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/60">
-                <button
-                  type="button"
-                  onClick={handleToggleTpoServFilter}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-lg active:scale-95 ${
-                    tpoServFilterActive
-                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30 ring-2 ring-emerald-400/50'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-emerald-500/50'
-                  }`}
-                  title="Presione para aplicar o retirar el filtro de TPO SERV"
-                >
-                  <Radio className={`w-4 h-4 ${tpoServFilterActive ? 'text-emerald-200 animate-pulse' : 'text-slate-400'}`} />
-                  <span>{tpoServFilterActive ? 'Filtro TPO SERV Activo' : 'Filtrar por TPO SERV'}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                    tpoServFilterActive
-                      ? 'bg-white/20 text-white'
-                      : 'bg-slate-900 text-emerald-400 border border-emerald-500/30'
-                  }`}>
-                    {matchingTpoServCount}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPriorityFilterActive(!priorityFilterActive)}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-lg active:scale-95 ${
-                    priorityFilterActive
-                      ? 'bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-slate-950 font-black shadow-amber-500/30 ring-2 ring-amber-300'
-                      : priorityServicesReportedCount > 0
-                      ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-500/60 shadow-md shadow-amber-950/50'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                  }`}
-                  title="Presione para ver únicamente los Servicios PRIORIDAD reportados en este archivo"
-                >
-                  <Star className={`w-4 h-4 ${priorityFilterActive || priorityServicesReportedCount > 0 ? 'fill-amber-300 text-amber-300' : 'text-slate-400'}`} />
-                  <span>{priorityFilterActive ? 'Solo PRIORIDAD Activo' : 'Solo Servicios PRIORIDAD'}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                    priorityFilterActive
-                      ? 'bg-slate-950 text-amber-300'
-                      : priorityServicesReportedCount > 0
-                      ? 'bg-red-900 text-red-200 border border-red-500/50 animate-pulse'
-                      : 'bg-slate-900 text-slate-400 border border-slate-700'
-                  }`}>
-                    {priorityServicesReportedCount}
-                  </span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setPriorityFilterActive(!priorityFilterActive)}
+                className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-md active:scale-95 ${
+                  priorityFilterActive
+                    ? 'bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-slate-950 font-black shadow-amber-500/30 ring-2 ring-amber-300'
+                    : priorityServicesReportedCount > 0
+                    ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-500/60 shadow-md shadow-amber-950/50'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                }`}
+                title="Presione para ver únicamente los Servicios PRIORIDAD reportados en este archivo"
+              >
+                <Star className={`w-4 h-4 ${priorityFilterActive || priorityServicesReportedCount > 0 ? 'fill-amber-300 text-amber-300' : 'text-slate-400'}`} />
+                <span>{priorityFilterActive ? 'Solo PRIORIDAD Activo' : 'Solo Servicios PRIORIDAD'}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                  priorityFilterActive
+                    ? 'bg-slate-950 text-amber-300'
+                    : priorityServicesReportedCount > 0
+                    ? 'bg-red-900 text-red-200 border border-red-500/50 animate-pulse'
+                    : 'bg-slate-900 text-slate-400 border border-slate-700'
+                }`}>
+                  {priorityServicesReportedCount}
+                </span>
+              </button>
             </div>
 
             {/* Modal de configuración de tipos para TPO SERV */}
@@ -4880,7 +4570,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         </div>
       )}
 
-      {/* Botón Flotante Inteligente para Notificaciones de Servicios PRIORIDAD y Tipo SERV */}
+      {/* Botones Flotantes: Subir Excel Complementarios, Subir Excel Principal y Notificaciones/Filtros */}
       <FloatingPriorityFAB
         priorityCount={priorityServicesReportedCount}
         tpoServCount={matchingTpoServCount}
@@ -4889,6 +4579,17 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         onTogglePriorityFilter={() => setPriorityFilterActive(!priorityFilterActive)}
         onToggleTpoServFilter={handleToggleTpoServFilter}
         onOpenReportModal={() => setIsReportModalOpen(true)}
+        onUploadMainExcel={handleFileUpload}
+        isParsingMain={isParsing}
+        mainFileName={excelData?.fileName}
+        onUploadAuxExcel={handleAuxiliaryFileUpload}
+        isParsingAux={isParsingAux}
+        auxProgressText={auxProgressText}
+        auxFilesCount={auxiliaryData?.filesInfo?.length || (auxiliaryData ? 1 : 0)}
+        onClearAuxExcel={handleClearAuxiliaryData}
+        onLoadSampleData={handleLoadSampleData}
+        onClearMainExcel={handleClearExcelData}
+        hasMainExcel={Boolean(excelData)}
       />
 
       {/* Modal for Creating Report (Análisis de las IP + fecha + hora + segundos) */}

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Star, Radio, FileText, X, CheckCircle2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Star, Radio, FileText, X, CheckCircle2, ChevronUp, ChevronDown, Upload, RefreshCw } from 'lucide-react';
 
-interface FloatingPriorityFABProps {
+export interface FloatingPriorityFABProps {
   priorityCount: number;
   tpoServCount: number;
   priorityFilterActive: boolean;
@@ -9,6 +9,20 @@ interface FloatingPriorityFABProps {
   onTogglePriorityFilter: () => void;
   onToggleTpoServFilter: () => void;
   onOpenReportModal?: () => void;
+  // Subir Excel Principal
+  onUploadMainExcel?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  isParsingMain?: boolean;
+  mainFileName?: string;
+  // Subir Excel(s) Complementarios
+  onUploadAuxExcel?: (e: React.ChangeEvent<HTMLInputElement>, mode: 'append' | 'replace') => void;
+  isParsingAux?: boolean;
+  auxProgressText?: string;
+  auxFilesCount?: number;
+  onClearAuxExcel?: () => void;
+  // Acciones auxiliares de archivo
+  onLoadSampleData?: () => void;
+  onClearMainExcel?: () => void;
+  hasMainExcel?: boolean;
 }
 
 export const FloatingPriorityFAB: React.FC<FloatingPriorityFABProps> = ({
@@ -18,7 +32,18 @@ export const FloatingPriorityFAB: React.FC<FloatingPriorityFABProps> = ({
   tpoServFilterActive,
   onTogglePriorityFilter,
   onToggleTpoServFilter,
-  onOpenReportModal
+  onOpenReportModal,
+  onUploadMainExcel,
+  isParsingMain,
+  mainFileName,
+  onUploadAuxExcel,
+  isParsingAux,
+  auxProgressText,
+  auxFilesCount,
+  onClearAuxExcel,
+  onLoadSampleData,
+  onClearMainExcel,
+  hasMainExcel
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
 
@@ -26,7 +51,7 @@ export const FloatingPriorityFAB: React.FC<FloatingPriorityFABProps> = ({
   const anyFilterActive = priorityFilterActive || tpoServFilterActive;
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end space-y-3 font-sans">
+    <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end space-y-2.5 font-sans pointer-events-none">
       {/* Popover Card */}
       {isOpen && (
         <div className="bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-3xl p-5 shadow-2xl max-w-sm w-80 text-white space-y-4 animate-in slide-in-from-bottom-4 fade-in">
@@ -162,52 +187,156 @@ export const FloatingPriorityFAB: React.FC<FloatingPriorityFABProps> = ({
                 <span>Crear Informe Ejecutivo</span>
               </button>
             )}
+
+            {/* Acciones Rápidas de Archivo */}
+            {(!hasMainExcel && onLoadSampleData || (hasMainExcel && onClearMainExcel) || (auxFilesCount && auxFilesCount > 0 && onClearAuxExcel)) && (
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px]">
+                {!hasMainExcel && onLoadSampleData && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onLoadSampleData();
+                    }}
+                    className="text-emerald-400 hover:text-emerald-300 font-bold hover:underline cursor-pointer"
+                  >
+                    ⚡ Cargar muestra
+                  </button>
+                )}
+                {hasMainExcel && onClearMainExcel && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onClearMainExcel();
+                    }}
+                    className="text-rose-400 hover:text-rose-300 font-medium hover:underline cursor-pointer"
+                  >
+                    🗑️ Limpiar Excel
+                  </button>
+                )}
+                {auxFilesCount && auxFilesCount > 0 && onClearAuxExcel && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onClearAuxExcel();
+                    }}
+                    className="text-violet-400 hover:text-violet-300 font-medium hover:underline cursor-pointer ml-auto"
+                  >
+                    Limpiar auxiliares
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Main Floating Button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`group relative flex items-center space-x-2 px-4 py-3 rounded-full shadow-2xl transition-all cursor-pointer active:scale-95 border ${
-          hasPriorityAlert
-            ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-red-600 hover:from-amber-500 hover:to-red-500 text-white border-amber-300/60 ring-2 ring-amber-400/40 shadow-red-900/40 animate-bounce sm:animate-none'
-            : anyFilterActive
-            ? 'bg-gradient-to-r from-blue-600 to-emerald-600 text-white border-blue-400/60'
-            : 'bg-slate-900 hover:bg-slate-800 text-white border-slate-700 hover:border-slate-600'
-        }`}
-        title="Ver notificaciones de Servicios PRIORIDAD y Tipo SERV"
-      >
-        {/* Priority Badge */}
-        <div className="flex items-center space-x-1.5">
-          <Star className={`w-4 h-4 ${hasPriorityAlert ? 'fill-amber-300 text-amber-200 animate-spin-slow' : 'text-amber-400'}`} />
-          <span className="font-black text-xs">
-            {priorityCount}
-          </span>
-          <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">
-            Prioridad
-          </span>
-        </div>
+      {/* Floating Buttons Stack */}
+      <div className="flex flex-col items-end space-y-2 pointer-events-auto">
 
-        <div className="h-4 w-px bg-white/30" />
-
-        {/* Tipo SERV Badge */}
-        <div className="flex items-center space-x-1.5">
-          <Radio className="w-4 h-4 text-emerald-300" />
-          <span className="font-black text-xs">
-            {tpoServCount}
-          </span>
-          <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">
-            Tipo SERV
-          </span>
-        </div>
-
-        {isOpen ? (
-          <ChevronDown className="w-4 h-4 ml-1 text-white/80" />
-        ) : (
-          <ChevronUp className="w-4 h-4 ml-1 text-white/80" />
+        {/* 1. Botón Flotante Superior: Subir Excel(s) Complementarios */}
+        {onUploadAuxExcel && (
+          <label
+            className="group relative flex items-center space-x-2 px-3.5 py-2.5 rounded-full shadow-2xl transition-all cursor-pointer active:scale-95 border bg-violet-600 hover:bg-violet-500 text-white border-violet-400/40 shadow-violet-950/40 hover:shadow-violet-600/30"
+            title="Subir archivo(s) Excel Complementarios para cruce por SERVICIO"
+          >
+            {isParsingAux ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-violet-200" />
+            ) : (
+              <Upload className="w-4 h-4 text-violet-200" />
+            )}
+            <span className="font-extrabold text-xs">
+              {isParsingAux
+                ? (auxProgressText || 'Procesando...')
+                : auxFilesCount && auxFilesCount > 0
+                ? `Excel Complementarios (${auxFilesCount})`
+                : 'Subir Excel Complementarios'}
+            </span>
+            <input
+              type="file"
+              accept=".xlsx, .xls, .csv"
+              multiple
+              onChange={(e) => onUploadAuxExcel(e, 'replace')}
+              disabled={isParsingAux}
+              className="hidden"
+            />
+          </label>
         )}
-      </button>
+
+        {/* 2. Botón Flotante Intermedio: Subir Excel Principal */}
+        {onUploadMainExcel && (
+          <label
+            className="group relative flex items-center space-x-2 px-3.5 py-2.5 rounded-full shadow-2xl transition-all cursor-pointer active:scale-95 border bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400/40 shadow-emerald-950/40 hover:shadow-emerald-600/30"
+            title="Subir archivo Excel Principal de reportes (.xlsx, .csv)"
+          >
+            {isParsingMain ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-emerald-200" />
+            ) : (
+              <Upload className="w-4 h-4 text-emerald-200" />
+            )}
+            <span className="font-extrabold text-xs">
+              {isParsingMain
+                ? 'Procesando Excel...'
+                : mainFileName
+                ? `Excel: ${mainFileName.length > 20 ? mainFileName.slice(0, 18) + '...' : mainFileName}`
+                : 'Subir Excel Principal'}
+            </span>
+            <input
+              type="file"
+              accept=".xlsx, .xls, .csv"
+              onChange={onUploadMainExcel}
+              disabled={isParsingMain}
+              className="hidden"
+            />
+          </label>
+        )}
+
+        {/* 3. Main Floating Button (El que ya existe: Servicios PRIORIDAD y Tipo SERV) */}
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={`group relative flex items-center space-x-2 px-4 py-3 rounded-full shadow-2xl transition-all cursor-pointer active:scale-95 border ${
+            hasPriorityAlert
+              ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-red-600 hover:from-amber-500 hover:to-red-500 text-white border-amber-300/60 ring-2 ring-amber-400/40 shadow-red-900/40 animate-bounce sm:animate-none'
+              : anyFilterActive
+              ? 'bg-gradient-to-r from-blue-600 to-emerald-600 text-white border-blue-400/60'
+              : 'bg-slate-900 hover:bg-slate-800 text-white border-slate-700 hover:border-slate-600'
+          }`}
+          title="Ver notificaciones de Servicios PRIORIDAD y Tipo SERV"
+        >
+          {/* Priority Badge */}
+          <div className="flex items-center space-x-1.5">
+            <Star className={`w-4 h-4 ${hasPriorityAlert ? 'fill-amber-300 text-amber-200 animate-spin-slow' : 'text-amber-400'}`} />
+            <span className="font-black text-xs">
+              {priorityCount}
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">
+              Prioridad
+            </span>
+          </div>
+
+          <div className="h-4 w-px bg-white/30" />
+
+          {/* Tipo SERV Badge */}
+          <div className="flex items-center space-x-1.5">
+            <Radio className="w-4 h-4 text-emerald-300" />
+            <span className="font-black text-xs">
+              {tpoServCount}
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">
+              Tipo SERV
+            </span>
+          </div>
+
+          {isOpen ? (
+            <ChevronDown className="w-4 h-4 ml-1 text-white/80" />
+          ) : (
+            <ChevronUp className="w-4 h-4 ml-1 text-white/80" />
+          )}
+        </button>
+
+      </div>
     </div>
   );
 };
