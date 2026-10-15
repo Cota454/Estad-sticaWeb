@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import {
   Wrench,
@@ -30,6 +30,7 @@ import {
   Clipboard,
   Hash,
   RefreshCw,
+  RotateCcw,
   ListTodo,
   CheckCheck,
   Upload
@@ -167,6 +168,38 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
   const [searchServiceTerm, setSearchServiceTerm] = useState<string>('');
+
+  // Estado para Barra Desplegable "Trabajos y Tareas Pendientes por Cable" (Mejora 1)
+  const [isBannerExpanded, setIsBannerExpanded] = useState<boolean>(false);
+
+  // Estados para búsqueda diferida y optimización de visualización de la tabla (Mejora 2)
+  const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const [appliedFilters, setAppliedFilters] = useState<{
+    central: string;
+    grupo: string;
+    mes: string;
+    anio: string;
+    afectacion: string;
+    startDate: string;
+    endDate: string;
+    searchTerm: string;
+  }>({
+    central: 'all',
+    grupo: 'all',
+    mes: 'all',
+    anio: 'all',
+    afectacion: 'all',
+    startDate: '',
+    endDate: '',
+    searchTerm: ''
+  });
+
+  // Refs y estados para doble barra de desplazamiento sincronizada (Mejora 3)
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const innerTableRef = useRef<HTMLTableElement>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState<number>(1800);
+  const isSyncingScroll = useRef<boolean>(false);
 
   // Modal State for Add / Edit Task
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -393,8 +426,23 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     }
   };
 
-  // Reset all filters
-  const handleResetFilters = () => {
+  // Ejecutar búsqueda aplicando los filtros seleccionados (Mejora 2)
+  const handleExecuteSearch = () => {
+    setAppliedFilters({
+      central: filterCentral,
+      grupo: filterGrupo,
+      mes: filterMes,
+      anio: filterAnio,
+      afectacion: filterAfectacion,
+      startDate: filterStartDate,
+      endDate: filterEndDate,
+      searchTerm: searchServiceTerm
+    });
+    setHasSearched(true);
+  };
+
+  // Resetear filtros y ocultar tabla para optimizar la pestaña (Mejora 2)
+  const handleResetFiltersAndHide = () => {
     setFilterCentral('all');
     setFilterGrupo('all');
     setFilterMes('all');
@@ -403,6 +451,58 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     setFilterStartDate('');
     setFilterEndDate('');
     setSearchServiceTerm('');
+    setAppliedFilters({
+      central: 'all',
+      grupo: 'all',
+      mes: 'all',
+      anio: 'all',
+      afectacion: 'all',
+      startDate: '',
+      endDate: '',
+      searchTerm: ''
+    });
+    setHasSearched(false);
+  };
+
+  const handleResetFilters = handleResetFiltersAndHide;
+
+  // Sincronizar ancho de scrollbar superior con el ancho real de la tabla (Mejora 3)
+  useEffect(() => {
+    const updateWidth = () => {
+      if (innerTableRef.current) {
+        setTableScrollWidth(innerTableRef.current.scrollWidth);
+      }
+    };
+    updateWidth();
+    const timer = setTimeout(updateWidth, 150);
+    window.addEventListener('resize', updateWidth);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', updateWidth);
+    };
+  }, [hasSearched, viewMode, auxiliaryData]);
+
+  // Manejadores de sincronización de doble scrollbar horizontal (Mejora 3)
+  const handleTopScroll = () => {
+    if (isSyncingScroll.current) return;
+    if (topScrollRef.current && tableContainerRef.current) {
+      isSyncingScroll.current = true;
+      tableContainerRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+      requestAnimationFrame(() => {
+        isSyncingScroll.current = false;
+      });
+    }
+  };
+
+  const handleTableScroll = () => {
+    if (isSyncingScroll.current) return;
+    if (topScrollRef.current && tableContainerRef.current) {
+      isSyncingScroll.current = true;
+      topScrollRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
+      requestAnimationFrame(() => {
+        isSyncingScroll.current = false;
+      });
+    }
   };
 
   const hasActiveFilters =
@@ -733,7 +833,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   // "este debe buscar el servicio y además mostrar todos los servicios que están en ese misma Tarea o Trabajo"
   // -------------------------------------------------------------
   const contextSearchInfo = useMemo(() => {
-    const term = searchServiceTerm.trim().toLowerCase();
+    const term = (appliedFilters.searchTerm || '').trim().toLowerCase();
     if (!term) return { matchedTaskIds: new Set<string>(), exactMatchServiceNumbers: new Set<string>() };
 
     const matchedTaskIds = new Set<string>();
@@ -754,13 +854,15 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
     });
 
     return { matchedTaskIds, exactMatchServiceNumbers };
-  }, [tasks, searchServiceTerm]);
+  }, [tasks, appliedFilters.searchTerm]);
 
   // -------------------------------------------------------------
-  // Filtered Rows
+  // Filtered Rows (Solo se calcula y muestra si hasSearched es true)
   // -------------------------------------------------------------
   const filteredRows = useMemo(() => {
-    const term = searchServiceTerm.trim().toLowerCase();
+    if (!hasSearched) return [];
+
+    const term = (appliedFilters.searchTerm || '').trim().toLowerCase();
 
     return allDetailRows.filter(row => {
       // 1. Task-Context Service Search (Mejora C)
@@ -771,21 +873,21 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       }
 
       // 2. Central Filter
-      if (filterCentral !== 'all' && row.central !== '-' && row.central !== filterCentral) {
+      if (appliedFilters.central !== 'all' && row.central !== '-' && row.central !== appliedFilters.central) {
         return false;
       }
 
       // 3. Grupo Filter
-      if (filterGrupo !== 'all' && row.grupo !== '-' && row.grupo !== filterGrupo) {
+      if (appliedFilters.grupo !== 'all' && row.grupo !== '-' && row.grupo !== appliedFilters.grupo) {
         return false;
       }
 
       // 4. Date Range Filter (Fecha Reporte)
-      if (filterStartDate || filterEndDate) {
+      if (appliedFilters.startDate || appliedFilters.endDate) {
         const rowDate = (row.fechaReporte || '').trim().slice(0, 10);
         if (rowDate && rowDate !== '-') {
-          if (filterStartDate && rowDate < filterStartDate) return false;
-          if (filterEndDate && rowDate > filterEndDate) return false;
+          if (appliedFilters.startDate && rowDate < appliedFilters.startDate) return false;
+          if (appliedFilters.endDate && rowDate > appliedFilters.endDate) return false;
         }
       }
 
@@ -795,22 +897,22 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
         const y = parseInt(parts[0], 10);
         const m = parseInt(parts[1], 10);
 
-        if (filterAnio !== 'all' && !isNaN(y) && y !== parseInt(filterAnio, 10)) {
+        if (appliedFilters.anio !== 'all' && !isNaN(y) && y !== parseInt(appliedFilters.anio, 10)) {
           return false;
         }
-        if (filterMes !== 'all' && !isNaN(m) && m !== parseInt(filterMes, 10)) {
+        if (appliedFilters.mes !== 'all' && !isNaN(m) && m !== parseInt(appliedFilters.mes, 10)) {
           return false;
         }
       }
 
       // 6. Afectación Filter
-      if (filterAfectacion !== 'all') {
-        if (filterAfectacion === 'con_afectacion') {
+      if (appliedFilters.afectacion !== 'all') {
+        if (appliedFilters.afectacion === 'con_afectacion') {
           if (row.afectacion === '-') return false;
-        } else if (filterAfectacion === 'sin_afectacion') {
+        } else if (appliedFilters.afectacion === 'sin_afectacion') {
           if (row.afectacion !== '-') return false;
         } else {
-          if (row.afectacion.trim().toLowerCase() !== filterAfectacion.trim().toLowerCase()) {
+          if (row.afectacion.trim().toLowerCase() !== appliedFilters.afectacion.trim().toLowerCase()) {
             return false;
           }
         }
@@ -818,7 +920,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
       return true;
     });
-  }, [allDetailRows, searchServiceTerm, contextSearchInfo, filterCentral, filterGrupo, filterStartDate, filterEndDate, filterAnio, filterMes, filterAfectacion]);
+  }, [allDetailRows, hasSearched, appliedFilters, contextSearchInfo]);
 
   // -------------------------------------------------------------
   // Mejora B: KPIs Rápidos
@@ -855,7 +957,7 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
 
     let maxDemora = 0;
     let oldestService = '-';
-    filteredRows.forEach(r => {
+    (hasSearched ? filteredRows : allDetailRows).forEach(r => {
       if (r.demoraEnDias > maxDemora) {
         maxDemora = r.demoraEnDias;
         oldestService = r.servicio;
@@ -1432,13 +1534,18 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
   return (
     <div className="space-y-6">
       {/* ------------------------------------------------------------- */}
-      {/* TOP BANNER & ACTION BAR */}
       {/* ------------------------------------------------------------- */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white shadow-xl space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-start space-x-3.5">
-            <div className="p-3.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-2xl shrink-0">
-              <Wrench className="w-6 h-6" />
+      {/* BARRA DESPLEGABLE: TRABAJOS Y TAREAS PENDIENTES POR CABLE (Mejora 1) */}
+      {/* ------------------------------------------------------------- */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-white shadow-xl space-y-4 transition-all">
+        {/* Cabecera Principal Compacta (Siempre visible) */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div
+            className="flex items-center space-x-3 cursor-pointer select-none group"
+            onClick={() => setIsBannerExpanded(!isBannerExpanded)}
+          >
+            <div className="p-3 bg-amber-500/20 text-amber-400 group-hover:bg-amber-500/30 border border-amber-500/30 rounded-2xl shrink-0 transition-colors">
+              <Wrench className="w-5 h-5" />
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1448,252 +1555,285 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
                 <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold px-2 py-0.5 rounded-md font-mono">
                   Gestión Operativa de Cables
                 </span>
+                <span className="bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-mono px-2 py-0.5 rounded-md">
+                  {tasks.length} trabajos
+                </span>
+                {excelData && (
+                  <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono px-2 py-0.5 rounded-md">
+                    {allDetailRows.length} srvs reportados
+                  </span>
+                )}
               </div>
-              <h2 className="text-xl font-black text-white tracking-tight mt-1">
-                Trabajos y Tareas Pendientes por Cable
+              <h2 className="text-lg font-black text-white tracking-tight flex items-center space-x-2 mt-1">
+                <span>Trabajos y Tareas Pendientes por Cable</span>
+                <span className="text-xs text-slate-400 font-normal hidden sm:inline">
+                  ({isBannerExpanded ? 'Clic para contraer' : 'Clic para desplegar'})
+                </span>
               </h2>
-              <p className="text-slate-400 text-xs sm:text-sm mt-0.5">
-                Vincule las tareas técnicas que retienen cables y servicios. Busque por servicio para ver automáticamente el contexto de toda la tarea asociada.
-              </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            {/* View Mode Toggle (Mejora D) */}
-            <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center space-x-1">
-              <button
-                type="button"
-                onClick={() => setViewMode('flat')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
-                  viewMode === 'flat'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Vista Plana: Todas las columnas en una sola tabla"
-              >
-                <TableIcon className="w-3.5 h-3.5" />
-                <span>Vista Detallada</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('grouped')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
-                  viewMode === 'grouped'
-                    ? 'bg-amber-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Vista Agrupada: Bloques por Tarea con servicios desplegables"
-              >
-                <LayoutList className="w-3.5 h-3.5" />
-                <span>Agrupado por Tarea</span>
-              </button>
-            </div>
-
-            {/* Copy Table */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Botón Agregar Trabajo */}
             <button
               type="button"
-              onClick={handleCopyTable}
-              disabled={filteredRows.length === 0}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 hover:text-white text-xs font-bold rounded-xl border border-slate-700 transition-all flex items-center space-x-1.5 cursor-pointer"
-              title="Copiar datos filtrados al portapapeles"
+              onClick={handleOpenAddModal}
+              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-amber-600/30 flex items-center justify-center space-x-1.5 cursor-pointer"
             >
-              {copiedSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-300" />}
-              <span>{copiedSuccess ? 'Copiado' : 'Copiar'}</span>
+              <PlusCircle className="w-4 h-4" />
+              <span>Agregar Trabajo</span>
             </button>
 
-            {/* Eliminar Todos los Trabajos */}
-            {tasks.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowDeleteAllModal(true)}
-                className="px-3 py-2 bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 hover:text-rose-100 text-xs font-bold rounded-xl border border-rose-500/40 transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm"
-                title="Eliminar todos los trabajos registrados"
-              >
-                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                <span>Eliminar Todos</span>
-              </button>
-            )}
+            {/* Botón Carga Masiva (Excel) */}
+            <button
+              type="button"
+              onClick={() => setShowBatchModal(true)}
+              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/25 flex items-center justify-center space-x-1.5 cursor-pointer border border-emerald-400/40"
+              title="Copie y pegue en masa desde Excel todos los números con su trabajo y afectación"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-100" />
+              <span>Carga Masiva</span>
+            </button>
 
-            {/* Botón al lado de Agregar Trabajo para Ver Todas las Tareas */}
+            {/* Botón Ver Todas las Tareas */}
             <button
               type="button"
               onClick={() => setShowAllTasksModal(true)}
-              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-indigo-600/30 flex items-center space-x-2 cursor-pointer border border-indigo-400/40"
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-indigo-600/30 flex items-center space-x-1.5 cursor-pointer border border-indigo-400/40"
               title="Ver ventana con todas las tareas registradas, totales, afectaciones y gestión"
             >
               <ListTodo className="w-4 h-4 text-indigo-200" />
-              <span>Ver Todas las Tareas ({tasks.length})</span>
+              <span>Todas ({tasks.length})</span>
             </button>
 
-            {/* Botón para Gestión de Afectaciones Independientes con Período de Fecha */}
+            {/* Botón Lista Desplegable (Expandir / Contraer) */}
             <button
               type="button"
-              onClick={() => setShowAfectacionesModal(true)}
-              className="px-3.5 py-2 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-purple-950/40 flex items-center space-x-2 cursor-pointer border border-purple-400/40"
-              title="Crear, actualizar o eliminar afectaciones con seguimiento por período de fecha"
+              onClick={() => setIsBannerExpanded(!isBannerExpanded)}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl border border-slate-700 text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm"
+              title={isBannerExpanded ? 'Contraer panel de opciones y métricas' : 'Desplegar panel con opciones y métricas'}
             >
-              <AlertTriangle className="w-4 h-4 text-amber-300" />
-              <span>Gestión de Afectaciones</span>
-            </button>
-
-            {/* Botones de Agregar Trabajo y Carga Masiva (debajo) */}
-            <div className="flex flex-col gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleOpenAddModal}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-amber-600/30 flex items-center justify-center space-x-2 cursor-pointer"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Agregar Trabajo</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowBatchModal(true)}
-                className="px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/25 flex items-center justify-center space-x-2 cursor-pointer border border-emerald-400/40"
-                title="Copie y pegue en masa desde Excel todos los números con su trabajo y afectación"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-100" />
-                <span>Carga Masiva (Excel)</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Mensaje de confirmación al eliminar todos los trabajos */}
-        {deleteAllSuccessMsg && (
-          <div className="p-3 bg-emerald-950/70 border border-emerald-500/50 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in">
-            <div className="flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>{deleteAllSuccessMsg}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setDeleteAllSuccessMsg('')}
-              className="text-emerald-400 hover:text-emerald-200 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {/* Mensaje de confirmación al importar trabajos en masa desde Excel */}
-        {batchSuccessMsg && (
-          <div className="p-3 bg-emerald-950/80 border border-emerald-500/60 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in shadow-md">
-            <div className="flex items-center space-x-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-medium">{batchSuccessMsg}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setBatchSuccessMsg('')}
-              className="text-emerald-400 hover:text-emerald-200 cursor-pointer p-1"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {/* ------------------------------------------------------------- */}
-        {/* RESUMEN VISUAL SUPERIOR (KPIS RÁPIDOS - MEJORA B) */}
-        {/* ------------------------------------------------------------- */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-800/80">
-          <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Trabajos Registrados
-            </span>
-            <div className="flex items-baseline space-x-2">
-              <span className="text-2xl font-black font-mono text-white">{kpis.totalTasks}</span>
-              <span className="text-[11px] text-amber-400 font-medium">({kpis.pendingTasks} pendientes)</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Servicios Reportados Activos
-            </span>
-            <div className="flex items-baseline space-x-2">
-              <span className="text-2xl font-black font-mono text-emerald-400">{kpis.totalServicesReported}</span>
-              <span className="text-[11px] text-slate-400">en Excel activo</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Cable con Mayor Impacto
-            </span>
-            <div className="flex items-baseline space-x-1.5 truncate">
-              <span className="text-lg font-black font-mono text-emerald-400 truncate">{kpis.topImpactCable}</span>
-              {kpis.topImpactCount > 0 && (
-                <span className="text-[10px] text-slate-400 font-mono">({kpis.topImpactCount} srvs)</span>
+              <span>{isBannerExpanded ? 'Contraer' : 'Desplegar Opciones'}</span>
+              {isBannerExpanded ? (
+                <ChevronUp className="w-4 h-4 text-amber-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-amber-400" />
               )}
-            </div>
-          </div>
-
-          <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Mayor Demora Acumulada
-            </span>
-            <div className="flex items-baseline space-x-2">
-              <span className="text-2xl font-black font-mono text-rose-400">{kpis.maxDemora} días</span>
-              <span className="text-[10px] text-slate-400 font-mono truncate">{kpis.oldestService !== '-' ? kpis.oldestService : ''}</span>
-            </div>
+            </button>
           </div>
         </div>
 
-        {/* Banner de Sincronización Reactiva con Excel */}
-        <div className="p-3.5 bg-slate-950/90 border border-slate-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center space-x-3">
-            <div className={`p-2.5 rounded-xl border shrink-0 ${
-              excelData ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-            }`}>
-              <FileSpreadsheet className="w-5 h-5" />
-            </div>
-            <div className="space-y-0.5">
+        {/* CONTENIDO DESPLEGABLE (Visible al expandir la barra) */}
+        {isBannerExpanded && (
+          <div className="pt-4 border-t border-slate-800 space-y-4 animate-in fade-in duration-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <p className="text-slate-400 text-xs sm:text-sm">
+                Vincule las tareas técnicas que retienen cables y servicios. Busque por servicio para ver automáticamente el contexto de toda la tarea asociada.
+              </p>
+
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-extrabold text-white">Sincronización con Reporte de Averías:</span>
-                {excelData ? (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] px-2 py-0.5 rounded-md font-mono font-bold">
-                    {excelData.fileName}
-                  </span>
-                ) : (
-                  <span className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] px-2 py-0.5 rounded-md font-bold">
-                    Sin archivo Excel cargado
+                {/* View Mode Toggle */}
+                <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center space-x-1">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('flat')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
+                      viewMode === 'flat'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Vista Plana: Todas las columnas en una sola tabla"
+                  >
+                    <TableIcon className="w-3.5 h-3.5" />
+                    <span>Vista Detallada</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grouped')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
+                      viewMode === 'grouped'
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Vista Agrupada: Bloques por Tarea con servicios desplegables"
+                  >
+                    <LayoutList className="w-3.5 h-3.5" />
+                    <span>Agrupado por Tarea</span>
+                  </button>
+                </div>
+
+                {/* Copy Table */}
+                <button
+                  type="button"
+                  onClick={handleCopyTable}
+                  disabled={filteredRows.length === 0}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 hover:text-white text-xs font-bold rounded-xl border border-slate-700 transition-all flex items-center space-x-1.5 cursor-pointer"
+                  title="Copiar datos filtrados al portapapeles"
+                >
+                  {copiedSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-300" />}
+                  <span>{copiedSuccess ? 'Copiado' : 'Copiar'}</span>
+                </button>
+
+                {/* Gestión de Afectaciones */}
+                <button
+                  type="button"
+                  onClick={() => setShowAfectacionesModal(true)}
+                  className="px-3 py-1.5 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-purple-950/40 flex items-center space-x-1.5 cursor-pointer border border-purple-400/40"
+                  title="Crear, actualizar o eliminar afectaciones con seguimiento por período de fecha"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Afectaciones</span>
+                </button>
+
+                {/* Eliminar Todos los Trabajos */}
+                {tasks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteAllModal(true)}
+                    className="px-3 py-1.5 bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 hover:text-rose-100 text-xs font-bold rounded-xl border border-rose-500/40 transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                    title="Eliminar todos los trabajos registrados"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Eliminar Todos</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Mensaje de confirmación al eliminar todos los trabajos */}
+            {deleteAllSuccessMsg && (
+              <div className="p-3 bg-emerald-950/70 border border-emerald-500/50 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{deleteAllSuccessMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDeleteAllSuccessMsg('')}
+                  className="text-emerald-400 hover:text-emerald-200 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Mensaje de confirmación al importar trabajos en masa desde Excel */}
+            {batchSuccessMsg && (
+              <div className="p-3 bg-emerald-950/80 border border-emerald-500/60 rounded-2xl flex items-center justify-between text-xs text-emerald-300 animate-in fade-in shadow-md">
+                <div className="flex items-center space-x-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-medium">{batchSuccessMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBatchSuccessMsg('')}
+                  className="text-emerald-400 hover:text-emerald-200 cursor-pointer p-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* RESUMEN VISUAL SUPERIOR (KPIS RÁPIDOS) */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-800/80">
+              <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Trabajos Registrados
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black font-mono text-white">{kpis.totalTasks}</span>
+                  <span className="text-[11px] text-amber-400 font-medium">({kpis.pendingTasks} pendientes)</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Servicios Reportados Activos
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black font-mono text-emerald-400">{kpis.totalServicesReported}</span>
+                  <span className="text-[11px] text-slate-400">en Excel activo</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Cable con Mayor Impacto
+                </span>
+                <div className="flex items-baseline space-x-1.5 truncate">
+                  <span className="text-lg font-black font-mono text-emerald-400 truncate">{kpis.topImpactCable}</span>
+                  {kpis.topImpactCount > 0 && (
+                    <span className="text-[10px] text-slate-400 font-mono">({kpis.topImpactCount} srvs)</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl space-y-1">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Mayor Demora Acumulada
+                </span>
+                <div className="flex items-baseline space-x-2">
+                  <span className="text-2xl font-black font-mono text-rose-400">{kpis.maxDemora} días</span>
+                  <span className="text-[10px] text-slate-400 font-mono truncate">{kpis.oldestService !== '-' ? kpis.oldestService : ''}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Banner de Sincronización Reactiva con Excel */}
+            <div className="p-3.5 bg-slate-950/90 border border-slate-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center space-x-3">
+                <div className={`p-2.5 rounded-xl border shrink-0 ${
+                  excelData ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                }`}>
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-extrabold text-white">Sincronización con Reporte de Averías:</span>
+                    {excelData ? (
+                      <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] px-2 py-0.5 rounded-md font-mono font-bold">
+                        {excelData.fileName}
+                      </span>
+                    ) : (
+                      <span className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] px-2 py-0.5 rounded-md font-bold">
+                        Sin archivo Excel cargado
+                      </span>
+                    )}
+                    <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2 py-0.5 rounded-md font-bold">
+                      Solo servicios reportados
+                    </span>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    {excelData
+                      ? `Mostrando exclusivamente los servicios que están reportados en el archivo Excel (${allDetailRows.length} en total). Los no reportados se omiten automáticamente. Al subir un nuevo Excel, la tabla se actualiza de inmediato.`
+                      : 'Cargue el archivo Excel para sincronizar y ver únicamente los servicios reportados en la tabla.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 shrink-0 self-start md:self-auto">
+                {auxiliaryData && (
+                  <span className="text-[11px] bg-violet-950/60 text-violet-300 border border-violet-700/40 px-2.5 py-2 rounded-xl font-bold flex items-center space-x-1.5 shadow-sm" title={`Archivo auxiliar activo: ${auxiliaryData.fileName}`}>
+                    <span>Auxiliar: <strong>{auxiliaryData.fileName}</strong> (+{auxiliaryData.extraColumnNames.length} cols)</span>
                   </span>
                 )}
-                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2 py-0.5 rounded-md font-bold">
-                  Solo servicios reportados
-                </span>
+                {onFileUpload && (
+                  <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-2 shadow-sm">
+                    {isParsing ? <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
+                    <span>{isParsing ? 'Procesando Excel...' : 'Cargar / Actualizar Excel'}</span>
+                    <input
+                      type="file"
+                      accept=".xlsx, .xls, .csv"
+                      onChange={onFileUpload}
+                      disabled={isParsing}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
-              <p className="text-slate-400 text-[11px] leading-relaxed">
-                {excelData
-                  ? `Mostrando exclusivamente los servicios que están reportados en el archivo Excel (${allDetailRows.length} en total). Los no reportados se omiten automáticamente. Al subir un nuevo Excel, la tabla se actualiza de inmediato.`
-                  : 'Cargue el archivo Excel para sincronizar y ver únicamente los servicios reportados en la tabla.'}
-              </p>
             </div>
           </div>
-
-          <div className="flex items-center space-x-2 shrink-0 self-start md:self-auto">
-            {auxiliaryData && (
-              <span className="text-[11px] bg-violet-950/60 text-violet-300 border border-violet-700/40 px-2.5 py-2 rounded-xl font-bold flex items-center space-x-1.5 shadow-sm" title={`Archivo auxiliar activo: ${auxiliaryData.fileName}`}>
-                <span>Auxiliar: <strong>{auxiliaryData.fileName}</strong> (+{auxiliaryData.extraColumnNames.length} cols)</span>
-              </span>
-            )}
-            {onFileUpload && (
-              <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-2 shadow-sm">
-                {isParsing ? <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
-                <span>{isParsing ? 'Procesando Excel...' : 'Cargar / Actualizar Excel'}</span>
-                <input
-                  type="file"
-                  accept=".xlsx, .xls, .csv"
-                  onChange={onFileUpload}
-                  disabled={isParsing}
-                  className="hidden"
-                />
-              </label>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
       {/* ------------------------------------------------------------- */}
@@ -1910,9 +2050,14 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
           <div className="relative">
             <input
               type="text"
-              placeholder="Escriba el número de servicio a buscar (ej: 0212000001)..."
+              placeholder="Escriba el número de servicio a buscar (ej: 0212000001)... Presione Enter o Buscar"
               value={searchServiceTerm}
               onChange={(e) => setSearchServiceTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleExecuteSearch();
+                }
+              }}
               className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-10 pr-10 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
             />
             <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -1933,10 +2078,46 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center space-x-2.5 text-xs text-amber-200">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
-                <strong>Búsqueda Contextual Activa:</strong> Se encontraron {contextSearchInfo.matchedTaskIds.size} tarea(s) que contienen servicios con "{searchServiceTerm}". Se muestran en la tabla todos los {filteredRows.length} servicios que comparten esas mismas tareas. Los servicios exactos buscados aparecen resaltados con borde verde.
+                <strong>Búsqueda Contextual:</strong> Se encontraron {contextSearchInfo.matchedTaskIds.size} tarea(s) que contienen servicios con "{searchServiceTerm}". Presione <strong>Buscar</strong> para cargar todos los servicios que comparten esas mismas tareas.
               </span>
             </div>
           )}
+        </div>
+
+        {/* BOTONES DE ACCIÓN: BUSCAR Y RESTABLECER (Mejora 2: Control y Optimización de la Tabla) */}
+        <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center space-x-2 text-xs text-slate-400">
+            <Info className="w-4 h-4 text-blue-400 shrink-0" />
+            <span>
+              {!hasSearched
+                ? 'Configure sus filtros y presione "Buscar" para cargar los datos en la tabla.'
+                : `Filtros aplicados. Mostrando ${filteredRows.length} servicios reportados.`}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-2.5 shrink-0">
+            {/* Botón Restablecer (Oculta la tabla y limpia filtros) */}
+            <button
+              type="button"
+              onClick={handleResetFiltersAndHide}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700 flex items-center space-x-2 cursor-pointer shadow-sm"
+              title="Restablecer filtros y ocultar tabla para optimizar la pestaña"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+              <span>Restablecer y Ocultar</span>
+            </button>
+
+            {/* Botón Buscar (Aplica los filtros y muestra la tabla) */}
+            <button
+              type="button"
+              onClick={handleExecuteSearch}
+              className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold transition-all shadow-lg shadow-blue-600/30 flex items-center space-x-2 cursor-pointer border border-blue-400/40"
+              title="Buscar y aplicar filtros seleccionados para mostrar la tabla"
+            >
+              <Search className="w-4 h-4 text-blue-100" />
+              <span>Buscar</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1944,104 +2125,163 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
       {/* TABLA PRINCIPAL DE TRABAJOS Y TAREAS */}
       {/* ------------------------------------------------------------- */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-4 shadow-xl">
-        {/* Table Toolbar with Small Excel Download Icon and Delete All Button */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center space-x-2">
-            <h3 className="text-base font-black text-white">
-              {viewMode === 'flat' ? 'Detalle de Servicios Reportados por Trabajo' : 'Tareas Pendientes Agrupadas'}
-            </h3>
-            <span className="bg-emerald-950 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold">
-              {filteredRows.length} reportados
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Botón para eliminar todos los trabajos con cartel de confirmación */}
-            {tasks.length > 0 && (
+        {!hasSearched ? (
+          <div className="py-14 px-6 text-center bg-slate-950/60 rounded-2xl border border-slate-800 border-dashed space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center mx-auto shadow-inner">
+              <Search className="w-7 h-7" />
+            </div>
+            <div className="max-w-md mx-auto space-y-1.5">
+              <h4 className="text-base font-bold text-white">
+                Detalle de Servicios Reportados en Espera
+              </h4>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Para optimizar la velocidad y el rendimiento de la pestaña, los datos de la tabla no se muestran hasta presionar el botón <strong>Buscar</strong>. Seleccione los filtros deseados arriba y presione el botón a continuación para consultar los datos.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setShowDeleteAllModal(true)}
-                className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 rounded-xl text-xs font-bold transition-all border border-rose-500/30 flex items-center space-x-1.5 cursor-pointer shadow-sm"
-                title="Eliminar todos los trabajos pendientes de la tabla"
+                onClick={handleExecuteSearch}
+                className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-blue-600/30 flex items-center space-x-2 cursor-pointer transition-all border border-blue-400/40"
               >
-                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                <span>Eliminar Todos los Trabajos</span>
+                <Search className="w-4 h-4" />
+                <span>Buscar Servicios Reportados</span>
               </button>
-            )}
-
-            {/* Pequeño icono de descarga en Excel solicitado por el usuario */}
-            <button
-              type="button"
-              onClick={handleExportToExcel}
-              disabled={filteredRows.length === 0}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center space-x-1.5 cursor-pointer border border-emerald-400/40"
-              title="Descargar tabla en Excel con todos los filtros aplicados"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Descargar Excel</span>
-            </button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Table Toolbar with Small Excel Download Icon, Delete All Button and Restablecer Button */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-2">
+                <h3 className="text-base font-black text-white">
+                  {viewMode === 'flat' ? 'Detalle de Servicios Reportados por Trabajo' : 'Tareas Pendientes Agrupadas'}
+                </h3>
+                <span className="bg-emerald-950 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold">
+                  {filteredRows.length} reportados
+                </span>
+              </div>
 
-        {/* ------------------------------------------------------------- */}
-        {/* VISTA 1: DETALLADA (TABLA PLANA) */}
-        {/* Columnas: Servicio, Asociado, cable p, par p, cable s, par s, fecha reporte, grupo, demora en días, central telefónica, terminal, afectaciones, tarea o trabajo */}
-        {/* ------------------------------------------------------------- */}
-        {viewMode === 'flat' && (
-          <div className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
-            <table className="w-full text-xs text-left text-slate-300">
-              <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
-                <tr>
-                  <th className="py-3 px-3.5 text-white">Servicio</th>
-                  <th className="py-3 px-3.5 text-slate-300">Asociado</th>
-                  <th className="py-3 px-3.5 text-emerald-400 font-bold">Zona</th>
-                  <th className="py-3 px-3 text-center text-emerald-400">Cable P</th>
-                  <th className="py-3 px-3 text-center text-emerald-300">Par P</th>
-                  <th className="py-3 px-3 text-center text-cyan-400">Cable S</th>
-                  <th className="py-3 px-3 text-center text-cyan-300">Par S</th>
-                  <th className="py-3 px-3 text-center text-slate-300">Fecha Reporte</th>
-                  <th className="py-3 px-3.5 text-slate-300">Grupo</th>
-                  <th className="py-3 px-3 text-center">Clasificación Red</th>
-                  <th className="py-3 px-3 text-center text-amber-400">Demora (Días)</th>
-                  <th className="py-3 px-3.5 text-slate-300">Central Telefónica</th>
-                  <th className="py-3 px-3.5 text-slate-300">Terminal</th>
-                  <th className="py-3 px-3 text-center text-purple-400 font-bold">AFECTACIONES</th>
-                  <th className="py-3 px-4 text-white font-black">Tarea o Trabajo</th>
-                  <th className="py-3 px-3 text-center text-rose-300 font-bold">PROBLEMA</th>
-                  {(auxiliaryData?.extraColumnNames || []).map(col => (
-                    <th key={col} className="py-3 px-3 text-center text-violet-300 font-bold bg-violet-950/30 whitespace-nowrap">
-                      {col}
-                    </th>
-                  ))}
-                  <th className="py-3 px-3 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/80 font-medium">
-                {filteredRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={17 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-12 text-center text-slate-500 italic space-y-2">
-                      <p className="text-sm font-semibold text-slate-300">
-                        {!excelData
-                          ? 'No hay archivo Excel cargado. Suba el archivo Excel para ver los servicios reportados.'
-                          : 'No se encontraron servicios reportados en el archivo Excel actual para los trabajos o filtros seleccionados.'}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        (La tabla solo muestra los servicios que se encuentran reportados en el Excel activo; el resto se omite automáticamente).
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleOpenAddModal}
-                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-xl border border-slate-700 transition-colors cursor-pointer"
-                      >
-                        Crear Nuevo Trabajo Pendiente
-                      </button>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredRows.map(row => {
-                    const isDirectMatch = searchServiceTerm.trim() && contextSearchInfo.exactMatchServiceNumbers.has(row.servicio.toUpperCase());
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Botón Restablecer y Ocultar Tabla (Mejora 2) */}
+                <button
+                  type="button"
+                  onClick={handleResetFiltersAndHide}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700 flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                  title="Restablecer filtros y ocultar tabla para optimizar la pestaña"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Restablecer y Ocultar</span>
+                </button>
 
-                    return (
+                {/* Botón para eliminar todos los trabajos con cartel de confirmación */}
+                {tasks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteAllModal(true)}
+                    className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 rounded-xl text-xs font-bold transition-all border border-rose-500/30 flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                    title="Eliminar todos los trabajos pendientes de la tabla"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Eliminar Todos los Trabajos</span>
+                  </button>
+                )}
+
+                {/* Pequeño icono de descarga en Excel solicitado por el usuario */}
+                <button
+                  type="button"
+                  onClick={handleExportToExcel}
+                  disabled={filteredRows.length === 0}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center space-x-1.5 cursor-pointer border border-emerald-400/40"
+                  title="Descargar tabla en Excel con todos los filtros aplicados"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Descargar Excel</span>
+                </button>
+              </div>
+            </div>
+
+            {/* ------------------------------------------------------------- */}
+            {/* VISTA 1: DETALLADA (TABLA PLANA) */}
+            {/* Columnas: Servicio, Asociado, cable p, par p, cable s, par s, fecha reporte, grupo, demora en días, central telefónica, terminal, afectaciones, tarea o trabajo */}
+            {/* ------------------------------------------------------------- */}
+            {viewMode === 'flat' && (
+              <div className="space-y-2">
+                {/* Barra de desplazamiento horizontal superior sincronizada (Mejora 3) */}
+                <div className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 flex items-center space-x-2.5 shadow-inner">
+                  <div className="flex items-center space-x-1.5 text-[11px] font-bold text-slate-400 font-mono shrink-0 select-none">
+                    <span className="text-amber-400 font-bold">↔</span>
+                    <span>Desplazamiento Horizontal Superior:</span>
+                  </div>
+                  <div
+                    ref={topScrollRef}
+                    onScroll={handleTopScroll}
+                    className="overflow-x-auto flex-1 py-1"
+                    style={{ height: '18px' }}
+                  >
+                    <div style={{ width: `${Math.max(tableScrollWidth, 1600)}px`, height: '1px' }} />
+                  </div>
+                </div>
+
+                {/* Contenedor de la tabla con scroll vertical y encabezados fijados (Mejora 4) */}
+                <div
+                  ref={tableContainerRef}
+                  onScroll={handleTableScroll}
+                  className="overflow-x-auto overflow-y-auto max-h-[620px] bg-slate-950 rounded-2xl border border-slate-800 shadow-inner relative"
+                >
+                  <table ref={innerTableRef} className="w-full text-xs text-left text-slate-300 border-collapse">
+                    <thead className="sticky top-0 z-20 bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b-2 border-slate-700 shadow-md">
+                      <tr>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3.5 text-white whitespace-nowrap">Servicio</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3.5 text-slate-300 whitespace-nowrap">Asociado</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3.5 text-emerald-400 font-bold whitespace-nowrap">Zona</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-emerald-400 whitespace-nowrap">Cable P</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-emerald-300 whitespace-nowrap">Par P</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-cyan-400 whitespace-nowrap">Cable S</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-cyan-300 whitespace-nowrap">Par S</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-slate-300 whitespace-nowrap">Fecha Reporte</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3.5 text-slate-300 whitespace-nowrap">Grupo</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center whitespace-nowrap">Clasificación Red</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-amber-400 whitespace-nowrap">Demora (Días)</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3.5 text-slate-300 whitespace-nowrap">Central Telefónica</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3.5 text-slate-300 whitespace-nowrap">Terminal</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-purple-400 font-bold whitespace-nowrap">AFECTACIONES</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-4 text-white font-black whitespace-nowrap">Tarea o Trabajo</th>
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-rose-300 font-bold whitespace-nowrap">PROBLEMA</th>
+                        {(auxiliaryData?.extraColumnNames || []).map(col => (
+                          <th key={col} className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center text-violet-300 font-bold whitespace-nowrap">
+                            {col}
+                          </th>
+                        ))}
+                        <th className="sticky top-0 z-20 bg-slate-900 py-3.5 px-3 text-center whitespace-nowrap">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80 font-medium">
+                      {filteredRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={17 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-12 text-center text-slate-500 italic space-y-2">
+                            <p className="text-sm font-semibold text-slate-300">
+                              {!excelData
+                                ? 'No hay archivo Excel cargado. Suba el archivo Excel para ver los servicios reportados.'
+                                : 'No se encontraron servicios reportados en el archivo Excel actual para los trabajos o filtros seleccionados.'}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              (La tabla solo muestra los servicios que se encuentran reportados en el Excel activo; el resto se omite automáticamente).
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleOpenAddModal}
+                              className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-xl border border-slate-700 transition-colors cursor-pointer"
+                            >
+                              Crear Nuevo Trabajo Pendiente
+                            </button>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredRows.map(row => {
+                          const isDirectMatch = (appliedFilters.searchTerm || '').trim() && contextSearchInfo.exactMatchServiceNumbers.has(row.servicio.toUpperCase());
+
+                          return (
                       <tr
                         key={row.id}
                         className={`transition-colors ${
@@ -2210,7 +2450,8 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
               </tbody>
             </table>
           </div>
-        )}
+        </div>
+      )}
 
         {/* ------------------------------------------------------------- */}
         {/* VISTA 2: AGRUPADA POR TAREA (ACORDEÓN - MEJORA D) */}
@@ -2368,7 +2609,9 @@ export const CablePendingTasksView: React.FC<CablePendingTasksViewProps> = ({
             )}
           </div>
         )}
-      </div>
+      </>
+    )}
+  </div>
 
       {/* ------------------------------------------------------------- */}
       {/* VENTANA MODAL: TODAS LAS TAREAS (RESUMEN, AFECTACIONES Y GESTIÓN) */}
