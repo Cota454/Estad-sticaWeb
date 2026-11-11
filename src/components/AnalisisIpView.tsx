@@ -112,7 +112,8 @@ import {
   countAuxiliaryMatches,
   createPriorityServiceMatcher,
   getPriorityServiceComment,
-  cleanFlexibleTerminal
+  cleanFlexibleTerminal,
+  detectCrossDuplicatesMap
 } from '../utils/ipCablesExcelParser';
 
 import { ZoneManagementModal } from './ZoneManagementModal';
@@ -784,18 +785,30 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
   };
 
-  // Optimization Statistics (Shows how many records are simplified when Optimizar is on)
+  // Mapa global de duplicados cruzados entre Servicio y Asociado
+  const crossDuplicatesGlobalMap = useMemo(() => {
+    if (!excelData) return new Map();
+    return detectCrossDuplicatesMap(excelData.consolidatedRows);
+  }, [excelData]);
+
+  // Optimization Statistics (Shows how many records are simplified when Optimizar is on, plus exact cross-duplicate count)
   const optimizationStats = useMemo(() => {
-    if (!excelData) return { totalBase: 0, optimizedCount: 0, difference: 0 };
+    if (!excelData) return { totalBase: 0, optimizedCount: 0, difference: 0, duplicateRowsCount: 0 };
     const totalBase = excelData.consolidatedRows.length;
     const optimized = optimizeAndSimplifyRows(excelData.consolidatedRows);
     const optimizedCount = optimized.length;
+    let duplicateRowsCount = 0;
+    crossDuplicatesGlobalMap.forEach(info => {
+      if (info.isDuplicate) duplicateRowsCount++;
+    });
+
     return {
       totalBase,
       optimizedCount,
-      difference: Math.max(0, totalBase - optimizedCount)
+      difference: Math.max(0, totalBase - optimizedCount),
+      duplicateRowsCount
     };
-  }, [excelData]);
+  }, [excelData, crossDuplicatesGlobalMap]);
 
   // Available Years dynamically from dataset
   const availableMatrixYears = useMemo(() => {
@@ -1202,7 +1215,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     colName?: string;
   } | null>(null);
   const [cellModalSearch, setCellModalSearch] = useState<string>('');
-  const [cellModalQuickFilter, setCellModalQuickFilter] = useState<'all' | 'with_task' | 'with_afectacion'>('all');
+  const [cellModalQuickFilter, setCellModalQuickFilter] = useState<'all' | 'with_task' | 'with_afectacion' | 'duplicates'>('all');
 
   // Reload tasks and afectaciones, and reset quick filter whenever cell drilldown modal opens
   useEffect(() => {
@@ -1337,26 +1350,31 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     });
   }, [selectedCellFilter, excelData, zones, matrixFilteredConsolidatedRows, filteredIpCablesRows, selectedNetworkTypeFilter]);
 
-  // Counts for quick filter buttons (Mejora 4)
-  const { withTaskCount, withAfectacionCount } = useMemo(() => {
+  // Counts for quick filter buttons (Mejora 4 + Duplicados)
+  const { withTaskCount, withAfectacionCount, withDuplicatesCount } = useMemo(() => {
     let taskCount = 0;
     let afectCount = 0;
+    let dupCount = 0;
     cellServicesList.forEach(item => {
       const info = getItemTaskInfo(item);
       if (info.hasTask) taskCount++;
       if (info.hasAfectacion) afectCount++;
+      const dup = crossDuplicatesGlobalMap.get(item.id);
+      if (dup && dup.isDuplicate) dupCount++;
     });
-    return { withTaskCount: taskCount, withAfectacionCount: afectCount };
-  }, [cellServicesList, cableTasks]);
+    return { withTaskCount: taskCount, withAfectacionCount: afectCount, withDuplicatesCount: dupCount };
+  }, [cellServicesList, cableTasks, crossDuplicatesGlobalMap]);
 
   const displayModalServices = useMemo(() => {
     let filtered = cellServicesList;
 
-    // 1. Quick Filter (Mejora 4)
+    // 1. Quick Filter (Mejora 4 + Duplicados)
     if (cellModalQuickFilter === 'with_task') {
       filtered = filtered.filter(item => getItemTaskInfo(item).hasTask);
     } else if (cellModalQuickFilter === 'with_afectacion') {
       filtered = filtered.filter(item => getItemTaskInfo(item).hasAfectacion);
+    } else if (cellModalQuickFilter === 'duplicates') {
+      filtered = filtered.filter(item => crossDuplicatesGlobalMap.get(item.id)?.isDuplicate);
     }
 
     // 2. Search query filter
@@ -1364,8 +1382,13 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const q = cellModalSearch.trim().toLowerCase();
       filtered = filtered.filter(s => {
         const info = getItemTaskInfo(s);
+        const asoc = (extractAsociadoFromItem(s) || '').toLowerCase();
+        const dupInfo = crossDuplicatesGlobalMap.get(s.id);
+        const dupVal = (dupInfo?.duplicateValue || '').toLowerCase();
         return (
           s.servicio.toLowerCase().includes(q) ||
+          asoc.includes(q) ||
+          dupVal.includes(q) ||
           s.central.toLowerCase().includes(q) ||
           s.cable.toLowerCase().includes(q) ||
           (s.cableP && s.cableP.toLowerCase().includes(q)) ||
@@ -1383,7 +1406,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     }
 
     return filtered;
-  }, [cellServicesList, cellModalQuickFilter, cellModalSearch, cableTasks]);
+  }, [cellServicesList, cellModalQuickFilter, cellModalSearch, cableTasks, crossDuplicatesGlobalMap]);
 
   // Helper to format date and time for file naming in format: YYYY-MM-DD_HH-mm
   const getTab1ExportDateTime = () => {
@@ -1549,6 +1572,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       filterTokens.push('Con Trabajo Pendiente');
     } else if (cellModalQuickFilter === 'with_afectacion') {
       filterTokens.push('Con Afectación');
+    } else if (cellModalQuickFilter === 'duplicates') {
+      filterTokens.push('Solo Duplicados');
     }
     if (cellModalSearch.trim()) {
       filterTokens.push(cellModalSearch.trim());
@@ -1566,7 +1591,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     // Format: IP + el nombre de la central o si es total + (dentro de paréntesis la opción del filtro) + fecha y hora actual
     const fileName = `IP ${cleanCentral} (${cleanFilter}) ${dateTimeStr}.xlsx`;
 
-    const baseHeaders = ['SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeaders = ['SERVICIO', 'ASOCIADO', 'DUPLICADOS', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
@@ -1578,6 +1603,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const prob = extractProblemaFromItem(item);
       const matchedZone = findMatchingZoneForItem(item, zones);
       const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+      const dupInfo = crossDuplicatesGlobalMap.get(item.id);
+      const duplicadoVal = dupInfo && dupInfo.isDuplicate ? dupInfo.duplicateValue : '-';
 
       // Sustitución de Otra Red / General por Red Rígida
       let clasifRed = item.networkTypeLabel || 'Red Rígida';
@@ -1607,6 +1634,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const row: Record<string, any> = {
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
+        'Duplicados': duplicadoVal,
         'Zona': zonaName,
         'Central': item.central,
         'Cable P': item.cableP || '-',
@@ -1644,8 +1672,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Force string formatting for Servicio and Asociado so leading zeros are preserved (Servicio is col 0, Asociado is col 1)
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Q1');
+    // Force string formatting for Servicio, Asociado and Duplicados so leading zeros are preserved (Servicio is col 0, Asociado is col 1, Duplicados is col 2)
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:R1');
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
       const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 0 })];
       if (cellServicio) {
@@ -1657,12 +1685,18 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         cellAsoc.t = 's';
         cellAsoc.z = '@';
       }
+      const cellDup = worksheet[XLSX.utils.encode_cell({ r: R, c: 2 })];
+      if (cellDup) {
+        cellDup.t = 's';
+        cellDup.z = '@';
+      }
     }
 
     // Set responsive column widths (sin columna N°)
     const colWidths = [
       { wch: 15 }, // Servicio
       { wch: 15 }, // Asociado
+      { wch: 16 }, // Duplicados
       { wch: 18 }, // Zona
       { wch: 16 }, // Central
       { wch: 14 }, // Cable P
@@ -1886,7 +1920,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const dateTimeStr = getTab1ExportDateTime();
     const fileName = `Servicios_Con_Zona_${dateTimeStr}.xlsx`;
 
-    const baseHeaders = ['SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
+    const baseHeaders = ['SERVICIO', 'ASOCIADO', 'DUPLICADOS', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA EN DÍAS', 'FECHA REPORTE', 'AFECTACIONES', 'TAREA O TRABAJO', 'PROBLEMA'];
     const baseHeadersUpperSet = new Set(baseHeaders.map(h => h.toUpperCase()));
     const auxCols = (auxiliaryData && auxiliaryData.extraColumnNames) ? auxiliaryData.extraColumnNames : [];
 
@@ -1898,6 +1932,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const prob = extractProblemaFromItem(item);
       const matchedZone = findMatchingZoneForItem(item, zones);
       const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
+      const dupInfo = crossDuplicatesGlobalMap.get(item.id);
+      const duplicadoVal = dupInfo && dupInfo.isDuplicate ? dupInfo.duplicateValue : '-';
 
       // Sustitución de Otra Red / General por Red Rígida
       let clasifRed = item.networkTypeLabel || 'Red Rígida';
@@ -1927,6 +1963,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
       const row: Record<string, any> = {
         'Servicio': item.servicio,
         'Asociado': asoc || '-',
+        'Duplicados': duplicadoVal,
         'Zona': zonaName,
         'Central': item.central,
         'Cable P': item.cableP || '-',
@@ -1964,8 +2001,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Force string formatting for Servicio and Asociado so leading zeros are preserved (Servicio is col 0, Asociado is col 1)
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Q1');
+    // Force string formatting for Servicio, Asociado and Duplicados so leading zeros are preserved (Servicio is col 0, Asociado is col 1, Duplicados is col 2)
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:R1');
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
       const cellServicio = worksheet[XLSX.utils.encode_cell({ r: R, c: 0 })];
       if (cellServicio) {
@@ -1977,11 +2014,17 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         cellAsoc.t = 's';
         cellAsoc.z = '@';
       }
+      const cellDup = worksheet[XLSX.utils.encode_cell({ r: R, c: 2 })];
+      if (cellDup) {
+        cellDup.t = 's';
+        cellDup.z = '@';
+      }
     }
 
     const colWidths = [
       { wch: 15 }, // Servicio
       { wch: 15 }, // Asociado
+      { wch: 16 }, // Duplicados
       { wch: 18 }, // Zona
       { wch: 16 }, // Central
       { wch: 14 }, // Cable P
@@ -3186,17 +3229,23 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                         ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/50 shadow-amber-500/10'
                         : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
                     }`}
-                    title="Compara las columnas Teléfono y Asociado para consolidar servicios coincidentes en un único registro"
+                    title={`Compara las columnas Teléfono y Asociado para detectar duplicados cruzados (${optimizationStats.duplicateRowsCount} filas con duplicados). Clic para consolidar registros coincidentes.`}
                   >
                     <Zap className={`w-3.5 h-3.5 ${isOptimized ? 'text-amber-400 fill-amber-400' : 'text-slate-400'}`} />
                     <span>Recuadro para Optimizar Teléfono / Asociado</span>
                     {isOptimized ? (
                       <span className="ml-1 px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black text-[9px] rounded-full uppercase tracking-wide">
-                        {optimizationStats.difference > 0 ? `-${optimizationStats.difference}` : 'ACTIVO'}
+                        {optimizationStats.difference > 0 ? `-${optimizationStats.difference} consolidados` : 'ACTIVO'}
                       </span>
                     ) : (
-                      <span className="ml-1 text-[10px] text-slate-400 font-normal">
-                        (Normal)
+                      <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                        optimizationStats.duplicateRowsCount > 0
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'text-slate-400 bg-slate-900 border border-slate-800'
+                      }`}>
+                        {optimizationStats.duplicateRowsCount > 0
+                          ? `${optimizationStats.duplicateRowsCount} Duplicados`
+                          : '0 Duplicados'}
                       </span>
                     )}
                   </button>
@@ -4299,6 +4348,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <AlertTriangle className="w-3.5 h-3.5 text-rose-300" />
                   <span>Con Afectación ({withAfectacionCount})</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setCellModalQuickFilter('duplicates')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                    cellModalQuickFilter === 'duplicates'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-amber-300'
+                  }`}
+                  title="Filtrar servicios con coincidencia cruzada entre Servicio y Asociado"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Duplicados ({withDuplicatesCount})</span>
+                </button>
               </div>
 
               {/* Text Search Input */}
@@ -4306,7 +4368,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
                 <input
                   type="text"
-                  placeholder="Buscar por servicio, central, cable, terminal, dirección, afectación, tarea..."
+                  placeholder="Buscar por servicio, asociado, duplicado, central, cable, terminal, dirección..."
                   value={cellModalSearch}
                   onChange={(e) => setCellModalSearch(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-medium"
@@ -4319,7 +4381,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 return (
                   <CopyTableButton
                     headers={[
-                      'SERVICIO', 'ASOCIADO', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES',
+                      'SERVICIO', 'ASOCIADO', 'DUPLICADOS', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES',
                       ...(hasPriorityInModal ? ['COMENTARIO PRIORIDAD'] : []),
                       'TAREA O TRABAJO', 'PROBLEMA',
                       ...(auxiliaryData?.extraColumnNames || [])
@@ -4334,6 +4396,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           const v = auxRec?.[col];
                           return v !== undefined && v !== '' ? String(v) : '-';
                         });
+
+                        const dupInfo = crossDuplicatesGlobalMap.get(s.id);
+                        const duplicadoVal = dupInfo && dupInfo.isDuplicate ? dupInfo.duplicateValue : '-';
 
                         let clasifRed = s.networkTypeLabel || 'Red Rígida';
                         if (
@@ -4361,6 +4426,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                         return [
                           s.servicio,
                           extractAsociadoFromItem(s) || '-',
+                          duplicadoVal,
                           zonaName,
                           s.central,
                           s.cableP || '-',
@@ -4380,7 +4446,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           ...auxVals
                         ];
                       }),
-                      ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...(hasPriorityInModal ? ['-'] : []), '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
+                      ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...(hasPriorityInModal ? ['-'] : []), '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
                     ]}
                     label="Copiar Servicios"
                   />
@@ -4394,7 +4460,9 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800 sticky top-0 z-10">
                   <tr>
                     <th className="py-3 px-3 text-center text-slate-500 w-12">#</th>
-                    <th className="py-3 px-4 text-white font-black">Servicio / abonado</th>
+                    <th className="py-3 px-4 text-white font-black">Servicio</th>
+                    <th className="py-3 px-4 text-cyan-300 font-bold whitespace-nowrap">Asociado</th>
+                    <th className="py-3 px-4 text-amber-400 font-bold whitespace-nowrap">Duplicados</th>
                     <th className="py-3 px-4 text-emerald-400 font-bold">Zona</th>
                     <th className="py-3 px-4">Central</th>
                     <th className="py-3 px-4 text-cyan-400">Cable P / Par P</th>
@@ -4418,7 +4486,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <tbody className="divide-y divide-slate-800/80 font-medium">
                   {displayModalServices.length === 0 ? (
                     <tr>
-                      <td colSpan={15 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-8 text-center text-slate-500 font-bold">
+                      <td colSpan={17 + (auxiliaryData?.extraColumnNames?.length || 0)} className="py-8 text-center text-slate-500 font-bold">
                         No se encontraron servicios consolidados para este filtro.
                       </td>
                     </tr>
@@ -4428,6 +4496,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                       const matchedZone = findMatchingZoneForItem(item, zones);
                       const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
                       const isPriority = isPriorityItem(item.servicio, item.asociado);
+                      const asociadoVal = extractAsociadoFromItem(item);
+                      const dupInfo = crossDuplicatesGlobalMap.get(item.id);
 
                       return (
                         <tr
@@ -4435,6 +4505,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                           className={`transition-colors ${
                             isPriority
                               ? 'bg-amber-400/15 hover:bg-amber-400/25 border-l-4 border-l-red-500 text-red-200'
+                              : dupInfo?.isDuplicate
+                              ? 'bg-amber-500/10 hover:bg-amber-500/20 border-l-4 border-l-amber-500 text-slate-200'
                               : 'hover:bg-slate-800/50'
                           }`}
                         >
@@ -4457,11 +4529,24 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                                 <span className="truncate">{getPriorityServiceComment(item.servicio, cableRules.priorityServices, item.asociado)}</span>
                               </div>
                             )}
-                            {extractAsociadoFromItem(item) && (
-                              <div className="text-[10px] text-cyan-300 font-mono font-normal flex items-center space-x-1 mt-0.5">
-                                <span className="text-slate-400">Asoc:</span>
-                                <span className="text-cyan-400 font-bold">{extractAsociadoFromItem(item)}</span>
-                              </div>
+                          </td>
+                          <td className="py-3 px-4 font-mono font-medium whitespace-nowrap">
+                            {asociadoVal ? (
+                              <span className="text-cyan-300 font-bold">{asociadoVal}</span>
+                            ) : (
+                              <span className="text-slate-600">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold whitespace-nowrap">
+                            {dupInfo && dupInfo.isDuplicate ? (
+                              <span
+                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold"
+                                title={`Coincidencia cruzada Servicio/Asociado: ${dupInfo.duplicateValue}`}
+                              >
+                                <span>{dupInfo.duplicateValue}</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-600">-</span>
                             )}
                           </td>
                           <td className="py-3 px-4 font-semibold text-emerald-300 whitespace-nowrap">

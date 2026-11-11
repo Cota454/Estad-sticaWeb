@@ -408,6 +408,157 @@ export function matchTelefonoTypeFilter(
 }
 
 /**
+ * Representa la información de duplicidad cruzada entre Servicio y Asociado.
+ */
+export interface DuplicateCrossMatchInfo {
+  isDuplicate: boolean;
+  duplicateValue: string; // El número/valor coincidente clave que identifica el cruce
+  groupKey: string;
+  matchedServices: string[]; // Todos los números de servicio que pertenecen a este grupo
+  matchedCount: number; // Cantidad de filas vinculadas
+}
+
+/**
+ * Normaliza un número de servicio o asociado para búsqueda y coincidencia exacta
+ */
+export function cleanServiceOrAsocVal(val: any): string {
+  if (val === undefined || val === null) return '';
+  const s = String(val).trim().toUpperCase();
+  if (['N/A', 'NA', 'SIN ASOCIADO', 'NINGUNO', 'NONE', '0', '-', 'S/A', 'SIN', 'NO', 'S/D'].includes(s)) {
+    return '';
+  }
+  return s;
+}
+
+/**
+ * Analiza un conjunto de filas y construye un mapa rápido que asocia el ID de cada fila
+ * con su información de duplicidad cruzada entre Servicio y Asociado.
+ *
+ * Ejemplo del usuario:
+ * Fila A: Servicio = 123, Asociado = sed1
+ * Fila B: Servicio = sed1, Asociado = 123
+ * -> Coinciden entre sí en Servicio y Asociado, y en ambas filas Duplicados mostrará "123".
+ */
+export function detectCrossDuplicatesMap(rows: IpCableRow[]): Map<string, DuplicateCrossMatchInfo> {
+  const result = new Map<string, DuplicateCrossMatchInfo>();
+  if (!rows || rows.length === 0) return result;
+
+  const parent = new Map<string, string>();
+
+  const find = (i: string): string => {
+    let root = i;
+    while (parent.has(root) && parent.get(root) !== root) {
+      root = parent.get(root)!;
+    }
+    let curr = i;
+    while (curr !== root) {
+      const nxt = parent.get(curr) || curr;
+      parent.set(curr, root);
+      curr = nxt;
+    }
+    return root;
+  };
+
+  const union = (i: string, j: string) => {
+    const rootI = find(i);
+    const rootJ = find(j);
+    if (rootI !== rootJ) {
+      parent.set(rootI, rootJ);
+    }
+  };
+
+  // 1. Extraer los valores limpios de cada fila
+  const rowTokens: { row: IpCableRow; tel: string; asoc: string }[] = rows.map(r => {
+    const tel = cleanServiceOrAsocVal(r.servicio || extractTelefonoFromItem(r));
+    const asoc = cleanServiceOrAsocVal(r.asociado || extractAsociadoFromItem(r));
+    return { row: r, tel, asoc };
+  });
+
+  // 2. Establecer unión entre Servicio y Asociado
+  rowTokens.forEach(({ tel, asoc }) => {
+    if (tel && !parent.has(tel)) parent.set(tel, tel);
+    if (asoc && !parent.has(asoc)) parent.set(asoc, asoc);
+    if (tel && asoc) {
+      union(tel, asoc);
+    }
+  });
+
+  // 3. Agrupar filas por su componente conexa
+  const groups = new Map<string, {
+    rowIds: string[];
+    services: string[];
+    asociados: string[];
+  }>();
+
+  rowTokens.forEach(({ row, tel, asoc }) => {
+    let key = '';
+    if (tel) {
+      key = find(tel);
+    } else if (asoc) {
+      key = find(asoc);
+    } else {
+      key = `single_${row.id || row.servicio}`;
+    }
+
+    if (!groups.has(key)) {
+      groups.set(key, { rowIds: [], services: [], asociados: [] });
+    }
+    const grp = groups.get(key)!;
+    grp.rowIds.push(row.id);
+    if (tel && !grp.services.includes(tel)) grp.services.push(tel);
+    if (asoc && !grp.asociados.includes(asoc)) grp.asociados.push(asoc);
+  });
+
+  // 4. Asignar el resultado para cada fila
+  rowTokens.forEach(({ row, tel, asoc }) => {
+    let key = '';
+    if (tel) {
+      key = find(tel);
+    } else if (asoc) {
+      key = find(asoc);
+    } else {
+      key = `single_${row.id || row.servicio}`;
+    }
+
+    const grp = groups.get(key);
+    const isDuplicate = Boolean(grp && grp.rowIds.length > 1);
+
+    if (isDuplicate && grp) {
+      // Determinamos el valor representativo del duplicado:
+      // Si hay un cruce entre servicio y asociado (ej: Servicio 123 y Asociado 123 en otra fila),
+      // o tomamos el valor canónico del grupo o el número coincidente.
+      let dupVal = key;
+
+      // Buscar si existe un valor que aparece tanto en servicios como en asociados del grupo
+      const crossMatch = grp.services.find(s => grp.asociados.includes(s));
+      if (crossMatch) {
+        dupVal = crossMatch;
+      } else if (grp.services.length > 0) {
+        dupVal = grp.services[0];
+      }
+
+      result.set(row.id, {
+        isDuplicate: true,
+        duplicateValue: dupVal,
+        groupKey: key,
+        matchedServices: grp.services,
+        matchedCount: grp.rowIds.length
+      });
+    } else {
+      result.set(row.id, {
+        isDuplicate: false,
+        duplicateValue: '',
+        groupKey: key,
+        matchedServices: tel ? [tel] : [],
+        matchedCount: 1
+      });
+    }
+  });
+
+  return result;
+}
+
+/**
  * Optimizes dataset by comparing Teléfono and Asociado columns,
  * collapsing records that match / cross-reference into a single consolidated record.
  */
@@ -438,15 +589,10 @@ export function optimizeAndSimplifyRows(rows: IpCableRow[]): IpCableRow[] {
     }
   };
 
-  const cleanVal = (val: string): string => {
-    if (!val) return '';
-    return String(val).trim().toUpperCase();
-  };
-
   // 1. Establish union-find sets between Teléfono and Asociado
   rows.forEach(item => {
-    const tel = cleanVal(extractTelefonoFromItem(item));
-    const asoc = cleanVal(extractAsociadoFromItem(item));
+    const tel = cleanServiceOrAsocVal(item.servicio || extractTelefonoFromItem(item));
+    const asoc = cleanServiceOrAsocVal(item.asociado || extractAsociadoFromItem(item));
 
     if (tel) {
       if (!parent.has(tel)) parent.set(tel, tel);
@@ -463,8 +609,8 @@ export function optimizeAndSimplifyRows(rows: IpCableRow[]): IpCableRow[] {
   const groups = new Map<string, IpCableRow>();
 
   rows.forEach(item => {
-    const tel = cleanVal(extractTelefonoFromItem(item));
-    const asoc = cleanVal(extractAsociadoFromItem(item));
+    const tel = cleanServiceOrAsocVal(item.servicio || extractTelefonoFromItem(item));
+    const asoc = cleanServiceOrAsocVal(item.asociado || extractAsociadoFromItem(item));
 
     let key = '';
     if (tel) {
