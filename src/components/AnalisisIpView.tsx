@@ -532,7 +532,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [matrixAfectacionFilter, setMatrixAfectacionFilter] = useState<string>('all');
   const [cableAfectacionFilter, setCableAfectacionFilter] = useState<string>('all');
   const [isOptimized, setIsOptimized] = useState<boolean>(false);
-  const [hideZeroValues, setHideZeroValues] = useState<boolean>(false);
+  const [hideZeroValues, setHideZeroValues] = useState<boolean>(true);
+  const [matrixDuplicatesFilter, setMatrixDuplicatesFilter] = useState<'all' | 'duplicates' | 'non_duplicates'>('all');
 
   // Filtro por Columna TPO SERV (NAUTA HOGAR PLUS y personalizables)
   const [tpoServFilterActive, setTpoServFilterActive] = useState<boolean>(false);
@@ -563,6 +564,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
   const [draftMatrixYearFilter, setDraftMatrixYearFilter] = useState<string>('all');
   const [draftMatrixTelefonoFilter, setDraftMatrixTelefonoFilter] = useState<TelefonoTypeFilter>('all');
   const [draftMatrixAfectacionFilter, setDraftMatrixAfectacionFilter] = useState<string>('all');
+  const [draftMatrixDuplicatesFilter, setDraftMatrixDuplicatesFilter] = useState<'all' | 'duplicates' | 'non_duplicates'>('all');
   const [isSearchingMatrix, setIsSearchingMatrix] = useState<boolean>(false);
 
   // Valores únicos de TPO SERV detectados en el archivo Excel cargado
@@ -660,7 +662,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     draftMatrixMonthFilter !== matrixMonthFilter ||
     draftMatrixYearFilter !== matrixYearFilter ||
     draftMatrixTelefonoFilter !== matrixTelefonoFilter ||
-    draftMatrixAfectacionFilter !== matrixAfectacionFilter;
+    draftMatrixAfectacionFilter !== matrixAfectacionFilter ||
+    draftMatrixDuplicatesFilter !== matrixDuplicatesFilter;
 
   const handleApplyMatrixSearch = () => {
     setIsSearchingMatrix(true);
@@ -672,6 +675,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setMatrixYearFilter(draftMatrixYearFilter);
     setMatrixTelefonoFilter(draftMatrixTelefonoFilter);
     setMatrixAfectacionFilter(draftMatrixAfectacionFilter);
+    setMatrixDuplicatesFilter(draftMatrixDuplicatesFilter);
     setTimeout(() => {
       setIsSearchingMatrix(false);
     }, 120);
@@ -686,6 +690,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setDraftMatrixYearFilter('all');
     setDraftMatrixTelefonoFilter('all');
     setDraftMatrixAfectacionFilter('all');
+    setDraftMatrixDuplicatesFilter('all');
 
     setMatrixDemoraFilter('all');
     setMatrixManualDate('');
@@ -695,6 +700,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     setMatrixYearFilter('all');
     setMatrixTelefonoFilter('all');
     setMatrixAfectacionFilter('all');
+    setMatrixDuplicatesFilter('all');
     setTpoServFilterActive(false);
     setIsOptimized(false);
   };
@@ -916,9 +922,22 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
         }
       }
 
+      // 9. Filtro por Duplicados (Coincidencias cruzadas entre Servicio y Asociado)
+      if (matrixDuplicatesFilter === 'duplicates') {
+        const dupInfo = crossDuplicatesGlobalMap.get(item.id);
+        if (!dupInfo || !dupInfo.isDuplicate) {
+          return false;
+        }
+      } else if (matrixDuplicatesFilter === 'non_duplicates') {
+        const dupInfo = crossDuplicatesGlobalMap.get(item.id);
+        if (dupInfo && dupInfo.isDuplicate) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, tpoServFilterActive, tpoServPatterns, cableAfectaciones, cableTasks, priorityFilterActive, isPriorityItem]);
+  }, [excelData, isOptimized, matrixTelefonoFilter, matrixDemoraFilter, matrixManualDate, matrixStartDate, matrixEndDate, matrixMonthFilter, matrixYearFilter, matrixAfectacionFilter, matrixDuplicatesFilter, crossDuplicatesGlobalMap, tpoServFilterActive, tpoServPatterns, cableAfectaciones, cableTasks, priorityFilterActive, isPriorityItem]);
 
   // 1. Matrix 1: Centrales Telefónicas vs GRUPO (Contabiliza SERVICIOS CONSOLIDADOS)
   const matrixCentralesData = useMemo(() => {
@@ -1502,8 +1521,10 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
     const afect = getAfectacionChosenOption(matrixAfectacionFilter);
     if (afect) options.push(afect);
 
-    if (isOptimized) {
-      options.push('Optimizado');
+    if (matrixDuplicatesFilter === 'duplicates') {
+      options.push('Solo Duplicados');
+    } else if (matrixDuplicatesFilter === 'non_duplicates') {
+      options.push('Sin Duplicados');
     }
 
     if (tpoServFilterActive) {
@@ -2623,19 +2644,19 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 <div>
                   <h4 className="text-sm font-extrabold text-white flex items-center space-x-2">
                     <span>Filtros de Análisis para Matrices</span>
-                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || tpoServFilterActive || priorityFilterActive || isOptimized) && (
+                    {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || matrixDuplicatesFilter !== 'all' || tpoServFilterActive || priorityFilterActive) && (
                       <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2.5 py-0.5 rounded-md font-extrabold">
                         {matrixFilteredConsolidatedRows.length} de {excelData?.consolidatedRows.length || 0} Registros
                       </span>
                     )}
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Optimice servicios cruzados (Teléfono/Asociado) y filtre por Rango de Fechas, Tipo de Teléfono, Demora, Mes, Año y Afectaciones.
+                    Filtre por Duplicados (Teléfono/Asociado), Rango de Fechas, Tipo de Teléfono, Demora, Mes, Año y Afectaciones.
                   </p>
                 </div>
               </div>
 
-              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || tpoServFilterActive || priorityFilterActive || isOptimized) && (
+              {(matrixDemoraFilter !== 'all' || matrixManualDate !== '' || matrixStartDate !== '' || matrixEndDate !== '' || matrixMonthFilter !== 'all' || matrixYearFilter !== 'all' || matrixTelefonoFilter !== 'all' || matrixAfectacionFilter !== 'all' || matrixDuplicatesFilter !== 'all' || tpoServFilterActive || priorityFilterActive) && (
                 <button
                   onClick={() => {
                     setMatrixDemoraFilter('all');
@@ -2646,6 +2667,8 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     setMatrixYearFilter('all');
                     setMatrixTelefonoFilter('all');
                     setMatrixAfectacionFilter('all');
+                    setMatrixDuplicatesFilter('all');
+                    setDraftMatrixDuplicatesFilter('all');
                     setTpoServFilterActive(false);
                     setPriorityFilterActive(false);
                     setIsOptimized(false);
@@ -3175,25 +3198,42 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   </select>
                 </div>
 
-                {/* 6. Ocultar Ceros Option */}
-                <div className="space-y-1.5 flex flex-col justify-end">
-                  <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
-                    <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Visualización</span>
-                  </label>
-                  <label className="flex items-center space-x-2.5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-medium cursor-pointer transition-all h-[38px] select-none">
-                    <input
-                      type="checkbox"
-                      checked={hideZeroValues}
-                      onChange={(e) => setHideZeroValues(e.target.checked)}
-                      className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer accent-blue-600"
-                    />
-                    <span className="font-bold text-slate-200">Ocultar ceros (0)</span>
-                  </label>
+                {/* 6. Filtro por Duplicados */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Filtro Duplicados</span>
+                    </label>
+                    {optimizationStats.duplicateRowsCount > 0 && (
+                      <span className="text-[10px] text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded font-bold border border-amber-500/30">
+                        {optimizationStats.duplicateRowsCount} dup
+                      </span>
+                    )}
+                  </div>
+                  <select
+                    value={draftMatrixDuplicatesFilter}
+                    onChange={(e) => {
+                      const val = e.target.value as 'all' | 'duplicates' | 'non_duplicates';
+                      setDraftMatrixDuplicatesFilter(val);
+                      setMatrixDuplicatesFilter(val);
+                    }}
+                    className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-medium focus:outline-none transition-all cursor-pointer ${
+                      draftMatrixDuplicatesFilter !== 'all'
+                        ? 'border-amber-500 text-amber-300 font-bold bg-amber-950/30'
+                        : 'border-slate-800 text-white focus:border-amber-500'
+                    }`}
+                  >
+                    <option value="all">Todos los Registros</option>
+                    <option value="duplicates">
+                      Solo Duplicados {optimizationStats.duplicateRowsCount > 0 ? `(${optimizationStats.duplicateRowsCount})` : ''}
+                    </option>
+                    <option value="non_duplicates">Sin Duplicados</option>
+                  </select>
                 </div>
               </div>
 
-              {/* ACTION BAR: 🔎 Buscar + Recuadro para Optimizar + ↺ Restablecer + Interruptor de Matrices */}
+              {/* ACTION BAR: 🔎 Buscar + ↺ Restablecer + Interruptor de Matrices */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
                 <div className="flex flex-wrap items-center gap-2.5">
                   <button
@@ -3216,36 +3256,6 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                     {hasPendingMatrixChanges && (
                       <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black text-[9px] rounded-full uppercase tracking-wider">
                         Pendiente
-                      </span>
-                    )}
-                  </button>
-
-                  {/* Botón Recuadro para Optimizar Teléfono / Asociado en la misma fila */}
-                  <button
-                    type="button"
-                    onClick={() => setIsOptimized(!isOptimized)}
-                    className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-sm active:scale-95 ${
-                      isOptimized
-                        ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/50 shadow-amber-500/10'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
-                    }`}
-                    title={`Compara las columnas Teléfono y Asociado para detectar duplicados cruzados (${optimizationStats.duplicateRowsCount} filas con duplicados). Clic para consolidar registros coincidentes.`}
-                  >
-                    <Zap className={`w-3.5 h-3.5 ${isOptimized ? 'text-amber-400 fill-amber-400' : 'text-slate-400'}`} />
-                    <span>Recuadro para Optimizar Teléfono / Asociado</span>
-                    {isOptimized ? (
-                      <span className="ml-1 px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black text-[9px] rounded-full uppercase tracking-wide">
-                        {optimizationStats.difference > 0 ? `-${optimizationStats.difference} consolidados` : 'ACTIVO'}
-                      </span>
-                    ) : (
-                      <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
-                        optimizationStats.duplicateRowsCount > 0
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                          : 'text-slate-400 bg-slate-900 border border-slate-800'
-                      }`}>
-                        {optimizationStats.duplicateRowsCount > 0
-                          ? `${optimizationStats.duplicateRowsCount} Duplicados`
-                          : '0 Duplicados'}
                       </span>
                     )}
                   </button>
