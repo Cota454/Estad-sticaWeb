@@ -120,7 +120,7 @@ import { ZoneManagementModal } from './ZoneManagementModal';
 import { CableClassificationView } from './CableClassificationView';
 import { GoogleDriveBackupView } from './GoogleDriveBackupView';
 import { PrintReportsView } from './PrintReportsView';
-import { CopyTableButton } from './CopyButton';
+import { CopyTableButton, CopyImageButton } from './CopyButton';
 
 /**
  * Calculates delay in days from item raw data or fechaReporte
@@ -3335,7 +3335,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <EyeOff className="w-3.5 h-3.5 text-slate-400" />
                   <span>Ocultar Ceros</span>
                 </label>
-                <CopyTableButton headers={copyCentralesHeaders} rows={copyCentralesRows} label="Copiar Tabla Centrales" />
+                <CopyImageButton elementId="tabla-centrales-container" label="Copiar Imagen" className="bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700" />
                 <button
                   type="button"
                   onClick={handleDownloadCentralesMatrixExcel}
@@ -3348,7 +3348,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
+            <div id="tabla-centrales-container" className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
               <table className="w-full text-xs text-left text-slate-300">
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
@@ -3496,7 +3496,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <MapPin className="w-4 h-4" />
                   <span>Gestor y Dashboard de Zonas</span>
                 </button>
-                <CopyTableButton headers={copyZonasHeaders} rows={copyZonasRows} label="Copiar Tabla Zonas" />
+                <CopyImageButton elementId="tabla-zonas-container" label="Copiar Imagen" className="bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700" />
                 <button
                   type="button"
                   onClick={handleDownloadZonasMatrixExcel}
@@ -3518,7 +3518,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
+            <div id="tabla-zonas-container" className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
               <table className="w-full text-xs text-left text-slate-300">
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
@@ -3785,7 +3785,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                   <span>Afectaciones ({cableAfectaciones.filter(a => a.activo).length})</span>
                 </button>
 
-                <CopyTableButton headers={copyCablesHeaders} rows={copyCablesRows} label="Copiar Tabla" />
+                <CopyImageButton elementId="tabla-cables-container" label="Copiar Imagen" className="bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700" />
                 <button
                   type="button"
                   onClick={handleDownloadCablesMatrixExcel}
@@ -4045,7 +4045,7 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
+            <div id="tabla-cables-container" className="overflow-x-auto bg-slate-950 rounded-2xl border border-slate-800">
               <table className="w-full text-xs text-left text-slate-300">
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800">
                   <tr>
@@ -4385,87 +4385,16 @@ export const AnalisisIpView: React.FC<AnalisisIpViewProps> = ({
                 />
               </div>
 
-              {/* Copy Table Button with all columns including auxiliary ones (sin columna N°) */}
-              {(() => {
-                const hasPriorityInModal = displayModalServices.some(s => isPriorityItem(s.servicio, s.asociado));
-                return (
-                  <CopyTableButton
-                    headers={[
-                      'SERVICIO', 'ASOCIADO', 'DUPLICADOS', 'ZONA', 'CENTRAL', 'CABLE P', 'PAR P', 'CABLE S', 'PAR S', 'TERMINAL', 'DIRECCIÓN', 'GRUPO', 'CLASIFICACIÓN RED', 'DEMORA (DÍAS)', 'FECHA', 'AFECTACIONES',
-                      ...(hasPriorityInModal ? ['COMENTARIO PRIORIDAD'] : []),
-                      'TAREA O TRABAJO', 'PROBLEMA',
-                      ...(auxiliaryData?.extraColumnNames || [])
-                    ]}
-                    rows={[
-                      ...displayModalServices.map(s => {
-                        const info = getItemTaskInfo(s);
-                        const matchedZone = findMatchingZoneForItem(s, zones);
-                        const zonaName = matchedZone ? matchedZone.name : 'Sin Zonificar';
-                        const auxRec = getAuxiliaryDataForService(s.servicio, auxiliaryData, s.asociado);
-                        const auxVals = (auxiliaryData?.extraColumnNames || []).map(col => {
-                          const v = auxRec?.[col];
-                          return v !== undefined && v !== '' ? String(v) : '-';
-                        });
-
-                        const dupInfo = crossDuplicatesGlobalMap.get(s.id);
-                        const duplicadoVal = dupInfo && dupInfo.isDuplicate ? dupInfo.duplicateValue : '-';
-
-                        let clasifRed = s.networkTypeLabel || 'Red Rígida';
-                        if (
-                          clasifRed === 'Otra Red / General' ||
-                          clasifRed === 'Otra Red' ||
-                          clasifRed === 'General' ||
-                          clasifRed === '-' ||
-                          clasifRed === 'Sin clasificar'
-                        ) {
-                          clasifRed = 'Red Rígida';
-                        }
-
-                        const isFlex = s.networkType === 'flexible' || (s.networkTypeLabel && s.networkTypeLabel.toLowerCase().includes('flexible'));
-                        const hasCableS = s.cableS && s.cableS.trim() !== '' && s.cableS.trim() !== '-' && s.cableS.trim().toUpperCase() !== 'S/D' && s.cableS.trim().toUpperCase() !== 'SIN CABLE';
-                        const cableSVal = hasCableS ? s.cableS : (isFlex ? (s.flexibleAssignedName || 'Red Flexible') : '-');
-
-                        const isPriority = isPriorityItem(s.servicio, s.asociado);
-                        let afectacionVal = info.afectacion && info.afectacion !== '-' ? info.afectacion : '';
-                        if (isPriority) {
-                          afectacionVal = afectacionVal ? `PRIORIDAD - ${afectacionVal}` : 'PRIORIDAD';
-                        } else if (!afectacionVal) {
-                          afectacionVal = '-';
-                        }
-
-                        return [
-                          s.servicio,
-                          extractAsociadoFromItem(s) || '-',
-                          duplicadoVal,
-                          zonaName,
-                          s.central,
-                          s.cableP || '-',
-                          s.parP || '-',
-                          cableSVal,
-                          s.parS || '-',
-                          info.terminal || '-',
-                          info.direccion || '-',
-                          s.grupo || 'GENERAL',
-                          clasifRed,
-                          `${getDemoraDays(s)} días`,
-                          s.fechaReporte || '-',
-                          afectacionVal,
-                          ...(hasPriorityInModal ? [isPriority ? (getPriorityServiceComment(s.servicio, cableRules.priorityServices, s.asociado) || 'PRIORIDAD') : '-'] : []),
-                          info.taskName || '-',
-                          extractProblemaFromItem(s) || '-',
-                          ...auxVals
-                        ];
-                      }),
-                      ['TOTAL', `${displayModalServices.length} Servicios`, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', ...(hasPriorityInModal ? ['-'] : []), '-', '-', ...((auxiliaryData?.extraColumnNames || []).map(() => '-'))]
-                    ]}
-                    label="Copiar Servicios"
-                  />
-                );
-              })()}
+              {/* Copy Image Button */}
+              <CopyImageButton
+                elementId="tabla-modal-servicios-container"
+                label="Copiar Imagen"
+                className="bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 shrink-0"
+              />
             </div>
 
             {/* Table Container */}
-            <div className="flex-1 overflow-y-auto bg-slate-950 rounded-2xl border border-slate-800 overflow-x-auto">
+            <div id="tabla-modal-servicios-container" className="flex-1 overflow-y-auto bg-slate-950 rounded-2xl border border-slate-800 overflow-x-auto">
               <table className="w-full text-xs text-left text-slate-300 min-w-[1100px]">
                 <thead className="bg-slate-900 text-slate-400 font-bold uppercase tracking-wider text-[11px] border-b border-slate-800 sticky top-0 z-10">
                   <tr>

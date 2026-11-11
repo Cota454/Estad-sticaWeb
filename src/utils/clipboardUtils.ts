@@ -79,11 +79,36 @@ export async function copyElementAsImageToClipboard(
       return { success: false };
     }
 
+    const computedBg = window.getComputedStyle(el).backgroundColor;
+    const isDark =
+      computedBg.includes('rgb(15, 23, 42)') ||
+      computedBg.includes('rgb(2, 6, 23)') ||
+      Boolean(el.closest('.bg-slate-900')) ||
+      Boolean(el.closest('.bg-slate-950')) ||
+      el.classList.contains('bg-slate-950') ||
+      el.classList.contains('bg-slate-900');
+    const finalBg = isDark ? '#090d16' : '#ffffff';
+
+    const fullWidth = Math.max(el.scrollWidth, el.clientWidth, 600);
+    const fullHeight = Math.max(el.scrollHeight, el.clientHeight, 200);
+
     const canvas = await html2canvas(el, getSafeHtml2CanvasOptions({
       scale: 2,
-      backgroundColor: '#ffffff',
+      backgroundColor: finalBg,
       logging: false,
-      useCORS: true
+      useCORS: true,
+      width: fullWidth,
+      height: fullHeight,
+      windowWidth: Math.max(fullWidth + 100, window.innerWidth),
+      onclone: (_clonedDoc, clonedEl) => {
+        clonedEl.style.overflow = 'visible';
+        clonedEl.style.maxHeight = 'none';
+        clonedEl.style.maxWidth = 'none';
+        const stickies = clonedEl.querySelectorAll('.sticky, [style*="sticky"]');
+        stickies.forEach(s => {
+          (s as HTMLElement).style.position = 'static';
+        });
+      }
     }));
 
     return new Promise((resolve) => {

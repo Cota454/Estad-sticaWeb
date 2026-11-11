@@ -85,7 +85,7 @@ export const CopyImageButton: React.FC<CopyImageButtonProps> = ({
   elementId,
   fallbackTextSummary,
   className = '',
-  buttonText = 'Copiar Gráfica',
+  buttonText = 'Copiar Imagen',
   label,
   variant = 'dark',
   size = 'sm'
@@ -102,7 +102,7 @@ export const CopyImageButton: React.FC<CopyImageButtonProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } else {
-      alert('No se pudo procesar la gráfica. Intente nuevamente.');
+      alert('No se pudo procesar la captura de la tabla. Intente nuevamente.');
     }
   };
 
@@ -126,13 +126,13 @@ export const CopyImageButton: React.FC<CopyImageButtonProps> = ({
     <button
       type="button"
       onClick={handleCopy}
-      className={`inline-flex items-center gap-1.5 rounded-lg font-semibold transition-all ${getVariantStyles()} ${sizeStyles} ${className}`}
-      title="Copiar o descargar gráfica como imagen (PNG) para pegar en Word, PowerPoint o Excel"
+      className={`inline-flex items-center gap-1.5 rounded-lg font-semibold transition-all cursor-pointer ${getVariantStyles()} ${sizeStyles} ${className}`}
+      title="Copiar imagen de la tabla al portapapeles para pegar en Word, PowerPoint, Excel o WhatsApp"
     >
       {copied ? (
         <>
-          <Check className="w-3.5 h-3.5 text-emerald-500 animate-in zoom-in" />
-          <span className="text-emerald-600 font-bold">{successLabel}</span>
+          <Check className="w-3.5 h-3.5 text-emerald-400 animate-in zoom-in" />
+          <span className="text-emerald-400 font-bold">{successLabel}</span>
         </>
       ) : (
         <>
